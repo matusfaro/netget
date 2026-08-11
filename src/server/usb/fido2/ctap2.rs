@@ -15,6 +15,9 @@ use std::collections::BTreeMap;
 #[cfg(feature = "usb-fido2")]
 use tracing::{debug, info, warn};
 
+#[cfg(feature = "usb-fido2")]
+use crate::server::usb::fido2::approval::{ApprovalDetails, OperationType, UserPresence};
+
 /// CTAP2 command codes
 #[cfg(feature = "usb-fido2")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -259,6 +262,13 @@ pub struct Ctap2CredentialStore {
 }
 
 #[cfg(feature = "usb-fido2")]
+impl Default for Ctap2CredentialStore {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(feature = "usb-fido2")]
 impl Ctap2CredentialStore {
     pub fn new() -> Self {
         Self {
@@ -311,7 +321,7 @@ impl Ctap2CredentialStore {
         // Store credential
         self.credentials
             .entry(rp_id.to_string())
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(credential.clone());
 
         // Also store in resident credentials if requested
@@ -356,6 +366,54 @@ impl Ctap2CredentialStore {
         } else {
             creds.first_mut()
         }
+    }
+
+    /// How many credentials are stored for a relying party.
+    ///
+    /// Reported to the model in the approval event: "this site already has 2 credentials" is
+    /// exactly the kind of context an approve/deny decision turns on.
+    pub fn credential_count(&self, rp_id: &str) -> usize {
+        self.credentials.get(rp_id).map_or(0, |c| c.len())
+    }
+
+    /// The user name on the first stored credential for a relying party, if any.
+    ///
+    /// GetAssertion carries no user name — the host is asking *the key* who it knows — so this
+    /// is the only way the authenticate event can name a user.
+    pub fn first_user_name(&self, rp_id: &str) -> Option<String> {
+        self.credentials
+            .get(rp_id)
+            .and_then(|c| c.first())
+            .map(|c| c.user_name.clone())
+    }
+
+    /// Every stored credential as `(rp_id, user_name, resident, counter)`.
+    ///
+    /// Deliberately no key material and no credential id: this feeds the `list_credentials`
+    /// action, whose output reaches the model and the log.
+    pub fn describe_credentials(&self) -> Vec<(String, String, bool, u32)> {
+        let mut out: Vec<(String, String, bool, u32)> = self
+            .credentials
+            .values()
+            .flatten()
+            .map(|c| {
+                (
+                    c.rp_id.clone(),
+                    c.user_name.clone(),
+                    c.is_resident,
+                    c.counter,
+                )
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Forget every credential for a relying party. Returns how many were removed.
+    pub fn delete_credentials(&mut self, rp_id: &str) -> usize {
+        let removed = self.credentials.remove(rp_id).map_or(0, |c| c.len());
+        self.resident_credentials.retain(|c| c.rp_id != rp_id);
+        removed
     }
 
     /// Get all resident credentials for RP
@@ -420,6 +478,26 @@ impl Ctap2CredentialStore {
     }
 }
 
+/// What processing one CTAP2 command produced.
+///
+/// `NeedsApproval` is the whole point: `handle_urb` is synchronous and must not block, so a
+/// command that needs user presence returns the *question* instead of an answer. The connection
+/// task raises the event, the model decides, and the command is replayed with the decision.
+#[cfg(feature = "usb-fido2")]
+pub enum Ctap2Outcome {
+    /// Encoded CTAP2 response, ready for CTAPHID framing.
+    Response(Vec<u8>),
+    /// This command cannot proceed until a user-presence decision is made.
+    NeedsApproval(ApprovalDetails),
+}
+
+/// Internal per-command result: either finished, or blocked on user presence.
+#[cfg(feature = "usb-fido2")]
+enum Step {
+    Done(Ctap2Response),
+    Ask(ApprovalDetails),
+}
+
 /// CTAP2 protocol handler
 #[cfg(feature = "usb-fido2")]
 pub struct Ctap2Handler {
@@ -427,21 +505,11 @@ pub struct Ctap2Handler {
     aaguid: [u8; 16],
     /// Credential store
     store: Ctap2CredentialStore,
-    /// Approval manager for sync/async bridge
-    approval_manager: Option<std::sync::Arc<crate::server::usb::fido2::approval::ApprovalManager>>,
 }
 
 #[cfg(feature = "usb-fido2")]
 impl Ctap2Handler {
     pub fn new() -> Self {
-        Self::new_with_approval_manager(None)
-    }
-
-    pub fn new_with_approval_manager(
-        approval_manager: Option<
-            std::sync::Arc<crate::server::usb::fido2::approval::ApprovalManager>,
-        >,
-    ) -> Self {
         let aaguid = [
             0x4e, 0x65, 0x74, 0x47, // "NetG"
             0x65, 0x74, 0x2d, 0x46, // "et-F"
@@ -452,31 +520,56 @@ impl Ctap2Handler {
         Self {
             aaguid,
             store: Ctap2CredentialStore::new(),
-            approval_manager,
         }
     }
 
-    pub fn process_command(&mut self, data: &[u8]) -> Vec<u8> {
+    /// Read-only view of the credential store, for the `list_credentials` action.
+    pub fn store(&self) -> &Ctap2CredentialStore {
+        &self.store
+    }
+
+    /// Mutable view of the credential store, for the `delete_credential` action.
+    pub fn store_mut(&mut self) -> &mut Ctap2CredentialStore {
+        &mut self.store
+    }
+
+    /// Process one CTAP2 command.
+    ///
+    /// `presence` carries the user-presence decision for commands that need one. The first call
+    /// for a command passes [`UserPresence::Ask`]; MakeCredential and GetAssertion then answer
+    /// [`Ctap2Outcome::NeedsApproval`] and nothing is created or signed. Everything else
+    /// (GetInfo, ClientPIN, Reset, GetNextAssertion) answers immediately regardless.
+    pub fn process_command(&mut self, data: &[u8], presence: UserPresence) -> Ctap2Outcome {
         let request = match Ctap2Request::parse(data) {
             Ok(req) => req,
             Err(e) => {
                 warn!("Failed to parse CTAP2 request: {}", e);
-                return Ctap2Response::error(Ctap2Status::InvalidCbor).to_bytes();
+                return Ctap2Outcome::Response(
+                    Ctap2Response::error(Ctap2Status::InvalidCbor).to_bytes(),
+                );
             }
         };
 
-        debug!("CTAP2 command: {:?}", request.command);
+        debug!(
+            "CTAP2 command: {:?} (presence {:?})",
+            request.command, presence
+        );
 
-        let response = match request.command {
-            Ctap2Command::GetInfo => self.handle_get_info(),
-            Ctap2Command::MakeCredential => self.handle_make_credential(request.cbor_params),
-            Ctap2Command::GetAssertion => self.handle_get_assertion(request.cbor_params),
-            Ctap2Command::ClientPin => self.handle_client_pin(request.cbor_params),
-            Ctap2Command::GetNextAssertion => self.handle_get_next_assertion(),
-            Ctap2Command::Reset => self.handle_reset(),
+        let step = match request.command {
+            Ctap2Command::GetInfo => Step::Done(self.handle_get_info()),
+            Ctap2Command::MakeCredential => {
+                self.handle_make_credential(request.cbor_params, presence)
+            }
+            Ctap2Command::GetAssertion => self.handle_get_assertion(request.cbor_params, presence),
+            Ctap2Command::ClientPin => Step::Done(self.handle_client_pin(request.cbor_params)),
+            Ctap2Command::GetNextAssertion => Step::Done(self.handle_get_next_assertion()),
+            Ctap2Command::Reset => Step::Done(self.handle_reset()),
         };
 
-        response.to_bytes()
+        match step {
+            Step::Done(response) => Ctap2Outcome::Response(response.to_bytes()),
+            Step::Ask(details) => Ctap2Outcome::NeedsApproval(details),
+        }
     }
 
     fn handle_get_info(&self) -> Ctap2Response {
@@ -521,38 +614,42 @@ impl Ctap2Handler {
         Ctap2Response::success(CborValue::Map(info))
     }
 
-    fn handle_make_credential(&mut self, params: Option<CborValue>) -> Ctap2Response {
+    fn handle_make_credential(
+        &mut self,
+        params: Option<CborValue>,
+        presence: UserPresence,
+    ) -> Step {
         debug!("CTAP2 MakeCredential");
 
         let params = match params {
             Some(CborValue::Map(m)) => m,
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         // Parse parameters
         let _client_data_hash = match params.get(&CborValue::Integer(0x01)) {
             Some(CborValue::Bytes(b)) if b.len() == 32 => b.clone(),
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         let rp = match params.get(&CborValue::Integer(0x02)) {
             Some(CborValue::Map(m)) => m,
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         let rp_id = match rp.get(&CborValue::Text("id".to_string())) {
             Some(CborValue::Text(s)) => s.clone(),
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         let user = match params.get(&CborValue::Integer(0x03)) {
             Some(CborValue::Map(m)) => m,
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         let user_handle = match user.get(&CborValue::Text("id".to_string())) {
             Some(CborValue::Bytes(b)) => b.clone(),
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         let user_name = match user.get(&CborValue::Text("name".to_string())) {
@@ -591,26 +688,24 @@ impl Ctap2Handler {
             rp_id, user_name, require_resident_key, require_user_verification
         );
 
-        // Check for LLM approval if approval manager is configured
-        if let Some(ref approval_mgr) = self.approval_manager {
-            debug!("Requesting LLM approval for MakeCredential");
-            let (approval_id, decision) =
-                tokio::runtime::Handle::current().block_on(approval_mgr.request_approval(
-                    crate::server::usb::fido2::approval::OperationType::Register,
-                    rp_id.clone(),
-                    Some(user_name.clone()),
-                    None,
-                ));
-
-            if decision == crate::server::usb::fido2::approval::ApprovalDecision::Denied {
-                warn!("MakeCredential denied by LLM (approval_id={})", approval_id);
-                return Ctap2Response::error(Ctap2Status::OperationDenied);
+        // User presence. Nothing is created before the decision: `Ask` returns the question
+        // and no key pair exists yet, so a denial leaves the store exactly as it was.
+        match presence {
+            UserPresence::Ask => {
+                return Step::Ask(ApprovalDetails {
+                    operation: OperationType::Register,
+                    rp_id: rp_id.clone(),
+                    user_name: Some(user_name.clone()),
+                    credential_count: self.store.credential_count(&rp_id),
+                });
             }
-
-            info!(
-                "MakeCredential approved by LLM (approval_id={})",
-                approval_id
-            );
+            UserPresence::Denied => {
+                warn!("MakeCredential denied for RP '{}'", rp_id);
+                return Step::Done(Ctap2Response::error(Ctap2Status::OperationDenied));
+            }
+            UserPresence::Approved => {
+                info!("MakeCredential approved for RP '{}'", rp_id);
+            }
         }
 
         // Create credential
@@ -626,24 +721,25 @@ impl Ctap2Handler {
                 warn!("Failed to create credential: {}", e);
                 // Return proper error for UV requirement
                 if e.to_string().contains("PIN not verified") {
-                    return Ctap2Response::error(Ctap2Status::PinInvalid);
+                    return Step::Done(Ctap2Response::error(Ctap2Status::PinInvalid));
                 }
-                return Ctap2Response::error(Ctap2Status::Other);
+                return Step::Done(Ctap2Response::error(Ctap2Status::Other));
             }
         };
 
-        // Build attestation object
-        let mut att_stmt = BTreeMap::new();
-        att_stmt.insert(CborValue::Text("alg".to_string()), CborValue::Integer(-7)); // ES256
-        att_stmt.insert(
-            CborValue::Text("sig".to_string()),
-            CborValue::Bytes(vec![0u8; 71]),
-        ); // Dummy signature
+        // Attestation statement.
+        //
+        // Format is "none", not "packed". It used to claim "packed" while carrying 71 zero
+        // bytes as the signature, which is a *lie a relying party can check*: anything that
+        // verifies packed attestation rejects it, and the failure looks like a broken key
+        // rather than an absent attestation. "none" takes an empty map and is what every
+        // WebAuthn flow that does not pin an authenticator model asks for anyway.
+        let att_stmt: BTreeMap<CborValue, CborValue> = BTreeMap::new();
 
         let mut auth_data = Vec::new();
         // RP ID hash (32 bytes)
         auth_data.extend_from_slice(
-            &ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref(),
+            ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref(),
         );
         // Flags (1 byte): UP=1, UV=(pin verified), AT=1, ED=0
         let flags = 0x41
@@ -664,75 +760,72 @@ impl Ctap2Handler {
         // Public key (COSE format)
         auth_data.extend_from_slice(&credential.public_key_cose);
 
-        let mut att_obj = BTreeMap::new();
-        att_obj.insert(
-            CborValue::Text("fmt".to_string()),
-            CborValue::Text("packed".to_string()),
-        );
-        att_obj.insert(
-            CborValue::Text("authData".to_string()),
-            CborValue::Bytes(auth_data),
-        );
-        att_obj.insert(
-            CborValue::Text("attStmt".to_string()),
-            CborValue::Map(att_stmt),
-        );
-
+        // authenticatorMakeCredential response, per CTAP 2.1 §6.1.2:
+        //   0x01 fmt (text), 0x02 authData (bytes), 0x03 attStmt (map).
+        //
+        // It used to serialise a whole WebAuthn *attestation object* into 0x02 and put the
+        // AAGUID in 0x03, which is a different structure at every key: a real client
+        // (libfido2, a browser) reads 0x02 as authenticator data and fails immediately. The
+        // attestation object is what the *client* assembles from these three fields; the
+        // authenticator does not send one.
         let mut response = BTreeMap::new();
         response.insert(
             CborValue::Integer(0x01),
-            CborValue::Text("packed".to_string()),
+            CborValue::Text("none".to_string()),
         );
-        response.insert(
-            CborValue::Integer(0x02),
-            CborValue::Bytes(serde_cbor::to_vec(&CborValue::Map(att_obj)).unwrap_or_default()),
-        );
-        response.insert(
-            CborValue::Integer(0x03),
-            CborValue::Bytes(self.aaguid.to_vec()),
-        );
+        response.insert(CborValue::Integer(0x02), CborValue::Bytes(auth_data));
+        response.insert(CborValue::Integer(0x03), CborValue::Map(att_stmt));
 
         info!("MakeCredential successful");
-        Ctap2Response::success(CborValue::Map(response))
+        Step::Done(Ctap2Response::success(CborValue::Map(response)))
     }
 
-    fn handle_get_assertion(&mut self, params: Option<CborValue>) -> Ctap2Response {
+    fn handle_get_assertion(&mut self, params: Option<CborValue>, presence: UserPresence) -> Step {
         debug!("CTAP2 GetAssertion");
 
         let params = match params {
             Some(CborValue::Map(m)) => m,
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         let rp_id = match params.get(&CborValue::Integer(0x01)) {
             Some(CborValue::Text(s)) => s.clone(),
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         let client_data_hash = match params.get(&CborValue::Integer(0x02)) {
             Some(CborValue::Bytes(b)) if b.len() == 32 => b.clone(),
-            _ => return Ctap2Response::error(Ctap2Status::MissingParameter),
+            _ => return Step::Done(Ctap2Response::error(Ctap2Status::MissingParameter)),
         };
 
         info!("GetAssertion for RP '{}'", rp_id);
 
-        // Check for LLM approval if approval manager is configured
-        if let Some(ref approval_mgr) = self.approval_manager {
-            debug!("Requesting LLM approval for GetAssertion");
-            let (approval_id, decision) =
-                tokio::runtime::Handle::current().block_on(approval_mgr.request_approval(
-                    crate::server::usb::fido2::approval::OperationType::Authenticate,
-                    rp_id.clone(),
-                    None,
-                    None,
-                ));
+        // CTAP 2.1 §6.2.2 locates credentials (step 9) *before* collecting user presence
+        // (step 11), and that order matters here for a second reason: asking the model to
+        // approve an assertion the key could not produce anyway spends an LLM round trip and
+        // teaches it that a denial and an empty key look the same from the host's side.
+        if self.store.credential_count(&rp_id) == 0 {
+            warn!("No credentials found for RP '{}'", rp_id);
+            return Step::Done(Ctap2Response::error(Ctap2Status::NoCredentials));
+        }
 
-            if decision == crate::server::usb::fido2::approval::ApprovalDecision::Denied {
-                warn!("GetAssertion denied by LLM (approval_id={})", approval_id);
-                return Ctap2Response::error(Ctap2Status::OperationDenied);
+        // User presence. Nothing is signed and the counter is not touched before the decision.
+        match presence {
+            UserPresence::Ask => {
+                return Step::Ask(ApprovalDetails {
+                    operation: OperationType::Authenticate,
+                    rp_id: rp_id.clone(),
+                    user_name: self.store.first_user_name(&rp_id),
+                    credential_count: self.store.credential_count(&rp_id),
+                });
             }
-
-            info!("GetAssertion approved by LLM (approval_id={})", approval_id);
+            UserPresence::Denied => {
+                warn!("GetAssertion denied for RP '{}'", rp_id);
+                return Step::Done(Ctap2Response::error(Ctap2Status::OperationDenied));
+            }
+            UserPresence::Approved => {
+                info!("GetAssertion approved for RP '{}'", rp_id);
+            }
         }
 
         // Check PIN status before borrowing store mutably
@@ -743,7 +836,7 @@ impl Ctap2Handler {
             Some(c) => c,
             None => {
                 warn!("No credentials found for RP '{}'", rp_id);
-                return Ctap2Response::error(Ctap2Status::NoCredentials);
+                return Step::Done(Ctap2Response::error(Ctap2Status::NoCredentials));
             }
         };
 
@@ -758,7 +851,7 @@ impl Ctap2Handler {
         // Build authenticator data
         let mut auth_data = Vec::new();
         auth_data.extend_from_slice(
-            &ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref(),
+            ring::digest::digest(&ring::digest::SHA256, rp_id.as_bytes()).as_ref(),
         );
         // Flags: UP=1, UV=(pin verified)
         let flags = 0x01 | if pin_verified { 0x04 } else { 0x00 };
@@ -777,7 +870,7 @@ impl Ctap2Handler {
             Ok(kp) => kp,
             Err(e) => {
                 warn!("Failed to load private key: {}", e);
-                return Ctap2Response::error(Ctap2Status::Other);
+                return Step::Done(Ctap2Response::error(Ctap2Status::Other));
             }
         };
 
@@ -785,17 +878,32 @@ impl Ctap2Handler {
             Ok(sig) => sig.as_ref().to_vec(),
             Err(e) => {
                 warn!("Failed to sign: {}", e);
-                return Ctap2Response::error(Ctap2Status::Other);
+                return Step::Done(Ctap2Response::error(Ctap2Status::Other));
             }
         };
 
+        // authenticatorGetAssertion response, per CTAP 2.1 §6.2.2:
+        //   0x01 credential (PublicKeyCredentialDescriptor **map**), 0x02 authData, 0x03 sig.
+        //
+        // 0x01 used to be the raw credential id. A client reads it as a descriptor and looks
+        // for "id"/"type" inside, so the bare byte string is not something it can use.
+        let mut descriptor = BTreeMap::new();
+        descriptor.insert(
+            CborValue::Text("id".to_string()),
+            CborValue::Bytes(credential_id),
+        );
+        descriptor.insert(
+            CborValue::Text("type".to_string()),
+            CborValue::Text("public-key".to_string()),
+        );
+
         let mut response = BTreeMap::new();
-        response.insert(CborValue::Integer(0x01), CborValue::Bytes(credential_id));
+        response.insert(CborValue::Integer(0x01), CborValue::Map(descriptor));
         response.insert(CborValue::Integer(0x02), CborValue::Bytes(auth_data));
         response.insert(CborValue::Integer(0x03), CborValue::Bytes(signature));
 
         info!("GetAssertion successful");
-        Ctap2Response::success(CborValue::Map(response))
+        Step::Done(Ctap2Response::success(CborValue::Map(response)))
     }
 
     fn handle_client_pin(&mut self, params: Option<CborValue>) -> Ctap2Response {

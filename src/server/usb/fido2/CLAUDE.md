@@ -2,792 +2,260 @@
 
 ## Overview
 
-The USB FIDO2/U2F server creates a virtual security key (like a YubiKey) using the USB/IP protocol. This allows an LLM
-to control a virtual FIDO2 authenticator for passwordless authentication and two-factor authentication (2FA) with
-WebAuthn-compatible services.
-
-## Architecture
-
-### USB/IP + FIDO2 Protocol Stack
-
-```
-┌─────────────────┐                    ┌──────────────────┐
-│  NetGet Server  │                    │  Linux Client    │
-│  (USB/IP FIDO2) │ ◄────── TCP ─────► │  (vhci-hcd)      │
-│  Port: 3240     │                    │  usbip attach    │
-└─────────────────┘                    └──────────────────┘
-         │                                      │
-         │ Creates virtual                     │ Sees as
-         │ FIDO2 security key                  │ /dev/hidraw*
-         ▼                                     ▼
-    [HID Descriptors]                     [Security Key]
-    [CTAPHID Protocol]                    [WebAuthn/U2F]
-    [CTAP1/CTAP2 Commands]
-    [Credential Storage]
-```
-
-### Protocol Layers
-
-1. **USB Layer**: USB/IP protocol for device virtualization
-2. **HID Layer**: Human Interface Device class (0x03)
-3. **CTAPHID Layer**: CTAP HID transport with packet framing
-4. **CTAP Layer**: CTAP1 (U2F) and CTAP2 (FIDO2) commands
-5. **Crypto Layer**: Public key cryptography (ECDSA, EdDSA)
-6. **Storage Layer**: Credential database (encrypted)
-
-## Protocol Specifications
-
-### USB HID FIDO Device
-
-**Device Class**: HID (0x03)
-**Subclass**: None (0x00)
-**Protocol**: None (0x00)
-**Report Descriptor**: FIDO CTAPHID (64-byte packets)
-
-### CTAPHID Protocol
-
-CTAPHID is the HID transport protocol for CTAP messages:
-
-- **Packet Size**: 64 bytes (includes 7-byte header + 57-byte payload)
-- **Channel IDs**: 32-bit identifiers for routing
-- **Commands**: INIT, MSG, PING, CANCEL, ERROR, KEEPALIVE, WINK, LOCK, CBOR
-
-### CTAP1 (U2F) Commands
-
-Legacy U2F protocol (APDU-like binary format):
-
-- **U2F_REGISTER** (0x01): Register a new credential
-- **U2F_AUTHENTICATE** (0x02): Authenticate with existing credential
-- **U2F_VERSION** (0x03): Get U2F version string
-
-### CTAP2 (FIDO2) Commands
-
-Modern FIDO2 protocol (CBOR-encoded):
-
-- **authenticatorMakeCredential** (0x01): Create a new credential
-- **authenticatorGetAssertion** (0x02): Authenticate with credential
-- **authenticatorGetInfo** (0x04): Get authenticator metadata
-- **authenticatorClientPIN** (0x06): PIN management
-- **authenticatorReset** (0x07): Factory reset
-- **authenticatorGetNextAssertion** (0x08): Get next assertion
-- **authenticatorCredentialManagement** (0x0A): Manage credentials
-- **authenticatorSelection** (0x0B): User presence test
-- **authenticatorBioEnrollment** (0x09): Biometric enrollment (optional)
-
-## Current Status: **Not Yet Implemented**
-
-### What's Required
-
-#### Phase 1: USB HID Device Handler (High Priority)
-
-- ❌ Custom `UsbInterfaceHandler` for FIDO HID
-- ❌ HID report descriptor for FIDO (64-byte packets)
-- ❌ Interrupt IN endpoint (0x81) for responses
-- ❌ Interrupt OUT endpoint (0x01) for requests
-
-#### Phase 2: CTAPHID Transport (High Priority)
-
-- ❌ Packet framing (7-byte header + 57-byte data)
-- ❌ Channel management (32-bit channel IDs)
-- ❌ Message fragmentation and reassembly
-- ❌ Command dispatcher (INIT, MSG, PING, etc.)
-
-#### Phase 3: CTAP1 (U2F) Implementation (Medium Priority)
-
-- ❌ U2F_REGISTER command
-- ❌ U2F_AUTHENTICATE command
-- ❌ U2F_VERSION command
-- ❌ APDU parsing (ISO 7816-4 format)
-- ❌ Counter management (signature counter)
-
-#### Phase 4: CTAP2 (FIDO2) Implementation (Medium Priority)
-
-- ❌ authenticatorMakeCredential (CBOR)
-- ❌ authenticatorGetAssertion (CBOR)
-- ❌ authenticatorGetInfo (device metadata)
-- ❌ PIN protocol support (optional)
-- ❌ Credential management (optional)
-- ❌ CBOR encoding/decoding
-
-#### Phase 5: Cryptography (High Priority)
-
-- ❌ ECDSA signature generation (P-256)
-- ❌ EdDSA signature generation (Ed25519, optional)
-- ❌ Key pair generation
-- ❌ SHA-256 hashing
-- ❌ HMAC-SHA-256 (for attestation)
-
-#### Phase 6: Credential Storage (High Priority)
-
-- ❌ Credential database (in-memory or file-based)
-- ❌ Encrypted storage with passphrase
-- ❌ Credential ID generation
-- ❌ Relying party (RP) ID management
-- ❌ User handle association
-
-#### Phase 7: LLM Integration (Low Priority)
-
-- ❌ User presence approval (LLM prompt)
-- ❌ User verification (PIN simulation)
-- ❌ Event generation (register, authenticate, reset)
-- ❌ Actions (approve_request, deny_request, set_pin)
-
-#### Phase 8: Testing (Deferred)
-
-- ❌ E2E tests with real browsers (Chrome, Firefox)
-- ❌ U2F registration and authentication
-- ❌ FIDO2/WebAuthn registration and authentication
-- ❌ Multi-credential management
-
-## Implementation Complexity
-
-### Estimated Effort
-
-- **Phase 1** (USB HID handler): 1-2 days
-- **Phase 2** (CTAPHID transport): 2-3 days
-- **Phase 3** (CTAP1/U2F): 2-3 days
-- **Phase 4** (CTAP2/FIDO2): 3-4 days
-- **Phase 5** (Cryptography): 2-3 days
-- **Phase 6** (Credential storage): 1-2 days
-- **Phase 7** (LLM integration): 1-2 days
-- **Phase 8** (Testing): 2-3 days
-
-**Total**: 14-22 days for full implementation
-
-### Complexity Rating: **HIGH**
-
-**Reasons:**
-
-1. **Cryptography**: Requires robust public key cryptography (ECDSA, EdDSA)
-2. **Binary Protocols**: Complex binary framing (CTAPHID) and encoding (CBOR)
-3. **Security**: Must handle credentials securely (encryption, key storage)
-4. **Dual Protocol**: Must support both CTAP1 (U2F) and CTAP2 (FIDO2)
-5. **State Management**: Channel IDs, fragmentation, counter persistence
-
-## Library Choices
-
-### Available Rust Implementations
-
-#### 1. **softfido** (Rust, Complete Virtual FIDO2/U2F Implementation)
-
-- **GitHub**: https://github.com/ellerh/softfido
-- **Status**: Working implementation
-- **Architecture**: Virtual USB device via USB/IP + PKCS#11 backend (SoftHSM)
-
-**Features:**
-
-- Implements FIDO2/U2F authenticator over USB/IP
-- Delegates cryptography to SoftHSM (PKCS#11)
-- Can run on different machine than kernel module
-- Hobby project but functional
-
-**Pros:**
-
-- Already implements USB/IP for FIDO2 (perfect match!)
-- Written in Rust (can study and adapt code)
-- Modular design (crypto backend separate)
-- Proven to work with web browsers
-
-**Cons:**
-
-- Requires PKCS#11 setup (SoftHSM)
-- Hobby project (may lack polish)
-- License needs verification
-
-**Verdict:** ⭐⭐⭐⭐⭐ **BEST OPTION - Direct reference for our use case**
-
-#### 2. **rust-u2f** (danstiner, Software U2F Token)
-
-- **GitHub**: https://github.com/danstiner/rust-u2f
-- **Status**: U2F security token emulator
-- **Features**: Software-only U2F implementation
-
-**Pros:**
-
-- Pure Rust U2F implementation
-- Simpler than full FIDO2
-
-**Cons:**
-
-- U2F only (no FIDO2/CTAP2)
-- May not use USB/IP
-- Limited documentation
-
-**Verdict:** ⭐⭐⭐ Useful reference for U2F commands
-
-#### 3. **OpenSK** (Google, Production FIDO2)
-
-- **GitHub**: https://github.com/google/OpenSK
-- **Status**: FIDO Alliance certified
-- **Features**: Complete CTAP 2.0 implementation
-
-**Pros:**
-
-- Production-quality, FIDO-certified
-- Written in Rust
-- Comprehensive CTAP2 support
-- Post-quantum crypto research
-
-**Cons:**
-
-- Designed for embedded devices (Tock OS)
-- Complex codebase for embedded targets
-- Not designed for USB/IP virtualization
-
-**Verdict:** ⭐⭐⭐⭐ Excellent reference for CTAP2 protocol, but hard to adapt
-
-#### 4. **ctaphid** crate (CTAPHID Protocol)
-
-- **Crate**: https://crates.io/crates/ctaphid
-- **Features**: CTAPHID protocol implementation
-- **Supports**: All CTAPHID commands except cancel
-
-**Pros:**
-
-- Focused on CTAPHID transport layer
-- Can handle packet framing
-- Rust implementation
-
-**Cons:**
-
-- Only transport layer, not full authenticator
-- May need adaptation for our use case
-
-**Verdict:** ⭐⭐⭐ Useful for CTAPHID packet handling
-
-### C Library Bindings
-
-#### 5. **libfido2-sys** + **fido2-rs** (Yubico libfido2 Bindings)
-
-- **Crate**: https://crates.io/crates/libfido2-sys (FFI)
-- **Crate**: https://crates.io/crates/fido2-rs (safe wrapper)
-- **Library**: Yubico's official libfido2 C library
-
-**Features:**
-
-- Complete FIDO2 client implementation
-- Auto-builds or uses pkg-config
-- Cross-platform (Windows, Linux, macOS)
-
-**Pros:**
-
-- Production-quality C library
-- Official Yubico implementation
-- Safe Rust bindings available
-
-**Cons:**
-
-- **CLIENT-SIDE library** (for using tokens, not emulating them)
-- Not designed for authenticator implementation
-- Would need reverse engineering to understand wire protocol
-
-**Verdict:** ⭐ Not suitable - this is for clients, not authenticators
-
-### Mozilla's authenticator-rs (Client Library)
-
-- **GitHub**: https://github.com/mozilla/authenticator-rs
-- **Purpose**: Interact with hardware security keys
-- **Used by**: Firefox browser
-
-**Verdict:** ⭐ Not suitable - client-side only
-
-### Option 3: Adapt Virtual FIDO (Go → Rust Port)
-
-**Pros:**
-
-- Full control over implementation
-- Can tailor to LLM integration needs
-- No external dependencies on authenticator libraries
-
-**Cons:**
-
-- Very complex (14-22 days effort)
-- Requires cryptography expertise
-- Hard to get right (security-critical)
-
-### Option 2: Use OpenSK as Reference
-
-**OpenSK** (Google's open-source FIDO2 authenticator in Rust):
-
-- **GitHub**: https://github.com/google/OpenSK
-- **Status**: FIDO Alliance certified
-- **Features**: CTAP 2.0 implementation, credential management, PIN support
-
-**Pros:**
-
-- Production-quality reference implementation
-- Written in Rust
-- FIDO-certified implementation
-
-**Cons:**
-
-- Designed for embedded devices, not USB/IP
-- Would need significant adaptation
-- Large codebase to understand
-
-### Option 3: Adapt Virtual FIDO
-
-**Virtual FIDO** (bulwarkid/virtual-fido in Go):
-
-- **GitHub**: https://github.com/bulwarkid/virtual-fido
-- **Status**: Beta, active development
-- **Features**: USB/IP, CTAP1/CTAP2, credential storage
-
-**Pros:**
-
-- Already uses USB/IP for virtualization
-- Simpler implementation than OpenSK
-- Designed for virtual devices
-
-**Cons:**
-
-- Written in Go, not Rust
-- Would need full port to Rust
-- Beta quality, APIs may change
-
-### Recommended Approach (UPDATED)
-
-Based on the research findings, the **best approach is to use softfido as a reference** and adapt it to NetGet's
-architecture.
-
-**Strategy: Study and Adapt softfido**
-
-1. **Study softfido's architecture** (1-2 days)
-    - Understand its USB/IP integration
-    - Analyze CTAPHID implementation
-    - Review CTAP1/CTAP2 command handling
-    - Study PKCS#11 integration pattern
-
-2. **Replace PKCS#11 with direct crypto** (2-3 days)
-    - Use `ring` or `p256` crate instead of SoftHSM
-    - Implement credential storage directly
-    - Add signature counter persistence
-
-3. **Integrate with NetGet** (2-3 days)
-    - Use NetGet's USB/IP patterns (from keyboard/mouse/MSC)
-    - Add LLM integration for user presence
-    - Add protocol registration and actions
-    - Implement event generation
-
-4. **Test and refine** (1-2 days)
-    - Test with Chrome/Firefox
-    - Verify U2F and FIDO2 flows
-    - Fix compatibility issues
-
-**Total Effort with softfido reference**: 6-10 days (much better than 14-22 days from scratch!)
-
-**Alternative: Use ctaphid crate + OpenSK reference**
-
-If softfido's license is incompatible:
-
-1. Use `ctaphid` crate for transport layer
-2. Reference OpenSK for CTAP2 protocol logic
-3. Implement crypto with `ring`
-4. Estimated effort: 10-14 days
-
-## Required Crates (UPDATED)
-
-### Option A: Study softfido (Recommended)
-
-If adapting softfido:
-
-```toml
-# Softfido's approach (for reference):
-# - PKCS#11 for crypto (we'll replace this)
-# - USB/IP via custom implementation (we'll use usbip crate)
-
-# Our approach:
-ring = "0.17"              # Replace PKCS#11: ECDSA P-256, SHA-256, random
-serde_cbor = "0.11"        # CBOR for CTAP2
+A virtual FIDO2/U2F security key exported over USB/IP. The device presents an HID interface
+(class 0x03) speaking CTAPHID, and answers CTAP1 (U2F) and CTAP2 (FIDO2) commands with real
+ECDSA P-256 cryptography.
+
+The model's job is the one a human does on a real key: **approve or deny** each registration and
+each authentication. That is the whole point of the protocol here — it is a policy decision about
+a named relying party, which is what an LLM is actually good at, rather than a byte-level
+transformation, which it is not.
+
+**State: Experimental.** See *What is and is not verified* before trusting anything below.
+
+## Layout
+
+| File | What it does |
+|---|---|
+| `mod.rs` | Accept loop, USB/IP session, `Fido2HidHandler`, the four events, `Fido2ServerHandle` |
+| `ctaphid.rs` | CTAPHID transport: 64-byte frames, channel allocation, fragmentation, KEEPALIVE |
+| `u2f.rs` | CTAP1: REGISTER, AUTHENTICATE, VERSION, and the U2F credential store |
+| `ctap2.rs` | CTAP2: MakeCredential, GetAssertion, GetInfo, ClientPIN, Reset, and the CTAP2 store |
+| `approval.rs` | The user-presence decision: open / wait / approve / deny |
+| `actions.rs` | Actions, events, metadata, `execute_action_with_state` |
+
+## Four things that were broken, and are worth remembering
+
+This protocol was registered, rated `Experimental`, shipped in `all-protocols`, and **could not
+work in any way**.
+
+**1. There was no LLM integration at all.** `spawn_with_llm_actions` took `_llm_client` and
+`_app_state` and used neither. `get_sync_actions()` returned `vec![]` and the protocol did not
+delegate, so the model had no vocabulary for any event. All three declared events had zero emit
+sites. The protocol could not answer anything, and the guard that was supposed to catch exactly
+this (`audit_event_action_declarations`) **early-returned when `get_sync_actions()` was empty** —
+so it passed hardest on the most broken protocol in the tree. That hole is fixed; see
+`src/llm/actions/protocol_trait.rs`.
+
+**2. The model-facing actions panicked.** `execute_action({"type":"approve_request"})` did
+`tokio::runtime::Handle::current().block_on(...)` — *"Cannot block the current thread from within
+a runtime"* — and the events' own `response_example` taught the model to answer with exactly that
+action. The CTAP2 handler did the same thing on every MakeCredential and GetAssertion. This is
+the same defect documented in `src/server/usb/msc/handler.rs`: `usbip` calls the synchronous
+`UsbInterfaceHandler::handle_urb` from a tokio worker, so **the whole handler path must be
+synchronous**. `approval.rs` now uses `std::sync` locks throughout and `oneshot::Sender::send`,
+which is itself synchronous, so nothing on the action path needs a runtime handle.
+
+**3. `spawn` could not report failure.** `usbip::server(listen_addr, …)` was called *inside*
+`tokio::spawn`, after `Ok(listen_addr)` had already been returned. A port conflict was invisible
+and the server sat in `Running` having bound nothing. It binds first now, exactly as every other
+USB protocol does, and runs `usbip::handler(&mut stream, server)` on the socket netget accepted.
+
+**4. The approval manager was global and mis-scoped.** A `LazyLock<RwLock<HashMap<ServerId, …>>>`
+whose lookup was `values().next()` — with two FIDO2 servers running, an action aimed at one
+resolved approvals on the other — and nothing ever removed an entry. It is now a
+`Fido2ServerHandle` registered with `AppState::register_server_handle` and looked up by
+`server_id` in `execute_action_with_state`, so it is scoped correctly and dies with the server.
+
+## How approval works without blocking
+
+CTAPHID is asynchronous by design; that is what its `KEEPALIVE(0x02 = UPNEEDED)` status exists
+for. A real key sends it while the user decides whether to touch the button.
+
+```text
+ host                     handler (sync)              connection task (async)
+  │  CBOR MakeCredential      │                              │
+  ├──────────────────────────►│  parse, needs user presence  │
+  │                           ├── ApprovalDetails ──────────►│  approvals.open() → id
+  │◄── KEEPALIVE(UPNEEDED) ───┤                              │  raise fido2_register_request
+  │  (keeps polling IN)       │                              │  call_llm → approve_request
+  │                           │◄──── resolve(Approved) ──────┤  approvals.wait() → decision
+  │◄── CBOR response ─────────┤  replay the command          │
 ```
 
-### Option B: Use Existing Crates
+Three properties fall out of this and are worth stating explicitly:
 
-```toml
-# CTAPHID protocol implementation
-ctaphid = "0.2"            # CTAPHID packet framing and channel management
+- **Nothing happens before the decision.** The handler parses the command, answers the
+  *question*, and replays it only once a decision exists. A denial therefore leaves the
+  credential store byte-for-byte as it was — no key pair is generated, no counter moves. The
+  E2E tests assert this by asking for an assertion afterwards and requiring
+  `CTAP2_ERR_NO_CREDENTIALS`.
+- **Replay is safe** because parsing is pure. The parked command is the raw request bytes; there
+  is no half-executed state anywhere.
+- **A second command while one is parked gets `CTAPHID ERR_CHANNEL_BUSY`.** Silently replacing
+  the parked command would apply a decision meant for the first request to the second.
+  `CTAPHID CANCEL` drops the parked command instead, which is what a host that has moved on
+  expects.
 
-# Cryptography
-ring = "0.17"              # ECDSA P-256, SHA-256, random
-# OR
-p256 = "0.13"              # ECDSA P-256
-ed25519-dalek = "2.0"      # EdDSA Ed25519 (optional)
-sha2 = "0.10"              # SHA-256
+### Fail-closed
 
-# CBOR encoding (for CTAP2)
-serde_cbor = "0.11"        # CBOR serialization
-# OR
-ciborium = "0.2"           # Modern CBOR implementation
-```
+`timeout_decision` is `Denied` and there is no path that turns a missing answer into an approval:
 
-### Not Recommended (Client-Side Only)
+| What the model does | What the host sees |
+|---|---|
+| `approve_request` with the event's `approval_id` | the operation succeeds |
+| `deny_request` | `CTAP2_ERR_OPERATION_DENIED` (0x27), or U2F `SW_CONDITIONS_NOT_SATISFIED` |
+| anything else, or nothing, or an LLM outage | denied after `approval_timeout_secs` |
 
-```toml
-# These are for USING security keys, not implementing them:
-# libfido2-sys = "0.1"    # FFI to libfido2 (client-side)
-# fido2-rs = "0.1"        # Safe wrapper (client-side)
-# authenticator = "*"     # Mozilla's client library
-```
+An explicit denial is structurally distinct from silence — a different action, logged as a
+decision — which is the property the OAuth2 post-mortem in the root `CLAUDE.md` says to preserve.
 
-## HID Report Descriptor (FIDO)
+`auto_approve` exists, defaults to **false**, and has to be named in `startup_params`. It
+short-circuits `wait()` and never asks.
 
-The FIDO HID report descriptor defines 64-byte input/output reports:
+## Which commands need user presence
 
-```rust
-pub fn build_fido_hid_report_descriptor() -> Vec<u8> {
-    vec![
-        0x06, 0xD0, 0xF1,  // Usage Page (FIDO Alliance)
-        0x09, 0x01,        // Usage (U2F Authenticator Device)
-        0xA1, 0x01,        // Collection (Application)
-        0x09, 0x20,        //   Usage (Input Report Data)
-        0x15, 0x00,        //   Logical Minimum (0)
-        0x26, 0xFF, 0x00,  //   Logical Maximum (255)
-        0x75, 0x08,        //   Report Size (8 bits)
-        0x95, 0x40,        //   Report Count (64 bytes)
-        0x81, 0x02,        //   Input (Data, Variable, Absolute)
-        0x09, 0x21,        //   Usage (Output Report Data)
-        0x15, 0x00,        //   Logical Minimum (0)
-        0x26, 0xFF, 0x00,  //   Logical Maximum (255)
-        0x75, 0x08,        //   Report Size (8 bits)
-        0x95, 0x40,        //   Report Count (64 bytes)
-        0x91, 0x02,        //   Output (Data, Variable, Absolute)
-        0xC0,              // End Collection
-    ]
-}
-```
+| Command | Presence? | Why |
+|---|---|---|
+| CTAPHID INIT, PING, WINK, CANCEL | no | transport |
+| CTAP2 GetInfo, ClientPIN, Reset, GetNextAssertion | no | no credential is created or used |
+| CTAP2 MakeCredential | **yes** | creates a credential |
+| CTAP2 GetAssertion | **yes**, after the credential lookup | signs |
+| U2F REGISTER | **yes** | creates a credential |
+| U2F AUTHENTICATE, `P1 = 0x03` | **yes**, after the key-handle check | signs |
+| U2F AUTHENTICATE, `P1 = 0x07` (check-only) | **no** | a browser probes with check-only *before* it prompts; asking here would raise a spurious approval per probe |
 
-## CTAPHID Packet Format
+GetAssertion locates credentials **before** collecting presence, per CTAP 2.1 §6.2.2 (step 9
+before step 11). Beyond spec conformance that ordering avoids spending an LLM round trip on a
+request the key could not have satisfied anyway. U2F AUTHENTICATE does the same with the key
+handle.
 
-### Initialization Packet (first packet)
+## Wire-format corrections
 
-```
-Byte 0-3:  Channel ID (CID) - 32-bit identifier
-Byte 4:    Command byte | 0x80 (initialization flag)
-Byte 5-6:  Payload length (big-endian, 16-bit)
-Byte 7-63: Data (57 bytes)
-```
+Three encodings were wrong in ways a real client would have rejected immediately, and were only
+invisible because nothing had ever spoken CTAP to this device:
 
-### Continuation Packet (subsequent packets)
+- **MakeCredential response.** Was: a whole WebAuthn *attestation object* serialised into key
+  `0x02`, with the AAGUID in `0x03`. CTAP 2.1 §6.1.2 says `0x01` fmt, `0x02` **authenticator
+  data**, `0x03` **attStmt map** — the attestation object is what the *client* assembles from
+  those three, not something the authenticator sends.
+- **Attestation format.** Was `"packed"` with 71 zero bytes as the signature: a claim a relying
+  party can check and will reject. It is `"none"` with an empty statement now, which is what
+  every flow that does not pin an authenticator model asks for anyway.
+- **GetAssertion response key `0x01`.** Was the raw credential id. It is a
+  `PublicKeyCredentialDescriptor` map (`{"id": …, "type": "public-key"}`) per §6.2.2.
 
-```
-Byte 0-3:  Channel ID (CID) - same as initialization
-Byte 4:    Sequence number (0x00 - 0x7F)
-Byte 5-63: Data (59 bytes)
-```
+`capabilities` in the INIT response now follows the support flags: `CBOR` (0x04) is set when
+`support_fido2` is on, `NMSG` (0x08) when `support_u2f` is off. It used to be the constant
+`0x01`, so a host could not tell what the device would answer — and `support_u2f` /
+`support_fido2` were accepted as startup parameters and then ignored entirely.
 
-## CTAP1 (U2F) Example Flow
+## Startup parameters
 
-### Registration
+| Parameter | Default | Effect |
+|---|---|---|
+| `support_u2f` | `true` | answer CTAPHID MSG; clears `NMSG` in the INIT capabilities |
+| `support_fido2` | `true` | answer CTAPHID CBOR; sets `CBOR` in the INIT capabilities |
+| `auto_approve` | `false` | approve everything without asking (development only) |
+| `approval_timeout_secs` | `30` | how long a request waits before being **denied** |
 
-1. **Browser → Authenticator**: U2F_REGISTER
-    - Application parameter (32 bytes, SHA-256 of app ID)
-    - Challenge parameter (32 bytes, SHA-256 of client data)
+Both protocols off is an error at startup rather than a device that answers only INIT.
 
-2. **Authenticator → LLM**: Request user presence approval
+All four are optional, so all four are read with `get_optional_*`. `get_bool` **errors** on a
+missing key, and mapping it over `startup_params` turned "the caller did not mention
+`support_u2f`" into *"Required boolean parameter 'support_u2f' is missing"*, refusing to start a
+server whose parameters were all legal. If you add a parameter, use the optional accessor.
 
-3. **Authenticator → Browser**: Registration response
-    - Reserved byte (0x05)
-    - Public key (65 bytes, uncompressed P-256)
-    - Key handle length (1 byte)
-    - Key handle (variable)
-    - Attestation certificate (DER-encoded X.509)
-    - Signature (ECDSA over registration data)
+## LLM actions
 
-### Authentication
+**Sync** (answer an event): `approve_request`, `deny_request`, both taking the `approval_id` the
+event carried. `approval_id` is accepted as a number or as a numeric string — a small model
+quoting `"1"` would otherwise fail the action, and because an unanswered request denies, that
+would silently convert an approval into a denial.
 
-1. **Browser → Authenticator**: U2F_AUTHENTICATE
-    - Control byte (0x07 = check-only, 0x03 = enforce-user-presence)
-    - Application parameter (32 bytes)
-    - Challenge parameter (32 bytes)
-    - Key handle length (1 byte)
-    - Key handle (variable)
+**Async**: `list_pending_approvals`, `list_credentials`, `delete_credential`.
 
-2. **Authenticator → Browser**: Authentication response
-    - User presence byte (0x01)
-    - Counter (4 bytes, big-endian)
-    - Signature (ECDSA over response data)
+`list_credentials` reports relying party, user name, resident flag and signature counter across
+every attached host — **never** a credential id, key handle or key material, because its output
+reaches the model and the log. `Fido2HidHandler`'s `Debug` is hand-written and prints only the
+type name for the same reason.
 
-## CTAP2 (FIDO2) Example Flow
+`save_credentials` and `load_credentials` were removed. They logged a line and returned
+`NoAction`; and credential persistence would be storage implemented inside a protocol, which the
+project rule forbids.
 
-### MakeCredential (Registration)
+## LLM events
 
-**Request** (CBOR map):
+- `fido2_device_attached` — a host imported the device. Informational, `with_no_actions()`.
+- `fido2_register_request` — `connection_id`, `approval_id`, `rp_id`, `user_name`,
+  `credential_count`. Answer `approve_request` / `deny_request`.
+- `fido2_authenticate_request` — same fields. Same two actions.
+- `fido2_device_detached` — the session ended. Informational, `with_no_actions()`.
 
-```
-0x01: clientDataHash (32 bytes)
-0x02: rp (relying party map)
-      - "id": string
-      - "name": string
-0x03: user (user map)
-      - "id": bytes
-      - "name": string
-      - "displayName": string
-0x04: pubKeyCredParams (array of algorithm descriptors)
-      - "type": "public-key"
-      - "alg": -7 (ES256) or -8 (EdDSA)
-0x07: options (map, optional)
-      - "rk": resident key
-      - "uv": user verification
-```
+`rp_id` is a real domain for CTAP2. U2F only carries the SHA-256 of the origin, which is not
+reversible, so it is reported as `u2f-app:<first 8 hex>` and the parameter description says so
+rather than pretending to know the domain.
 
-**Response** (CBOR map):
+## What is and is not verified
 
-```
-0x01: fmt (attestation format, "packed")
-0x02: authData (authenticator data)
-0x03: attStmt (attestation statement)
-```
+**Verified**, by `tests/server/usb_fido2/e2e_test.rs` driving USB/IP and CTAPHID directly over
+TCP, with all CBOR decoded independently by `serde_cbor`:
 
-### GetAssertion (Authentication)
+- Enumeration, import, CTAPHID INIT (nonce echo, channel allocation, capability bits), PING
+  across multiple frames.
+- GetInfo: both versions advertised, 16-byte AAGUID, no KEEPALIVE.
+- MakeCredential under model approval: `fmt = "none"`, authenticator data whose RP-id hash is
+  `SHA-256("example.com")`, UP and AT flags set, AAGUID matching GetInfo, a COSE_Key that decodes
+  to a P-256 point.
+- GetAssertion under model approval: descriptor names the credential registration created, the
+  counter advances, and **the signature verifies with `ring` against the public key the
+  authenticator itself produced**. That last one is the assertion that makes the exercise mean
+  something — it can only pass if the private key was really generated, stored and used.
+- U2F REGISTER and AUTHENTICATE under model approval, with the signature likewise verified;
+  check-only authentication raising **no** approval.
+- Denial produces 0x27 and stores nothing; silence produces 0x27 and stores nothing.
+- KEEPALIVE is actually sent while the model decides (`keepalives > 0`).
 
-**Request** (CBOR map):
+**Not verified.** Nothing here has ever spoken to a real client:
 
-```
-0x01: rpId (string)
-0x02: clientDataHash (32 bytes)
-0x03: allowList (array of credential descriptors, optional)
-0x05: options (map, optional)
-```
+- No `vhci-hcd`, no `usbip attach`, no `/dev/hidraw*` — macOS has no USB/IP client at all.
+- No libfido2 (`fido2-token -I`, `fido2-cred -M`), no browser WebAuthn ceremony.
+- Attestation is `"none"`, so a relying party that *requires* attestation gets nothing usable.
+- ClientPIN is development-grade: the PIN is compared as SHA-256 of the plaintext, with none of
+  PIN protocol v1's ECDH shared secret. Do not read the PIN tests as protocol conformance.
+- Credentials do not survive the USB/IP session; there is no `credentialManagement`, no
+  `hmac-secret`, no `credProtect`, no largeBlob.
+- Multiple hosts attached at once. `Fido2ServerHandle` keeps a handler per connection and
+  `list_credentials` folds across them, but no test opens two sessions.
 
-**Response** (CBOR map):
-
-```
-0x01: credential (credential descriptor, optional)
-0x02: authData (authenticator data)
-0x03: signature (ECDSA signature)
-0x04: user (user map, if resident key)
-0x05: numberOfCredentials (if multiple credentials)
-```
-
-## Limitations
-
-### Server Side (Implementation)
-
-- **No Built-in Support**: usbip crate has no FIDO2 handlers
-- **Complex Cryptography**: Requires ECDSA, EdDSA, SHA-256
-- **Binary Protocols**: CTAPHID framing, CBOR encoding
-- **Security Critical**: Credential storage, key management
-- **High Effort**: 14-22 days estimated implementation time
-
-### Client Side (Same as other USB protocols)
-
-- **Linux Only**: Requires vhci-hcd kernel module (Linux 3.17+)
-- **Root Access**: Client must run `sudo usbip attach`
-- **Manual Import**: User must run attach command
-- **No Windows/macOS Client**: Limited to Linux hosts
-
-### Protocol
-
-- **User Presence**: LLM must approve every authentication
-- **No Biometrics**: No fingerprint/face recognition support
-- **No Resident Keys**: Credentials stored on server, not device
-- **Single User**: No multi-user credential management
-
-## LLM Integration Challenges
-
-### Challenge 1: User Presence
-
-FIDO2 requires user presence confirmation (button press). LLM must:
-
-- Receive approval prompts for each authentication
-- Respond within timeout (typically 30 seconds)
-- Handle concurrent requests (multiple tabs)
-
-### Challenge 2: Credential Management
-
-LLM should be able to:
-
-- List registered credentials
-- Delete credentials
-- View relying party information
-- Export/import credential database
-
-### Challenge 3: PIN Management
-
-FIDO2 PIN support requires:
-
-- Secure PIN storage (hashed)
-- PIN verification protocol
-- PIN retry counter
-- PIN change workflow
-
-## Testing Strategy
-
-### Manual Testing
-
-1. **Compile** (after implementation):
-   ```bash
-   ./cargo-isolated.sh build --no-default-features --features usb-fido2
-   ```
-
-2. **Start Server**:
-   ```bash
-   ./target-claude/*/debug/netget --protocol usb-fido2 --listen 0.0.0.0:3240
-   ```
-
-3. **Attach from Linux Client**:
-   ```bash
-   sudo modprobe vhci-hcd
-   sudo usbip list -r <server_ip>
-   sudo usbip attach -r <server_ip>:3240 -b 1-1
-   ```
-
-4. **Test U2F Registration** (using Chrome/Firefox):
-    - Navigate to demo site (e.g., webauthn.io)
-    - Register security key
-    - Verify credential creation
-
-5. **Test U2F Authentication**:
-    - Attempt login with security key
-    - Verify authentication succeeds
-
-### E2E Tests (Deferred)
-
-**Not yet implemented** due to complexity. Future E2E tests should:
-
-- Test U2F registration and authentication
-- Test FIDO2 registration and authentication
-- Test credential management
-- Test PIN operations
-- **Budget**: < 10 LLM calls (reuse key, test multiple scenarios)
-
-## Build Requirements
-
-### System Dependencies
-
-Same as other USB protocols:
+## Build
 
 ```bash
-# Ubuntu/Debian
-sudo apt-get install libusb-1.0-0-dev pkg-config
-
-# Fedora/RHEL
-sudo dnf install libusb1-devel pkgconfig
-
-# macOS
-brew install libusb pkg-config
+./cargo-isolated.sh build --no-default-features --features usb-fido2
 ```
 
-### Cargo.toml
+Needs `libusb-1.0` (the `usbip` crate links it): `brew install libusb pkg-config` on macOS,
+`apt-get install libusb-1.0-0-dev pkg-config` on Debian. Not available in Claude Code for Web.
 
-```toml
-[features]
-usb-fido2 = ["usb-common", "ring", "serde_cbor"]
+## Testing
 
-[dependencies]
-ring = { version = "0.17", optional = true }
-serde_cbor = { version = "0.11", optional = true }
+```bash
+./cargo-isolated.sh test --no-default-features --features usb-fido2 \
+    --test server -- --test-threads=100 usb_fido2
 ```
 
-## Security Considerations
+See `tests/server/usb_fido2/CLAUDE.md`.
 
-### Credential Protection
+## Manual testing against a real host (untried)
 
-- Store credentials encrypted at rest
-- Use secure random for key generation
-- Never log private keys or credentials
+```bash
+# Linux client
+sudo modprobe vhci-hcd
+sudo usbip list -r <netget-host>
+sudo usbip attach -r <netget-host> -b 0-0-0
+fido2-token -L
+fido2-token -I /dev/hidraw0
+fido2-cred -M -h example.com /dev/hidraw0
+sudo usbip detach -p 0
+```
 
-### Attestation
-
-- Use self-signed attestation certificate
-- Or batch attestation (shared cert)
-- Or no attestation (anonymity mode)
-
-### Counter Management
-
-- Persist signature counter to prevent replay
-- Increment on every authentication
-- Handle counter overflow gracefully
-
-### Transport Security
-
-- USB/IP is unencrypted (local network only)
-- Consider TLS wrapper for remote scenarios
-- Validate all input parameters
-
-## Future Enhancements
-
-### Phase 2: Advanced Features
-
-- Resident keys (credentials stored on device)
-- Biometric enrollment (simulated)
-- Multiple user accounts
-- Credential backup/restore
-
-### Phase 3: Extensions
-
-- HMAC-secret extension
-- CredProtect extension
-- Large blob storage
-- MinPinLength extension
-
-### Phase 4: LLM Features
-
-- Contextual approval (trust certain sites)
-- Automatic renewal prompts
-- Security analytics (unusual login patterns)
-- Credential recommendations
+If you run this, record what actually happened here — including the failures. The value of this
+section is that it is currently empty.
 
 ## References
 
-- **FIDO Alliance Specifications**: https://fidoalliance.org/specifications/
-- **CTAP 2.1 Spec
-  **: https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html
-- **CTAPHID Spec**: Included in CTAP specification
-- **U2F Raw Message Formats
-  **: https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-raw-message-formats-v1.2-ps-20170411.html
-- **WebAuthn API**: https://www.w3.org/TR/webauthn-2/
-- **OpenSK (Google)**: https://github.com/google/OpenSK
-- **Virtual FIDO (Go)**: https://github.com/bulwarkid/virtual-fido
-- **ring crate (crypto)**: https://docs.rs/ring/
-- **serde_cbor crate**: https://docs.rs/serde_cbor/
-
-## Recommendation (UPDATED)
-
-**Implementation Priority**: **MEDIUM** (upgraded from MEDIUM-LOW)
-
-**Rationale for Upgrade:**
-
-- **softfido exists as direct reference** (Rust + USB/IP + FIDO2)
-- Effort reduced from 14-22 days to **6-10 days** with reference
-- Can study working implementation before coding
-- Good showcase of LLM controlling security-critical operations
-
-**Updated Assessment:**
-
-**WITH softfido reference:**
-
-- ✅ Feasible in reasonable timeframe (6-10 days)
-- ✅ Direct code to study and adapt
-- ✅ USB/IP pattern already proven
-- ⚠️ Still requires crypto understanding
-- ⚠️ License verification needed
-
-**Implementation Recommendation:**
-
-1. **Phase 1: Verify softfido license** (Apache/MIT preferred)
-2. **Phase 2: Study softfido codebase** (1-2 days)
-    - Understand architecture
-    - Map to NetGet patterns
-    - Identify reusable components
-3. **Phase 3: Implement U2F first** (3-4 days)
-    - Simpler than FIDO2
-    - Sufficient for basic 2FA
-    - Validates approach
-4. **Phase 4: Add FIDO2 if needed** (2-4 days)
-    - WebAuthn support
-    - Passwordless authentication
-
-**Alternative if softfido license incompatible:**
-
-- Use `ctaphid` crate + OpenSK reference: 10-14 days
-- Still viable, just more effort
-
-**Best suited for:**
-
-- Security research and testing
-- FIDO2 protocol education
-- Demonstrating LLM security controls
-- Development environments without hardware keys
-
-**Prerequisite:** Implement simpler USB protocols first (✅ keyboard, ✅ mouse, ✅ storage already done!)
+- **CTAP 2.1**: https://fidoalliance.org/specs/fido-v2.1-ps-20210615/fido-client-to-authenticator-protocol-v2.1-ps-20210615.html
+- **U2F raw message formats**: https://fidoalliance.org/specs/fido-u2f-v1.2-ps-20170411/fido-u2f-raw-message-formats-v1.2-ps-20170411.html
+- **WebAuthn (authenticator data layout)**: https://www.w3.org/TR/webauthn-2/#sctn-authenticator-data
+- **USB/IP protocol**: https://docs.kernel.org/usb/usbip_protocol.html
+- **softfido** (the architecture this was originally modelled on): https://github.com/ellerh/softfido

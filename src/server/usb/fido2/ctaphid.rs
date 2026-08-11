@@ -215,6 +215,27 @@ impl CtapHidPacket {
     pub fn build_error(cid: u32, error: CtapHidError) -> Vec<u8> {
         Self::build_init(cid, CtapHidCommand::Error, &[error as u8])
     }
+
+    /// Build a KEEPALIVE packet.
+    ///
+    /// This is how a real authenticator says "still here, waiting for the button" rather than
+    /// going silent while the user decides. netget's button is the model, and an approval round
+    /// trip takes as long as an LLM call, so without this the host sees an unresponsive device
+    /// for seconds at a time and gives up.
+    pub fn build_keepalive(cid: u32, status: KeepaliveStatus) -> Vec<u8> {
+        Self::build_init(cid, CtapHidCommand::Keepalive, &[status as u8])
+    }
+}
+
+/// CTAPHID KEEPALIVE status byte.
+#[cfg(feature = "usb-fido2")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum KeepaliveStatus {
+    /// The authenticator is busy processing.
+    Processing = 0x01,
+    /// The authenticator is waiting for user presence.
+    UpNeeded = 0x02,
 }
 
 /// CTAPHID message assembler (handles fragmentation)

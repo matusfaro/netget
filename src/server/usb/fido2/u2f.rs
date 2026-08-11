@@ -26,6 +26,18 @@ use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 #[cfg(feature = "usb-fido2")]
 use tracing::{debug, warn};
 
+#[cfg(feature = "usb-fido2")]
+use crate::server::usb::fido2::approval::{ApprovalDetails, OperationType, UserPresence};
+
+/// What processing one U2F command produced. Mirrors `Ctap2Outcome`.
+#[cfg(feature = "usb-fido2")]
+pub enum U2fOutcome {
+    /// Encoded U2F response (data + status word), ready for CTAPHID framing.
+    Response(Vec<u8>),
+    /// This command cannot proceed until a user-presence decision is made.
+    NeedsApproval(ApprovalDetails),
+}
+
 /// U2F command codes (INS byte)
 #[cfg(feature = "usb-fido2")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -180,6 +192,37 @@ impl U2fCredentialStore {
             credentials: std::collections::HashMap::new(),
             rng: ring::rand::SystemRandom::new(),
         }
+    }
+
+    /// How many credentials exist for an application parameter (0 or 1 — U2F keeps one).
+    pub fn credential_count(&self, app_param: &[u8]) -> usize {
+        usize::from(self.credentials.contains_key(app_param))
+    }
+
+    /// Every stored credential as `(application label, counter)`, for `list_credentials`.
+    ///
+    /// No key handles and no key material: this reaches the model and the log.
+    pub fn describe_credentials(&self) -> Vec<(String, u32)> {
+        let mut out: Vec<(String, u32)> = self
+            .credentials
+            .iter()
+            .map(|(app, cred)| {
+                let hex: String = app.iter().take(4).map(|b| format!("{:02x}", b)).collect();
+                (format!("u2f-app:{}", hex), cred.counter)
+            })
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// Forget every credential whose application label matches. Returns how many were removed.
+    pub fn delete_credentials(&mut self, label: &str) -> usize {
+        let before = self.credentials.len();
+        self.credentials.retain(|app, _| {
+            let hex: String = app.iter().take(4).map(|b| format!("{:02x}", b)).collect();
+            format!("u2f-app:{}", hex) != label
+        });
+        before - self.credentials.len()
     }
 
     /// Generate a new ECDSA P-256 key pair
@@ -339,19 +382,41 @@ impl U2fHandler {
         }
     }
 
-    /// Process U2F command
-    pub fn process_command(&mut self, data: &[u8]) -> Vec<u8> {
+    /// Read-only view of the credential store, for the `list_credentials` action.
+    pub fn store(&self) -> &U2fCredentialStore {
+        &self.store
+    }
+
+    /// Mutable view of the credential store, for the `delete_credential` action.
+    pub fn store_mut(&mut self) -> &mut U2fCredentialStore {
+        &mut self.store
+    }
+
+    /// Process U2F command.
+    ///
+    /// `presence` gates the two commands that a real key requires a button press for:
+    /// REGISTER, and AUTHENTICATE with `P1 = 0x03` (enforce-user-presence). `U2F_VERSION` and
+    /// AUTHENTICATE with `P1 = 0x07` (check-only) answer immediately — check-only exists
+    /// precisely so a host can ask "do you know this key handle?" *without* a user gesture, and
+    /// gating it would break every browser that probes before prompting.
+    pub fn process_command(&mut self, data: &[u8], presence: UserPresence) -> U2fOutcome {
         let request = match U2fRequest::parse(data) {
             Ok(req) => req,
             Err(e) => {
                 warn!("Failed to parse U2F request: {}", e);
-                return U2fResponse::error(SW_WRONG_DATA).to_bytes();
+                return U2fOutcome::Response(U2fResponse::error(SW_WRONG_DATA).to_bytes());
             }
         };
 
         let response = match request.command() {
-            Some(U2fCommand::Register) => self.handle_register(&request),
-            Some(U2fCommand::Authenticate) => self.handle_authenticate(&request),
+            Some(U2fCommand::Register) => match self.handle_register(&request, presence) {
+                Ok(r) => r,
+                Err(details) => return U2fOutcome::NeedsApproval(details),
+            },
+            Some(U2fCommand::Authenticate) => match self.handle_authenticate(&request, presence) {
+                Ok(r) => r,
+                Err(details) => return U2fOutcome::NeedsApproval(details),
+            },
             Some(U2fCommand::Version) => self.handle_version(&request),
             None => {
                 warn!("Unsupported U2F command: {:#04x}", request.ins);
@@ -359,37 +424,75 @@ impl U2fHandler {
             }
         };
 
-        response.to_bytes()
+        U2fOutcome::Response(response.to_bytes())
     }
 
-    fn handle_register(&mut self, req: &U2fRequest) -> U2fResponse {
+    /// U2F identifies the relying party only by the SHA-256 of its origin, which is not
+    /// reversible, so the event names it as an explicitly-labelled digest prefix rather than
+    /// pretending to know the domain.
+    fn app_label(app_param: &[u8]) -> String {
+        let hex: String = app_param
+            .iter()
+            .take(4)
+            .map(|b| format!("{:02x}", b))
+            .collect();
+        format!("u2f-app:{}", hex)
+    }
+
+    fn handle_register(
+        &mut self,
+        req: &U2fRequest,
+        presence: UserPresence,
+    ) -> std::result::Result<U2fResponse, ApprovalDetails> {
         debug!("U2F_REGISTER command");
 
         // Register request data: challenge_param (32) || app_param (32)
         if req.data.len() != 64 {
             warn!("Invalid REGISTER data length: {}", req.data.len());
-            return U2fResponse::error(SW_WRONG_LENGTH);
+            return Ok(U2fResponse::error(SW_WRONG_LENGTH));
         }
 
         let challenge_param = &req.data[0..32];
         let app_param = &req.data[32..64];
 
+        match presence {
+            UserPresence::Ask => {
+                return Err(ApprovalDetails {
+                    operation: OperationType::Register,
+                    rp_id: Self::app_label(app_param),
+                    user_name: None,
+                    credential_count: self.store.credential_count(app_param),
+                })
+            }
+            UserPresence::Denied => {
+                warn!("U2F_REGISTER denied for {}", Self::app_label(app_param));
+                // 0x6985 is what a key returns while the button has not been pressed; it is
+                // also the honest answer to a refusal, and is what a host retries on.
+                return Ok(U2fResponse::error(SW_CONDITIONS_NOT_SATISFIED));
+            }
+            UserPresence::Approved => {}
+        }
+
         match self.store.register(app_param, challenge_param) {
-            Ok(response_data) => U2fResponse::success(response_data),
+            Ok(response_data) => Ok(U2fResponse::success(response_data)),
             Err(e) => {
                 warn!("REGISTER failed: {}", e);
-                U2fResponse::error(SW_WRONG_DATA)
+                Ok(U2fResponse::error(SW_WRONG_DATA))
             }
         }
     }
 
-    fn handle_authenticate(&mut self, req: &U2fRequest) -> U2fResponse {
+    fn handle_authenticate(
+        &mut self,
+        req: &U2fRequest,
+        presence: UserPresence,
+    ) -> std::result::Result<U2fResponse, ApprovalDetails> {
         debug!("U2F_AUTHENTICATE command (control={:#04x})", req.p1);
 
         // Authenticate request: challenge_param (32) || app_param (32) || key_handle_len (1) || key_handle
         if req.data.len() < 65 {
             warn!("Invalid AUTHENTICATE data length: {}", req.data.len());
-            return U2fResponse::error(SW_WRONG_LENGTH);
+            return Ok(U2fResponse::error(SW_WRONG_LENGTH));
         }
 
         let challenge_param = &req.data[0..32];
@@ -398,19 +501,49 @@ impl U2fHandler {
 
         if req.data.len() < 65 + kh_len {
             warn!("Key handle length mismatch");
-            return U2fResponse::error(SW_WRONG_LENGTH);
+            return Ok(U2fResponse::error(SW_WRONG_LENGTH));
         }
 
         let key_handle = &req.data[65..65 + kh_len];
+
+        // A key handle this device did not issue is answered before user presence is
+        // collected, exactly as a real key does: there is nothing to sign, so there is nothing
+        // to ask about.
+        if self.store.credential_count(app_param) == 0 {
+            warn!(
+                "U2F_AUTHENTICATE for unknown application {}",
+                Self::app_label(app_param)
+            );
+            return Ok(U2fResponse::error(SW_WRONG_DATA));
+        }
+
+        // Check-only never signs anything, so it needs no user gesture and must not ask for one.
+        if req.p1 != U2F_AUTH_CHECK_ONLY {
+            match presence {
+                UserPresence::Ask => {
+                    return Err(ApprovalDetails {
+                        operation: OperationType::Authenticate,
+                        rp_id: Self::app_label(app_param),
+                        user_name: None,
+                        credential_count: self.store.credential_count(app_param),
+                    })
+                }
+                UserPresence::Denied => {
+                    warn!("U2F_AUTHENTICATE denied for {}", Self::app_label(app_param));
+                    return Ok(U2fResponse::error(SW_CONDITIONS_NOT_SATISFIED));
+                }
+                UserPresence::Approved => {}
+            }
+        }
 
         match self
             .store
             .authenticate(app_param, challenge_param, key_handle, req.p1)
         {
-            Ok(response_data) => U2fResponse::success(response_data),
+            Ok(response_data) => Ok(U2fResponse::success(response_data)),
             Err(e) => {
                 warn!("AUTHENTICATE failed: {}", e);
-                U2fResponse::error(SW_CONDITIONS_NOT_SATISFIED)
+                Ok(U2fResponse::error(SW_CONDITIONS_NOT_SATISFIED))
             }
         }
     }

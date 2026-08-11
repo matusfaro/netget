@@ -1,47 +1,56 @@
 //! USB FIDO2/U2F Security Key server implementation
 //!
-//! This module implements a virtual FIDO2/U2F security key using the USB/IP protocol.
-//! The device appears as a USB HID device implementing the CTAPHID protocol.
+//! A virtual FIDO2/U2F security key exported over USB/IP. The device presents an HID interface
+//! (class 0x03) speaking CTAPHID, and answers CTAP1 (U2F) and CTAP2 (FIDO2) commands. The one
+//! decision the model makes is the one a human makes on a real key: **approve or deny this
+//! registration / authentication**.
 //!
-//! ## Implementation Status
+//! ## What was wrong here, and is worth remembering
 //!
-//! **FUNCTIONAL IMPLEMENTATION** - Core U2F and FIDO2 GetInfo commands working.
-//! See src/server/usb/fido2/CLAUDE.md for detailed implementation plan.
+//! This protocol was registered, advertised as `Experimental`, and could not work in any way:
 //!
-//! ## Architecture
+//! 1. **No LLM integration at all.** `spawn_with_llm_actions` took `_llm_client` and
+//!    `_app_state` and used neither. `get_sync_actions()` returned `vec![]` and did not
+//!    delegate, so the model had no vocabulary. All three declared events had zero emit sites.
+//! 2. **The model-facing actions panicked.** `execute_action({"type":"approve_request"})` did
+//!    `tokio::runtime::Handle::current().block_on(...)` — *"Cannot block the current thread from
+//!    within a runtime"* — and the event's own example taught the model to answer with exactly
+//!    that action. The CTAP2 handler did the same thing on every MakeCredential and
+//!    GetAssertion.
+//! 3. **`spawn` could not report failure.** `usbip::server(listen_addr, …)` was called *inside*
+//!    `tokio::spawn`, after `Ok(listen_addr)` had already been returned, so a port conflict was
+//!    invisible and the server sat in `Running` having bound nothing.
+//!
+//! The `block_on` shape is the same one documented in `src/server/usb/msc/handler.rs`: `usbip`
+//! calls the synchronous `UsbInterfaceHandler::handle_urb` from a tokio worker, so the whole
+//! handler path must be synchronous. It is now.
+//!
+//! ## How approval works without blocking
+//!
+//! CTAPHID is asynchronous by design — that is what its `KEEPALIVE(UPNEEDED)` status is for.
 //!
 //! ```text
-//! ┌────────────┐    USB/IP    ┌──────────┐    CTAPHID    ┌─────────────┐
-//! │   Browser  │ ◄───────────► │ USB/IP   │ ◄────────────► │  NetGet     │
-//! │  (Chrome)  │     HID       │ Client   │    64-byte    │  + FIDO2    │
-//! └────────────┘               └──────────┘    packets    └─────────────┘
+//!  host                     handler (sync)              connection task (async)
+//!   │  CBOR MakeCredential      │                              │
+//!   ├──────────────────────────►│  parse, decide it needs UP   │
+//!   │                           ├── ApprovalDetails ──────────►│  open() → approval id
+//!   │◄── KEEPALIVE(UPNEEDED) ───┤                              │  raise fido2_register_request
+//!   │  (polls IN)               │                              │  call_llm → approve_request
+//!   │                           │◄──── resolve(Approved) ──────┤  wait() → decision
+//!   │◄── CBOR response ─────────┤  replay the command          │
 //! ```
 //!
-//! ## Components
+//! Nothing is created or signed before the decision: the handler parses the command, answers
+//! the *question*, and only replays it once a decision exists. A denial therefore leaves the
+//! credential store exactly as it was, and an unanswered request denies (see `approval.rs`).
 //!
-//! - **CTAPHID** (`ctaphid.rs`): HID transport protocol with packet fragmentation
-//! - **U2F** (`u2f.rs`): CTAP1 commands (REGISTER, AUTHENTICATE, VERSION)
-//! - **CTAP2** (`ctap2.rs`): FIDO2 commands (MakeCredential, GetAssertion, GetInfo)
+//! ## Events
 //!
-//! ## Supported Features
-//!
-//! - ✅ CTAPHID transport layer (packet fragmentation, channel management)
-//! - ✅ U2F_VERSION command
-//! - ✅ U2F_REGISTER command (full implementation with ECDSA P-256)
-//! - ✅ U2F_AUTHENTICATE command (full implementation)
-//! - ✅ CTAP2 GetInfo command
-//! - ✅ CTAP2 MakeCredential (full credential creation with COSE keys)
-//! - ✅ CTAP2 GetAssertion (full assertion with ECDSA signatures)
-//! - ✅ Credential storage and management
-//!
-//! ## Limitations
-//!
-//! - No persistent credential storage (in-memory only, LLM controls persistence)
-//! - ✅ PIN/UV support (simplified for development, no full PIN protocol v1 shared secret)
-//! - ✅ Resident key support (basic implementation)
-//! - ✅ LLM approval system (sync/async bridge with configurable timeout and auto-approve mode)
-//! - Simplified attestation (no proper certificate chain)
-//! - Simplified ClientPin (development mode - uses direct PIN strings not encrypted protocol)
+//! * `fido2_device_attached` — a host connected. Informational (`with_no_actions()`).
+//! * `fido2_register_request` — a credential is being created. Answer `approve_request` or
+//!   `deny_request`.
+//! * `fido2_authenticate_request` — an assertion is being requested. Same two actions.
+//! * `fido2_device_detached` — the USB/IP session ended. Informational.
 
 pub mod actions;
 pub mod approval;
@@ -52,16 +61,24 @@ pub mod u2f;
 #[cfg(feature = "usb-fido2")]
 use anyhow::Result;
 #[cfg(feature = "usb-fido2")]
+use std::collections::HashMap;
+#[cfg(feature = "usb-fido2")]
 use std::net::SocketAddr;
 #[cfg(feature = "usb-fido2")]
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 #[cfg(feature = "usb-fido2")]
 use tokio::sync::mpsc;
 #[cfg(feature = "usb-fido2")]
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 #[cfg(feature = "usb-fido2")]
+use crate::llm::action_helper::call_llm;
+#[cfg(feature = "usb-fido2")]
 use crate::llm::ollama_client::OllamaClient;
+#[cfg(feature = "usb-fido2")]
+use crate::protocol::Event;
+#[cfg(feature = "usb-fido2")]
+use crate::server::connection::ConnectionId;
 #[cfg(feature = "usb-fido2")]
 use crate::state::app_state::AppState;
 
@@ -69,19 +86,39 @@ use crate::state::app_state::AppState;
 use crate::server::usb::descriptors::FIDO_HID_REPORT_DESCRIPTOR;
 
 #[cfg(feature = "usb-fido2")]
-use ctap2::Ctap2Handler;
+use actions::{
+    UsbFido2Protocol, FIDO2_AUTHENTICATE_REQUEST_EVENT, FIDO2_DEVICE_ATTACHED_EVENT,
+    FIDO2_DEVICE_DETACHED_EVENT, FIDO2_REGISTER_REQUEST_EVENT,
+};
 #[cfg(feature = "usb-fido2")]
-use ctaphid::{CtapHidCommand, CtapHidHandler, CtapHidPacket};
+use approval::{
+    ApprovalConfig, ApprovalDecision, ApprovalDetails, ApprovalManager, OperationType, UserPresence,
+};
 #[cfg(feature = "usb-fido2")]
-use u2f::U2fHandler;
+use ctap2::{Ctap2Handler, Ctap2Outcome};
+#[cfg(feature = "usb-fido2")]
+use ctaphid::{CtapHidCommand, CtapHidHandler, CtapHidPacket, KeepaliveStatus};
+#[cfg(feature = "usb-fido2")]
+use u2f::{U2fHandler, U2fOutcome};
 
 /// USB FIDO2 Security Key server
 #[cfg(feature = "usb-fido2")]
 pub struct UsbFido2Server;
 
+/// A CTAP command parked waiting for a user-presence decision.
+#[cfg(feature = "usb-fido2")]
+struct ParkedCommand {
+    cid: u32,
+    cmd: CtapHidCommand,
+    /// The raw request, replayed verbatim once the decision arrives. Parsing is pure, so
+    /// replaying is exactly equivalent to resuming — and it keeps the two protocol handlers
+    /// free of any half-executed state.
+    data: Vec<u8>,
+}
+
 /// FIDO2 USB/IP HID handler
 #[cfg(feature = "usb-fido2")]
-struct Fido2HidHandler {
+pub struct Fido2HidHandler {
     /// CTAPHID protocol handler
     ctaphid: CtapHidHandler,
     /// U2F command handler
@@ -90,46 +127,120 @@ struct Fido2HidHandler {
     ctap2: Ctap2Handler,
     /// Pending response packets
     response_packets: Vec<Vec<u8>>,
-    /// Approval manager (stored for lifetime management)
-    _approval_manager: Option<Arc<approval::ApprovalManager>>,
+    /// Command waiting on a user-presence decision, if any.
+    parked: Option<ParkedCommand>,
+    /// Where approval questions are posted for the connection task to pick up.
+    approval_tx: Option<mpsc::UnboundedSender<ApprovalDetails>>,
+    /// Whether CTAP1/U2F (`MSG`) is answered at all.
+    support_u2f: bool,
+    /// Whether CTAP2/FIDO2 (`CBOR`) is answered at all.
+    support_fido2: bool,
 }
 
 #[cfg(feature = "usb-fido2")]
 impl Fido2HidHandler {
-    #[allow(dead_code)]
-    fn new() -> Self {
-        Self::new_with_approval_manager(None)
-    }
-
-    fn new_with_approval_manager(approval_manager: Option<Arc<approval::ApprovalManager>>) -> Self {
+    pub fn new(support_u2f: bool, support_fido2: bool) -> Self {
         Self {
             ctaphid: CtapHidHandler::new(),
             u2f: U2fHandler::new(),
-            ctap2: Ctap2Handler::new_with_approval_manager(approval_manager.clone()),
+            ctap2: Ctap2Handler::new(),
             response_packets: Vec::new(),
-            _approval_manager: approval_manager,
+            parked: None,
+            approval_tx: None,
+            support_u2f,
+            support_fido2,
         }
     }
 
-    /// Process CTAPHID command
-    fn process_ctaphid_command(
+    /// Attach the channel the connection task listens on.
+    pub fn with_approvals(mut self, tx: mpsc::UnboundedSender<ApprovalDetails>) -> Self {
+        self.approval_tx = Some(tx);
+        self
+    }
+
+    /// Feed a decision back in and finish the parked command.
+    ///
+    /// Called by the connection task once the model has answered. A decision that arrives with
+    /// nothing parked is a no-op — the host may have cancelled, or the session may have ended.
+    pub fn resolve_approval(&mut self, decision: ApprovalDecision) {
+        let Some(parked) = self.parked.take() else {
+            debug!("FIDO2 approval decision arrived with no parked command");
+            return;
+        };
+
+        let presence = match decision {
+            ApprovalDecision::Approved => UserPresence::Approved,
+            ApprovalDecision::Denied => UserPresence::Denied,
+        };
+
+        let packets = self.run_command(parked.cid, parked.cmd, &parked.data, presence);
+        self.response_packets = packets;
+    }
+
+    /// Credentials currently held, for the `list_credentials` action.
+    ///
+    /// Reports relying party, user name and counter — never a key handle, a credential id or
+    /// any key material.
+    pub fn describe_credentials(&self) -> Vec<serde_json::Value> {
+        let mut out: Vec<serde_json::Value> = self
+            .ctap2
+            .store()
+            .describe_credentials()
+            .into_iter()
+            .map(|(rp_id, user_name, resident, counter)| {
+                serde_json::json!({
+                    "protocol": "fido2",
+                    "rp_id": rp_id,
+                    "user_name": user_name,
+                    "resident": resident,
+                    "counter": counter,
+                })
+            })
+            .collect();
+        out.extend(
+            self.u2f
+                .store()
+                .describe_credentials()
+                .into_iter()
+                .map(|(label, counter)| {
+                    serde_json::json!({
+                        "protocol": "u2f",
+                        "rp_id": label,
+                        "counter": counter,
+                    })
+                }),
+        );
+        out
+    }
+
+    /// Forget every credential for a relying party. Returns how many were removed.
+    pub fn delete_credentials(&mut self, rp_id: &str) -> usize {
+        self.ctap2.store_mut().delete_credentials(rp_id)
+            + self.u2f.store_mut().delete_credentials(rp_id)
+    }
+
+    /// Run one CTAPHID command and produce the packets to hand back.
+    ///
+    /// `presence` is `Ask` on the first attempt; a command that needs user presence parks
+    /// itself and answers KEEPALIVE instead.
+    fn run_command(
         &mut self,
         cid: u32,
         cmd: CtapHidCommand,
         data: &[u8],
+        presence: UserPresence,
     ) -> Vec<Vec<u8>> {
         debug!(
-            "CTAPHID command: {:?}, cid={:#010x}, data_len={}",
+            "CTAPHID command: {:?}, cid={:#010x}, data_len={}, presence={:?}",
             cmd,
             cid,
-            data.len()
+            data.len(),
+            presence
         );
 
         let response_data = match cmd {
             CtapHidCommand::Init => {
-                // INIT command: allocate new channel
-                // Request: 8-byte nonce
-                // Response: 8-byte nonce + 4-byte CID + protocol version + capabilities
+                // INIT: 8-byte nonce in, nonce + new CID + versions + capabilities out.
                 if data.len() < 8 {
                     return vec![CtapHidPacket::build_error(
                         cid,
@@ -143,42 +254,83 @@ impl Fido2HidHandler {
                 let mut response = Vec::new();
                 response.extend_from_slice(nonce); // Echo nonce
                 response.extend_from_slice(&new_cid.to_be_bytes()); // New CID
-                response.push(2); // Protocol version (CTAP 2.0)
+                response.push(2); // CTAPHID protocol version
                 response.push(0); // Major device version
                 response.push(0); // Minor device version
                 response.push(0); // Build device version
-                response.push(0x01); // Capabilities (WINK support)
+                                  // Capabilities: WINK (0x01), plus CBOR (0x04) when CTAP2 is on
+                                  // and NMSG (0x08) when CTAP1 is off. A host reads this to
+                                  // decide which protocol to speak, so it must follow the
+                                  // support flags rather than being a constant.
+                let mut capabilities = 0x01u8;
+                if self.support_fido2 {
+                    capabilities |= 0x04;
+                }
+                if !self.support_u2f {
+                    capabilities |= 0x08;
+                }
+                response.push(capabilities);
 
-                info!("CTAPHID INIT: allocated CID {:#010x}", new_cid);
+                info!(
+                    "CTAPHID INIT: allocated CID {:#010x} (capabilities {:#04x})",
+                    new_cid, capabilities
+                );
                 response
             }
 
             CtapHidCommand::Ping => {
-                // PING command: echo data back
                 debug!("CTAPHID PING: {} bytes", data.len());
                 data.to_vec()
             }
 
             CtapHidCommand::Msg => {
-                // MSG command: U2F/CTAP1 message
+                if !self.support_u2f {
+                    warn!("CTAPHID MSG received but U2F support is disabled");
+                    return vec![CtapHidPacket::build_error(
+                        cid,
+                        ctaphid::CtapHidError::InvalidCmd,
+                    )];
+                }
                 debug!("CTAPHID MSG (U2F): processing {} bytes", data.len());
-                self.u2f.process_command(data)
+                match self.u2f.process_command(data, presence) {
+                    U2fOutcome::Response(bytes) => bytes,
+                    U2fOutcome::NeedsApproval(details) => {
+                        return self.park(cid, cmd, data, details)
+                    }
+                }
             }
 
             CtapHidCommand::Cbor => {
-                // CBOR command: CTAP2 message
+                if !self.support_fido2 {
+                    warn!("CTAPHID CBOR received but FIDO2 support is disabled");
+                    return vec![CtapHidPacket::build_error(
+                        cid,
+                        ctaphid::CtapHidError::InvalidCmd,
+                    )];
+                }
                 debug!("CTAPHID CBOR (CTAP2): processing {} bytes", data.len());
-                self.ctap2.process_command(data)
+                match self.ctap2.process_command(data, presence) {
+                    Ctap2Outcome::Response(bytes) => bytes,
+                    Ctap2Outcome::NeedsApproval(details) => {
+                        return self.park(cid, cmd, data, details)
+                    }
+                }
             }
 
             CtapHidCommand::Wink => {
-                // WINK command: user presence test (no response data)
                 debug!("CTAPHID WINK");
                 Vec::new()
             }
 
             CtapHidCommand::Cancel => {
-                // CANCEL command: cancel pending request
+                // A cancelled command must not stay parked: the host has moved on, and
+                // resolving it later would sign something nobody is waiting for.
+                if self.parked.take().is_some() {
+                    info!(
+                        "CTAPHID CANCEL: dropped the parked command on cid {:#010x}",
+                        cid
+                    );
+                }
                 debug!("CTAPHID CANCEL");
                 Vec::new()
             }
@@ -192,8 +344,51 @@ impl Fido2HidHandler {
             }
         };
 
-        // Fragment response into HID packets
         self.ctaphid.fragment_response(cid, cmd, &response_data)
+    }
+
+    /// Park a command awaiting user presence and answer the host with KEEPALIVE.
+    fn park(
+        &mut self,
+        cid: u32,
+        cmd: CtapHidCommand,
+        data: &[u8],
+        details: ApprovalDetails,
+    ) -> Vec<Vec<u8>> {
+        let Some(ref tx) = self.approval_tx else {
+            // No connection task to ask means no user presence can ever be established.
+            // Refuse rather than proceed: an authenticator that signs without presence
+            // because nobody was listening is the fail-open shape this codebase keeps
+            // getting bitten by.
+            warn!(
+                "FIDO2 {:?} for '{}' needs user presence but no approval channel is attached; \
+                 denying",
+                details.operation, details.rp_id
+            );
+            let packets = self.run_command(cid, cmd, data, UserPresence::Denied);
+            return packets;
+        };
+
+        info!(
+            "FIDO2 {:?} for '{}' parked awaiting user presence",
+            details.operation, details.rp_id
+        );
+
+        if tx.send(details).is_err() {
+            warn!("FIDO2 approval channel closed; denying the request");
+            return self.run_command(cid, cmd, data, UserPresence::Denied);
+        }
+
+        self.parked = Some(ParkedCommand {
+            cid,
+            cmd,
+            data: data.to_vec(),
+        });
+
+        vec![CtapHidPacket::build_keepalive(
+            cid,
+            KeepaliveStatus::UpNeeded,
+        )]
     }
 }
 
@@ -204,13 +399,13 @@ impl Fido2HidHandler {
 /// U2F and CTAP2 handlers into the output, and those hold credential and key material for a
 /// security key -- exactly the thing that must not reach a log line. The type name alone
 /// satisfies the bound and says nothing it should not.
-#[cfg(feature = "usb-fido2")]
 impl std::fmt::Debug for Fido2HidHandler {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Fido2HidHandler { .. }")
     }
 }
 
+#[cfg(feature = "usb-fido2")]
 impl usbip::UsbInterfaceHandler for Fido2HidHandler {
     fn handle_urb(
         &mut self,
@@ -224,9 +419,9 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
     ) -> std::result::Result<Vec<u8>, std::io::Error> {
         use crate::server::usb::common::{descriptor_type, hid_request, request, request_type};
 
-        // Check if this is a control transfer (endpoint 0) or data transfer
-        if endpoint.address == 0 {
-            // Control transfer
+        // Control transfers arrive on endpoint 0 in either direction; the crate's control IN
+        // endpoint is 0x80, so testing `address == 0` alone misroutes it (the bug MSC had).
+        if endpoint.is_ep0() {
             debug!(
                 "FIDO2 control request: type={:#04x}, request={:#04x}, value={:#06x}",
                 setup.request_type, setup.request, setup.value
@@ -298,31 +493,40 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
                 }
             }
         } else if endpoint.address & 0x80 == 0 {
-            // Bulk/Interrupt OUT endpoint (host to device)
+            // Interrupt OUT endpoint (host to device)
             debug!(
                 "FIDO2 OUT: ep={:#04x}, {} bytes",
                 endpoint.address,
                 data.len()
             );
 
-            // Process CTAPHID packet
             match self.ctaphid.process_packet(data) {
                 Ok(Some(message)) => {
-                    // Complete message received - process command
-                    let response_packets = self.process_ctaphid_command(
-                        message.cid,
-                        message.cmd,
-                        &message.into_data(),
-                    );
-                    self.response_packets = response_packets;
+                    let (cid, cmd) = (message.cid, message.cmd);
+                    let payload = message.into_data();
+                    // A second command while one is parked is CTAPHID's channel-busy case. It
+                    // must not silently replace the parked one, or a decision meant for the
+                    // first request would be applied to the second.
+                    if self.parked.is_some() && cmd != CtapHidCommand::Cancel {
+                        warn!(
+                            "CTAPHID command {:?} on cid {:#010x} while a command is awaiting \
+                             user presence; answering CHANNEL_BUSY",
+                            cmd, cid
+                        );
+                        self.response_packets = vec![CtapHidPacket::build_error(
+                            cid,
+                            ctaphid::CtapHidError::ChannelBusy,
+                        )];
+                    } else {
+                        self.response_packets =
+                            self.run_command(cid, cmd, &payload, UserPresence::Ask);
+                    }
                 }
                 Ok(None) => {
-                    // Continuation packet - waiting for more
                     debug!("CTAPHID: waiting for continuation packets");
                 }
                 Err(e) => {
                     warn!("CTAPHID packet error: {}", e);
-                    // Send error response
                     self.response_packets = vec![CtapHidPacket::build_error(
                         0xffffffff,
                         ctaphid::CtapHidError::InvalidSeq,
@@ -332,25 +536,30 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
 
             Ok(vec![])
         } else {
-            // Bulk/Interrupt IN endpoint (device to host)
-            if let Some(packet) = self.response_packets.first().cloned() {
-                self.response_packets.remove(0);
+            // Interrupt IN endpoint (device to host)
+            if !self.response_packets.is_empty() {
+                let packet = self.response_packets.remove(0);
                 debug!(
                     "FIDO2 IN: ep={:#04x}, sending {} bytes",
                     endpoint.address,
                     packet.len()
                 );
                 Ok(packet)
+            } else if let Some(ref parked) = self.parked {
+                // Still waiting on the model. Say so rather than going silent.
+                Ok(CtapHidPacket::build_keepalive(
+                    parked.cid,
+                    KeepaliveStatus::UpNeeded,
+                ))
             } else {
-                // No data to send
                 Ok(vec![])
             }
         }
     }
 
     fn get_class_specific_descriptor(&self) -> Vec<u8> {
-        // Return HID descriptor for FIDO2
-        vec![] // HID descriptor is typically returned via GET_DESCRIPTOR request
+        // HID descriptor is returned via GET_DESCRIPTOR on the control endpoint.
+        vec![]
     }
 
     fn as_any(&mut self) -> &mut dyn std::any::Any {
@@ -358,87 +567,435 @@ impl usbip::UsbInterfaceHandler for Fido2HidHandler {
     }
 }
 
+/// Everything an action needs to reach a *running* FIDO2 server.
+///
+/// Registered with `AppState::register_server_handle` and looked up by `server_id` in
+/// `execute_action_with_state`. This replaces a `LazyLock` global map of approval managers whose
+/// lookup was "first value in the map" — with two FIDO2 servers running, actions aimed at one
+/// resolved approvals on the other, and the map was never cleaned up.
+/// The handler `usbip` holds for one attached host, as this module shares it.
+#[cfg(feature = "usb-fido2")]
+type SharedHandler = Arc<Mutex<Box<dyn usbip::UsbInterfaceHandler + Send>>>;
+
+#[cfg(feature = "usb-fido2")]
+pub struct Fido2ServerHandle {
+    pub approvals: Arc<ApprovalManager>,
+    handlers: Mutex<HashMap<ConnectionId, SharedHandler>>,
+}
+
+#[cfg(feature = "usb-fido2")]
+impl Fido2ServerHandle {
+    fn new(approvals: Arc<ApprovalManager>) -> Self {
+        Self {
+            approvals,
+            handlers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    fn set_handler(&self, id: ConnectionId, handler: SharedHandler) {
+        self.lock_handlers().insert(id, handler);
+    }
+
+    fn remove_handler(&self, id: ConnectionId) {
+        self.lock_handlers().remove(&id);
+    }
+
+    /// Run `f` against every attached device's handler, collecting the results.
+    ///
+    /// Credentials live per USB/IP session, so `list_credentials` and `delete_credential` are
+    /// answered across all attached hosts rather than picking one arbitrarily.
+    pub fn with_each_handler<T>(&self, mut f: impl FnMut(&mut Fido2HidHandler) -> T) -> Vec<T> {
+        let handlers: Vec<_> = self.lock_handlers().values().cloned().collect();
+        handlers
+            .iter()
+            .filter_map(|h| {
+                let mut guard = h.lock().unwrap_or_else(|p| p.into_inner());
+                guard.as_any().downcast_mut::<Fido2HidHandler>().map(&mut f)
+            })
+            .collect()
+    }
+
+    fn lock_handlers(&self) -> std::sync::MutexGuard<'_, HashMap<ConnectionId, SharedHandler>> {
+        self.handlers.lock().unwrap_or_else(|p| p.into_inner())
+    }
+}
+
 #[cfg(feature = "usb-fido2")]
 impl UsbFido2Server {
-    /// Spawn the USB FIDO2 server with LLM integration
+    /// Spawn the USB FIDO2 server with LLM integration.
+    ///
+    /// Binds before returning, so a port conflict is an `Err` and the server never reports
+    /// `Running` on a listener it does not have.
+    #[allow(clippy::too_many_arguments)]
     pub async fn spawn_with_llm_actions(
         listen_addr: SocketAddr,
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
-        _support_u2f: Option<bool>,
-        _support_fido2: Option<bool>,
+        support_u2f: Option<bool>,
+        support_fido2: Option<bool>,
         auto_approve: Option<bool>,
+        approval_timeout_secs: Option<u64>,
     ) -> Result<SocketAddr> {
+        let support_u2f = support_u2f.unwrap_or(true);
+        let support_fido2 = support_fido2.unwrap_or(true);
+        if !support_u2f && !support_fido2 {
+            anyhow::bail!(
+                "usb-fido2 needs at least one of support_u2f / support_fido2; with both false \
+                 the device would answer nothing but CTAPHID INIT"
+            );
+        }
+
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let local_addr = listener.local_addr()?;
+
+        let auto_approve = auto_approve.unwrap_or(false);
+        let approvals = Arc::new(ApprovalManager::new(ApprovalConfig {
+            auto_approve,
+            timeout: std::time::Duration::from_secs(approval_timeout_secs.unwrap_or(30)),
+            timeout_decision: ApprovalDecision::Denied,
+        }));
+
+        let handle = Arc::new(Fido2ServerHandle::new(approvals.clone()));
+        app_state
+            .register_server_handle(server_id, handle.clone())
+            .await;
+
         info!(
-            "Starting USB FIDO2/U2F Security Key server on {}",
-            listen_addr
+            "USB FIDO2/U2F security key listening on {} (u2f={}, fido2={}, auto_approve={})",
+            local_addr, support_u2f, support_fido2, auto_approve
         );
+        let _ = status_tx.send(format!(
+            "USB FIDO2/U2F security key listening on {} - run: sudo usbip attach -r {} -b 0-0-0",
+            local_addr,
+            local_addr.ip()
+        ));
 
-        // Create approval manager with configuration
-        let auto_approve_enabled = auto_approve.unwrap_or(false);
-        let approval_config = approval::ApprovalConfig {
-            auto_approve: auto_approve_enabled,
-            timeout: std::time::Duration::from_secs(30),
-            timeout_decision: approval::ApprovalDecision::Denied,
-        };
-        let approval_manager = Arc::new(approval::ApprovalManager::new(approval_config));
+        let protocol = Arc::new(UsbFido2Protocol::new());
+        let task_registrar = app_state.clone();
 
-        // Store approval manager in global storage for access by actions
-        approval::APPROVAL_MANAGERS
-            .write()
-            .await
-            .insert(server_id, approval_manager.clone());
+        let accept_handle = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, remote_addr)) => {
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
+                        let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
+                        info!(
+                            "USB/IP connection {} from {} (FIDO2 security key)",
+                            connection_id, remote_addr
+                        );
 
-        info!("FIDO2 approval mode: auto_approve={}", auto_approve_enabled);
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
+                        let now = std::time::Instant::now();
+                        let conn_state = ServerConnectionState {
+                            id: connection_id,
+                            remote_addr,
+                            local_addr: local_addr_conn,
+                            bytes_sent: 0,
+                            bytes_received: 0,
+                            packets_sent: 0,
+                            packets_received: 0,
+                            last_activity: now,
+                            status: ConnectionStatus::Active,
+                            status_changed_at: now,
+                            protocol_info: ProtocolConnectionInfo::new(serde_json::json!({
+                                "state": "WaitingForImport",
+                                "supports_u2f": support_u2f,
+                                "supports_fido2": support_fido2,
+                                "auto_approve": auto_approve,
+                            })),
+                        };
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Create FIDO2 HID handler with approval manager
-        let handler = Arc::new(std::sync::Mutex::new(Box::new(
-            Fido2HidHandler::new_with_approval_manager(Some(approval_manager)),
+                        let llm_client = llm_client.clone();
+                        let app_state = app_state.clone();
+                        let status_tx = status_tx.clone();
+                        let protocol = protocol.clone();
+                        let handle = handle.clone();
+
+                        tokio::spawn(async move {
+                            if let Err(e) = Self::handle_connection(
+                                stream,
+                                connection_id,
+                                remote_addr,
+                                llm_client,
+                                app_state,
+                                status_tx,
+                                protocol,
+                                handle,
+                                server_id,
+                                support_u2f,
+                                support_fido2,
+                            )
+                            .await
+                            {
+                                error!("USB FIDO2 connection {} error: {}", connection_id, e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        // A persistent accept error recurs immediately, so continuing spins a
+                        // hot loop on an unbounded status channel. Give up the listener.
+                        error!("USB FIDO2 accept failed, stopping accept loop: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
+
+        Ok(local_addr)
+    }
+
+    /// Drive one USB/IP session and the approval round trips that hang off it.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_connection(
+        mut stream: tokio::net::TcpStream,
+        connection_id: ConnectionId,
+        remote_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<UsbFido2Protocol>,
+        handle: Arc<Fido2ServerHandle>,
+        server_id: crate::state::ServerId,
+        support_u2f: bool,
+        support_fido2: bool,
+    ) -> Result<()> {
+        // The handler asks; this task answers. `handle_urb` is synchronous, so the channel is
+        // the seam — the same shape as `usb/msc`'s io_tx.
+        let (approval_tx, mut approval_rx) = mpsc::unbounded_channel::<ApprovalDetails>();
+
+        let hid_handler = Arc::new(Mutex::new(Box::new(
+            Fido2HidHandler::new(support_u2f, support_fido2).with_approvals(approval_tx),
         )
             as Box<dyn usbip::UsbInterfaceHandler + Send>));
 
-        // Create USB device with FIDO2 HID interface
-        let device = usbip::UsbDevice::new(0) // Bus 0
-            .with_interface(
-                0x03, // HID class
-                0x00, // No subclass
-                0x00, // No protocol
-                Some("NetGet FIDO2 Security Key"),
-                vec![
-                    usbip::UsbEndpoint {
-                        address: 0x81,       // EP1 IN (interrupt)
-                        attributes: 0x03,    // Interrupt transfer
-                        max_packet_size: 64, // 64 bytes (FIDO HID packet size)
-                        interval: 10,        // 10ms polling interval
-                    },
-                    usbip::UsbEndpoint {
-                        address: 0x01,       // EP1 OUT (interrupt)
-                        attributes: 0x03,    // Interrupt transfer
-                        max_packet_size: 64, // 64 bytes
-                        interval: 10,        // 10ms polling interval
-                    },
-                ],
-                handler.clone(),
-            );
+        handle.set_handler(connection_id, hid_handler.clone());
 
-        // Create USB/IP server (not wrapped in Arc - usbip::server takes ownership)
-        let server = usbip::UsbIpServer::new_simulated(vec![device]);
+        let device = usbip::UsbDevice::new(0).with_interface(
+            0x03, // HID class
+            0x00, // No subclass
+            0x00, // No protocol
+            Some("NetGet FIDO2 Security Key"),
+            vec![
+                usbip::UsbEndpoint {
+                    address: 0x81,       // EP1 IN (interrupt)
+                    attributes: 0x03,    // Interrupt transfer
+                    max_packet_size: 64, // CTAPHID frame size
+                    interval: 5,
+                },
+                usbip::UsbEndpoint {
+                    address: 0x01,    // EP1 OUT (interrupt)
+                    attributes: 0x03, // Interrupt transfer
+                    max_packet_size: 64,
+                    interval: 5,
+                },
+            ],
+            hid_handler.clone(),
+        );
 
-        info!("USB FIDO2 server starting on {}", listen_addr);
-        let _ = status_tx.send(format!(
-            "USB FIDO2/U2F Security Key starting on {} (connect with 'usbip attach')",
-            listen_addr
-        ));
+        let usbip_server = Arc::new(usbip::UsbIpServer::new_simulated(vec![device]));
 
-        // Spawn USB/IP protocol server (creates its own TCP listener)
-        tokio::spawn(async move {
-            // usbip 0.9 takes the server by Arc so it can be shared across connections.
-            usbip::server(listen_addr, std::sync::Arc::new(server)).await;
-            debug!("USB/IP server task completed for FIDO2");
+        // Run the USB/IP session on the socket netget already accepted. Calling
+        // `usbip::server(addr, ...)` here would try to *bind* a second listener and drop this
+        // socket, which is what the previous version did.
+        let mut usbip_task = tokio::spawn(async move {
+            match usbip::handler(&mut stream, usbip_server).await {
+                Ok(()) => debug!(
+                    "USB/IP session ended for FIDO2 connection {}",
+                    connection_id
+                ),
+                Err(e) => debug!(
+                    "USB/IP session for FIDO2 connection {} ended with error: {}",
+                    connection_id, e
+                ),
+            }
         });
 
-        Ok(listen_addr)
+        Self::raise(
+            &llm_client,
+            &app_state,
+            &protocol,
+            server_id,
+            connection_id,
+            Event::new(
+                &FIDO2_DEVICE_ATTACHED_EVENT,
+                serde_json::json!({
+                    "connection_id": connection_id.to_string(),
+                    "remote_addr": remote_addr.to_string(),
+                    "supports_u2f": support_u2f,
+                    "supports_fido2": support_fido2,
+                }),
+            ),
+            "attach",
+        )
+        .await;
+
+        loop {
+            tokio::select! {
+                asked = approval_rx.recv() => {
+                    let Some(details) = asked else { break };
+                    Self::decide(
+                        &llm_client,
+                        &app_state,
+                        &protocol,
+                        &handle,
+                        &hid_handler,
+                        server_id,
+                        connection_id,
+                        details,
+                    )
+                    .await;
+                }
+                _ = &mut usbip_task => break,
+            }
+        }
+
+        info!(
+            "USB FIDO2 host detached on connection {} from {}",
+            connection_id, remote_addr
+        );
+
+        Self::raise(
+            &llm_client,
+            &app_state,
+            &protocol,
+            server_id,
+            connection_id,
+            Event::new(
+                &FIDO2_DEVICE_DETACHED_EVENT,
+                serde_json::json!({ "connection_id": connection_id.to_string() }),
+            ),
+            "detach",
+        )
+        .await;
+
+        handle.remove_handler(connection_id);
+        app_state
+            .close_connection_on_server(server_id, connection_id)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        Ok(())
+    }
+
+    /// Ask the model about one request, then feed its decision back into the handler.
+    #[allow(clippy::too_many_arguments)]
+    async fn decide(
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        protocol: &Arc<UsbFido2Protocol>,
+        handle: &Arc<Fido2ServerHandle>,
+        hid_handler: &SharedHandler,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
+        details: ApprovalDetails,
+    ) {
+        // Open first, so the event can quote the id the model must answer with.
+        let (approval_id, rx) = handle
+            .approvals
+            .open(details.clone(), Some(connection_id.to_string()));
+
+        let event_type = match details.operation {
+            OperationType::Register => &FIDO2_REGISTER_REQUEST_EVENT,
+            OperationType::Authenticate => &FIDO2_AUTHENTICATE_REQUEST_EVENT,
+        };
+
+        let event = Event::new(
+            event_type,
+            serde_json::json!({
+                "connection_id": connection_id.to_string(),
+                "approval_id": approval_id,
+                "rp_id": details.rp_id,
+                "user_name": details.user_name,
+                "credential_count": details.credential_count,
+            }),
+        );
+
+        let what = match details.operation {
+            OperationType::Register => "register",
+            OperationType::Authenticate => "authenticate",
+        };
+
+        Self::raise(
+            llm_client,
+            app_state,
+            protocol,
+            server_id,
+            connection_id,
+            event,
+            what,
+        )
+        .await;
+
+        // If the model answered inline, the decision is already on the channel and this
+        // returns immediately. Otherwise it waits out the configured window — a user can still
+        // approve from the TUI — and denies when it expires.
+        let decision = handle.approvals.wait(approval_id, rx).await;
+
+        info!(
+            "FIDO2 {} request {} on connection {}: {:?}",
+            what, approval_id, connection_id, decision
+        );
+
+        let mut guard = hid_handler.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(fido2) = guard.as_any().downcast_mut::<Fido2HidHandler>() {
+            fido2.resolve_approval(decision);
+        } else {
+            error!(
+                "FIDO2 handler for connection {} is not a Fido2HidHandler; the decision is lost",
+                connection_id
+            );
+        }
+    }
+
+    /// Raise one event with the LLM.
+    ///
+    /// Unlike the MSC server there is no Idle/Processing gate: a parked command blocks the
+    /// device at the CTAPHID layer (a second command gets CHANNEL_BUSY), so overlapping calls
+    /// on one connection cannot arise.
+    async fn raise(
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        protocol: &Arc<UsbFido2Protocol>,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
+        event: Event,
+        what: &str,
+    ) {
+        match call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            // Event kind before the id, so a test can wait on one specific event with a
+            // substring match.
+            Ok(_) => info!(
+                "USB FIDO2 LLM call completed ({}) for connection {}",
+                what, connection_id
+            ),
+            Err(e) => error!(
+                "LLM call failed for USB FIDO2 connection {} ({}): {}",
+                connection_id, what, e
+            ),
+        }
     }
 }

@@ -1,91 +1,657 @@
-//! USB FIDO2/U2F Security Key E2E tests
+//! USB FIDO2/U2F security key E2E tests.
 //!
-//! These tests verify the FIDO2/U2F virtual security key implementation
-//! using real-world client tools (libfido2, browsers) and LLM integration.
+//! The question these answer is: *the model is the button on a security key — does approving
+//! actually create a credential, and does denying actually refuse?*
 //!
-//! ## BLOCKED: `usb-fido2` does not compile (src/ bug, out of test-owner scope)
+//! They drive a real USB/IP client over TCP (`tests/helpers/usbip_client.rs`) and a CTAPHID
+//! client written against the wire format (`super::ctaphid_client`): OP_REQ_IMPORT, then
+//! 64-byte HID frames carrying CTAP2 CBOR and CTAP1 APDUs. The CBOR is decoded independently by
+//! `serde_cbor`, and the assertion signature is verified with `ring` against the public key the
+//! *authenticator itself* produced during registration. A broken CTAP path cannot pass.
 //!
-//! Enabling the `usb-fido2` feature currently fails to build the `netget` lib
-//! itself (not just this test file) with 8x E0277 errors: `ring::error::Unspecified`
-//! and `ring::error::KeyRejected` do not implement `std::error::Error`, so the `?`
-//! operator cannot convert them into `anyhow::Error`. Locations:
-//!   - src/server/usb/fido2/ctap2.rs:287, 289, 298
-//!   - src/server/usb/fido2/u2f.rs:187, 189, 205, 310, 312
-//! Fix (in src/, out of scope for this test-wiring change): replace the bare `?`
-//! with `.map_err(|e| anyhow::anyhow!("{:?}", e))?` (or similar) at each site.
-//! This suite is wired into `tests/server/mod.rs` per the "no orphaned test dirs"
-//! policy, but no test here can run (or even compile) until that src/ bug is fixed.
+//! **What this does not prove.** There is no `vhci-hcd`, no `/dev/hidraw*`, no libfido2 and no
+//! browser — macOS has no USB/IP client at all, which is why the protocol is spoken directly.
+//! These establish that the device side is correct: netget puts the right CTAP bytes on the
+//! wire, and the model's decision is what determines whether it does. They do not establish
+//! that Chrome completes a WebAuthn ceremony against it.
+//!
+//! ## What this file replaced
+//!
+//! Fourteen tests, of which twelve exercised `Ctap2CredentialStore`, `CtapHidHandler` and
+//! `ApprovalManager` in isolation and two were `#[ignore]`d stubs containing only comments. Not
+//! one of them connected to the server. They passed throughout the period when the protocol
+//! had no LLM integration at all, every declared event was unreachable, and
+//! `execute_action("approve_request")` panicked with *"Cannot block the current thread from
+//! within a runtime"* — the action the events' own examples told the model to use. The unit
+//! tests worth keeping are still here at the bottom; the point is that they were never the
+//! thing that could have caught it.
 
 #[cfg(all(test, feature = "usb-fido2"))]
 mod tests {
-    use std::net::SocketAddr;
-    use std::sync::Arc;
-    use tokio::sync::mpsc;
-    use tokio::time::{sleep, Duration};
+    use std::time::Duration;
 
-    use netget::llm::OllamaClient;
-    use netget::server::usb::fido2::approval::{
-        ApprovalConfig, ApprovalDecision, ApprovalManager, OperationType,
-    };
-    use netget::server::usb::fido2::UsbFido2Server;
-    use netget::state::app_state::AppState;
+    use crate::helpers::*;
+    use crate::server::usb_fido2::ctaphid_client::*;
 
-    /// Test FIDO2 server startup with LLM integration
-    #[tokio::test]
-    #[ignore] // Requires system setup
-    async fn test_fido2_server_startup_with_llm() {
-        // Create test infrastructure
-        let (status_tx, mut status_rx) = mpsc::unbounded_channel();
-        let llm_client = OllamaClient::new("http://localhost:11434");
-        let app_state = Arc::new(AppState::new());
-        let server_id = netget::state::ServerId::new(1);
+    /// Log line the server emits after each LLM call on a FIDO2 connection. The event kind
+    /// comes before the connection id so a test can wait on one specific event.
+    const ATTACH_CALL_LOG: &str = "USB FIDO2 LLM call completed (attach)";
 
-        // Start server with auto-approve mode
-        let listen_addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+    /// A fixed 32-byte client data hash. Its value does not matter to the authenticator — it is
+    /// signed opaquely — but it must be the same on both sides for verification to mean
+    /// anything.
+    const CLIENT_DATA_HASH: [u8; 32] = [
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff,
+        0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee,
+        0xff, 0x00,
+    ];
 
-        let result = UsbFido2Server::spawn_with_llm_actions(
-            listen_addr,
-            llm_client,
-            app_state,
-            status_tx,
-            server_id,
-            Some(true), // support_u2f
-            Some(true), // support_fido2
-            Some(true), // auto_approve for testing
-        )
-        .await;
+    /// Parsed authenticator data, per WebAuthn §6.1.
+    struct AuthData {
+        rp_id_hash: [u8; 32],
+        flags: u8,
+        counter: u32,
+        aaguid: Vec<u8>,
+        credential_id: Vec<u8>,
+        /// Uncompressed X9.62 P-256 point rebuilt from the COSE_Key.
+        public_key: Vec<u8>,
+    }
 
-        assert!(result.is_ok(), "Server should start successfully");
-        let actual_addr = result.unwrap();
-
-        // Verify server is listening
+    /// Decode authenticator data with attested credential data attached.
+    ///
+    /// Written out from the spec rather than reusing netget's encoder, so the test constrains
+    /// the layout instead of agreeing with it.
+    fn parse_auth_data(bytes: &[u8]) -> AuthData {
         assert!(
-            actual_addr.port() > 0,
-            "Server should be listening on a port"
+            bytes.len() > 37,
+            "authenticator data is {} bytes; 37 is the minimum before attested credential data",
+            bytes.len()
         );
+        let mut rp_id_hash = [0u8; 32];
+        rp_id_hash.copy_from_slice(&bytes[0..32]);
+        let flags = bytes[32];
+        let counter = u32::from_be_bytes([bytes[33], bytes[34], bytes[35], bytes[36]]);
 
-        // Verify status message was sent
-        tokio::select! {
-            msg = status_rx.recv() => {
-                assert!(msg.is_some(), "Should receive status message");
-                let msg = msg.unwrap();
-                assert!(msg.contains("FIDO2"), "Status should mention FIDO2");
-            }
-            _ = sleep(Duration::from_secs(1)) => {
-                panic!("Timeout waiting for status message");
-            }
+        assert_eq!(
+            flags & 0x40,
+            0x40,
+            "the AT flag must be set when attested credential data follows"
+        );
+        assert!(bytes.len() >= 55, "attested credential data is truncated");
+
+        let aaguid = bytes[37..53].to_vec();
+        let cred_len = u16::from_be_bytes([bytes[53], bytes[54]]) as usize;
+        assert!(
+            bytes.len() >= 55 + cred_len,
+            "credential id claims {} bytes but only {} remain",
+            cred_len,
+            bytes.len() - 55
+        );
+        let credential_id = bytes[55..55 + cred_len].to_vec();
+
+        let cose: serde_cbor::Value = serde_cbor::from_slice(&bytes[55 + cred_len..])
+            .expect("the bytes after the credential id must be a COSE_Key");
+        let public_key = cose_to_uncompressed_point(&cose);
+
+        AuthData {
+            rp_id_hash,
+            flags,
+            counter,
+            aaguid,
+            credential_id,
+            public_key,
         }
     }
 
-    /// Test PIN/UV support
+    /// Rebuild the 65-byte uncompressed point from a COSE_Key ES256 map.
+    fn cose_to_uncompressed_point(cose: &serde_cbor::Value) -> Vec<u8> {
+        use serde_cbor::Value as C;
+        let C::Map(map) = cose else {
+            panic!("COSE_Key must be a CBOR map, got {:?}", cose);
+        };
+
+        let get_int = |k: i128| match map.get(&C::Integer(k)) {
+            Some(C::Integer(v)) => Some(*v),
+            _ => None,
+        };
+        let get_bytes = |k: i128| match map.get(&C::Integer(k)) {
+            Some(C::Bytes(v)) => Some(v.clone()),
+            _ => None,
+        };
+
+        assert_eq!(get_int(1), Some(2), "COSE kty must be 2 (EC2)");
+        assert_eq!(get_int(3), Some(-7), "COSE alg must be -7 (ES256)");
+        assert_eq!(get_int(-1), Some(1), "COSE crv must be 1 (P-256)");
+
+        let x = get_bytes(-2).expect("COSE_Key must carry x");
+        let y = get_bytes(-3).expect("COSE_Key must carry y");
+        assert_eq!(x.len(), 32, "P-256 x is 32 bytes");
+        assert_eq!(y.len(), 32, "P-256 y is 32 bytes");
+
+        let mut point = Vec::with_capacity(65);
+        point.push(0x04); // uncompressed
+        point.extend_from_slice(&x);
+        point.extend_from_slice(&y);
+        point
+    }
+
+    fn cbor_map(
+        payload: &[u8],
+    ) -> std::collections::BTreeMap<serde_cbor::Value, serde_cbor::Value> {
+        match serde_cbor::from_slice::<serde_cbor::Value>(payload)
+            .expect("CTAP2 payload must be valid CBOR")
+        {
+            serde_cbor::Value::Map(m) => m,
+            other => panic!("CTAP2 payload must be a CBOR map, got {:?}", other),
+        }
+    }
+
+    fn sha256(data: &[u8]) -> Vec<u8> {
+        ring::digest::digest(&ring::digest::SHA256, data)
+            .as_ref()
+            .to_vec()
+    }
+
+    /// The headline case: the model approves, and a real credential comes out that can then
+    /// sign an assertion verifiable against its own public key.
+    ///
+    /// Also covers CTAP1/U2F on the same device, including that **check-only** authentication
+    /// does not ask for user presence — a browser probes with `P1 = 0x07` before it prompts,
+    /// and gating that would make every login raise a spurious approval.
+    ///
+    /// LLM calls: 6 (startup, attach, CTAP2 register, CTAP2 assertion, U2F register, U2F
+    /// authenticate).
+    #[tokio::test]
+    async fn test_fido2_model_approval_produces_a_working_credential() -> E2EResult<()> {
+        let config = NetGetConfig::new(
+            "Be a FIDO2 security key that approves requests for example.com.".to_string(),
+        )
+        .with_mock(|mock| {
+            mock.on_event("fido2_device_attached")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "show_message", "message": "Security key attached"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("fido2_register_request")
+                .respond_with_actions_from_event(|e| {
+                    serde_json::json!([{
+                        "type": "approve_request",
+                        // Must be dynamic: the id identifies which request is being answered,
+                        // and approving the wrong one would leave the real one to time out.
+                        "approval_id": e["approval_id"].as_u64().unwrap_or(0)
+                    }])
+                })
+                .expect_calls(2)
+                .and()
+                .on_event("fido2_authenticate_request")
+                .respond_with_actions_from_event(|e| {
+                    serde_json::json!([{
+                        "type": "approve_request",
+                        "approval_id": e["approval_id"].as_u64().unwrap_or(0)
+                    }])
+                })
+                .expect_calls(2)
+                .and()
+                .on_event("fido2_device_detached")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "show_message", "message": "Security key detached"}
+                ]))
+                .expect_at_least(0)
+                .and()
+                .on_instruction_containing("FIDO2 security key")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "usb-fido2",
+                    "instruction": "Approve requests for example.com",
+                    "startup_params": {
+                        "support_u2f": true,
+                        "support_fido2": true,
+                        "auto_approve": false,
+                        "approval_timeout_secs": 15
+                    }
+                }]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let mut server = start_netget_server(config).await?;
+        assert!(server.is_running(), "USB FIDO2 server should be running");
+
+        // 1. Enumerate, attach, and allocate a CTAPHID channel.
+        let mut key = CtapHidClient::attach(server.port).await?;
+        server.wait_for_log(ATTACH_CALL_LOG, 10).await?;
+
+        let init = key.init().await?;
+        assert!(
+            init.supports_cbor(),
+            "a device with support_fido2=true must advertise CAPABILITY_CBOR, got {:#04x}",
+            init.capabilities
+        );
+        assert!(
+            !init.refuses_msg(),
+            "a device with support_u2f=true must not set CAPABILITY_NMSG, got {:#04x}",
+            init.capabilities
+        );
+
+        // 2. PING round trips through fragmentation and reassembly.
+        let payload: Vec<u8> = (0..200u32).map(|i| (i % 251) as u8).collect();
+        assert_eq!(
+            key.ping(&payload).await?,
+            payload,
+            "PING must return exactly what it was sent, across multiple frames"
+        );
+
+        // 3. GetInfo needs no approval and must answer immediately.
+        let info = key.cbor(&ctap2_get_info(), Duration::from_secs(5)).await?;
+        assert_eq!(info.status, CTAP2_OK, "GetInfo must succeed");
+        assert_eq!(
+            info.keepalives, 0,
+            "GetInfo needs no user presence and must not send KEEPALIVE"
+        );
+        let info_map = cbor_map(&info.payload);
+        let versions = info_map
+            .get(&serde_cbor::Value::Integer(0x01))
+            .expect("GetInfo must carry versions at key 0x01");
+        let serde_cbor::Value::Array(versions) = versions else {
+            panic!("versions must be an array");
+        };
+        let versions: Vec<String> = versions
+            .iter()
+            .filter_map(|v| match v {
+                serde_cbor::Value::Text(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            versions.contains(&"FIDO_2_0".to_string()) && versions.contains(&"U2F_V2".to_string()),
+            "a dual-protocol key must advertise both versions, got {:?}",
+            versions
+        );
+        let aaguid = match info_map.get(&serde_cbor::Value::Integer(0x03)) {
+            Some(serde_cbor::Value::Bytes(b)) => b.clone(),
+            other => panic!(
+                "GetInfo must carry a 16-byte aaguid at 0x03, got {:?}",
+                other
+            ),
+        };
+        assert_eq!(aaguid.len(), 16, "an AAGUID is 16 bytes");
+
+        // 4. MakeCredential. This is the request the model approves.
+        let made = key
+            .cbor(
+                &ctap2_make_credential("example.com", "user@example.com", &CLIENT_DATA_HASH),
+                Duration::from_secs(20),
+            )
+            .await?;
+        assert_eq!(
+            made.status, CTAP2_OK,
+            "MakeCredential must succeed once the model approves"
+        );
+        assert!(
+            made.keepalives > 0,
+            "the device must hold the host on KEEPALIVE while the model decides, not go silent"
+        );
+
+        let made_map = cbor_map(&made.payload);
+        assert_eq!(
+            made_map.get(&serde_cbor::Value::Integer(0x01)),
+            Some(&serde_cbor::Value::Text("none".to_string())),
+            "attestation format must be 'none'; claiming 'packed' with a zero signature is a \
+             lie a relying party can check"
+        );
+        let auth_data_bytes = match made_map.get(&serde_cbor::Value::Integer(0x02)) {
+            Some(serde_cbor::Value::Bytes(b)) => b.clone(),
+            other => panic!(
+                "MakeCredential key 0x02 must be authenticator data as a byte string, got {:?}",
+                other
+            ),
+        };
+        assert!(
+            matches!(
+                made_map.get(&serde_cbor::Value::Integer(0x03)),
+                Some(serde_cbor::Value::Map(_))
+            ),
+            "MakeCredential key 0x03 must be the attestation statement map"
+        );
+
+        let attested = parse_auth_data(&auth_data_bytes);
+        assert_eq!(
+            attested.rp_id_hash.to_vec(),
+            sha256(b"example.com"),
+            "authenticator data must begin with SHA-256 of the RP id"
+        );
+        assert_eq!(
+            attested.flags & 0x01,
+            0x01,
+            "the UP flag must be set: the model's approval *is* the user presence"
+        );
+        assert_eq!(attested.aaguid, aaguid, "the AAGUID must match GetInfo's");
+        assert!(
+            !attested.credential_id.is_empty(),
+            "a credential must have an id"
+        );
+        assert_eq!(
+            attested.public_key.len(),
+            65,
+            "the COSE_Key must yield a 65-byte uncompressed P-256 point"
+        );
+
+        // 5. GetAssertion, also approved — and the signature must verify against the public key
+        //    that came out of step 4. This is the assertion that makes the whole exercise
+        //    meaningful: it can only pass if the private key was really generated, really
+        //    stored, and really used.
+        let asserted = key
+            .cbor(
+                &ctap2_get_assertion("example.com", &CLIENT_DATA_HASH),
+                Duration::from_secs(20),
+            )
+            .await?;
+        assert_eq!(asserted.status, CTAP2_OK, "GetAssertion must succeed");
+
+        let assert_map = cbor_map(&asserted.payload);
+        let descriptor = match assert_map.get(&serde_cbor::Value::Integer(0x01)) {
+            Some(serde_cbor::Value::Map(m)) => m.clone(),
+            other => panic!(
+                "GetAssertion key 0x01 must be a PublicKeyCredentialDescriptor map, got {:?}",
+                other
+            ),
+        };
+        assert_eq!(
+            descriptor.get(&serde_cbor::Value::Text("type".into())),
+            Some(&serde_cbor::Value::Text("public-key".into())),
+            "the credential descriptor must declare type 'public-key'"
+        );
+        assert_eq!(
+            descriptor.get(&serde_cbor::Value::Text("id".into())),
+            Some(&serde_cbor::Value::Bytes(attested.credential_id.clone())),
+            "the assertion must name the credential that registration created"
+        );
+
+        let assert_auth_data = match assert_map.get(&serde_cbor::Value::Integer(0x02)) {
+            Some(serde_cbor::Value::Bytes(b)) => b.clone(),
+            other => panic!(
+                "GetAssertion key 0x02 must be authenticator data, got {:?}",
+                other
+            ),
+        };
+        let signature = match assert_map.get(&serde_cbor::Value::Integer(0x03)) {
+            Some(serde_cbor::Value::Bytes(b)) => b.clone(),
+            other => panic!(
+                "GetAssertion key 0x03 must be the signature, got {:?}",
+                other
+            ),
+        };
+
+        assert_eq!(
+            &assert_auth_data[0..32],
+            sha256(b"example.com").as_slice(),
+            "assertion authenticator data must also start with the RP id hash"
+        );
+        assert_eq!(
+            assert_auth_data[32] & 0x01,
+            0x01,
+            "the assertion must report user presence"
+        );
+        let assert_counter = u32::from_be_bytes([
+            assert_auth_data[33],
+            assert_auth_data[34],
+            assert_auth_data[35],
+            assert_auth_data[36],
+        ]);
+        assert!(
+            assert_counter > attested.counter,
+            "the signature counter must advance: {} did not exceed {}",
+            assert_counter,
+            attested.counter
+        );
+
+        let mut signed = assert_auth_data.clone();
+        signed.extend_from_slice(&CLIENT_DATA_HASH);
+        ring::signature::UnparsedPublicKey::new(
+            &ring::signature::ECDSA_P256_SHA256_FIXED,
+            &attested.public_key,
+        )
+        .verify(&signed, &signature)
+        .map_err(|_| {
+            "the assertion signature did not verify against the credential's own public key"
+        })?;
+
+        // 6. CTAP1/U2F on the same device. REGISTER needs presence and is approved.
+        let application = sha256(b"https://example.com");
+        let application: [u8; 32] = application
+            .as_slice()
+            .try_into()
+            .expect("sha256 is 32 bytes");
+        let challenge = [0x5au8; 32];
+
+        let u2f_reg = key
+            .msg(
+                &u2f_register(&challenge, &application),
+                Duration::from_secs(20),
+            )
+            .await?;
+        assert_eq!(
+            u2f_reg.sw, SW_NO_ERROR,
+            "U2F_REGISTER must succeed once approved (SW {:#06x})",
+            u2f_reg.sw
+        );
+        let registration = parse_u2f_registration(&u2f_reg.data)?;
+        assert_eq!(
+            registration.public_key[0], 0x04,
+            "the U2F public key must be an uncompressed point"
+        );
+        assert!(
+            !registration.key_handle.is_empty(),
+            "U2F registration must produce a key handle"
+        );
+
+        // 7. Check-only authentication must NOT ask for user presence. A browser probes with
+        //    P1=0x07 before prompting; asking here would raise an approval per probe.
+        let check = key
+            .msg(
+                &u2f_authenticate(&challenge, &application, &registration.key_handle, 0x07),
+                Duration::from_secs(5),
+            )
+            .await?;
+        assert_eq!(
+            check.keepalives, 0,
+            "check-only authentication must not request user presence"
+        );
+
+        // 8. Enforce-user-presence authentication is approved and signs.
+        let u2f_auth = key
+            .msg(
+                &u2f_authenticate(&challenge, &application, &registration.key_handle, 0x03),
+                Duration::from_secs(20),
+            )
+            .await?;
+        assert_eq!(
+            u2f_auth.sw, SW_NO_ERROR,
+            "U2F_AUTHENTICATE must succeed once approved (SW {:#06x})",
+            u2f_auth.sw
+        );
+        assert!(
+            u2f_auth.keepalives > 0,
+            "enforce-user-presence authentication must hold the host on KEEPALIVE"
+        );
+        assert_eq!(
+            u2f_auth.data[0], 0x01,
+            "the user presence byte must report presence"
+        );
+        let u2f_counter = u32::from_be_bytes([
+            u2f_auth.data[1],
+            u2f_auth.data[2],
+            u2f_auth.data[3],
+            u2f_auth.data[4],
+        ]);
+        assert!(u2f_counter >= 1, "the U2F counter must have advanced");
+
+        // The U2F signature covers application || presence || counter || challenge.
+        let mut u2f_signed = Vec::new();
+        u2f_signed.extend_from_slice(&application);
+        u2f_signed.push(0x01);
+        u2f_signed.extend_from_slice(&u2f_counter.to_be_bytes());
+        u2f_signed.extend_from_slice(&challenge);
+        ring::signature::UnparsedPublicKey::new(
+            &ring::signature::ECDSA_P256_SHA256_FIXED,
+            &registration.public_key[..],
+        )
+        .verify(&u2f_signed, &u2f_auth.data[5..])
+        .map_err(|_| "the U2F assertion signature did not verify against the registered key")?;
+
+        server.verify_mocks().await?;
+        server.stop().await?;
+        Ok(())
+    }
+
+    /// The refusal paths, which matter more than the happy path: a security key that cannot say
+    /// no is not a security key.
+    ///
+    /// Two distinct shapes, and they must both refuse:
+    ///
+    /// * The model **denies** — an explicit decision.
+    /// * The model **says nothing usable** — it answers with `show_message` and no decision.
+    ///   The request must time out and DENY, not fall through to an approval. This is the
+    ///   fail-open pattern the project has been bitten by repeatedly; here it would mean an LLM
+    ///   outage silently issuing credentials.
+    ///
+    /// LLM calls: 4 (startup, attach, denied register, unanswered register).
+    #[tokio::test]
+    async fn test_fido2_denial_and_silence_both_refuse() -> E2EResult<()> {
+        let config = NetGetConfig::new(
+            "Be a FIDO2 security key that refuses to register anything.".to_string(),
+        )
+        .with_mock(|mock| {
+            mock.on_event("fido2_device_attached")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "show_message", "message": "Security key attached"}
+                ]))
+                .expect_calls(1)
+                .and()
+                // An explicit denial.
+                .on_event("fido2_register_request")
+                .and_event_data_contains("rp_id", "denied.example")
+                .respond_with_actions_from_event(|e| {
+                    serde_json::json!([{
+                        "type": "deny_request",
+                        "approval_id": e["approval_id"].as_u64().unwrap_or(0)
+                    }])
+                })
+                .expect_calls(1)
+                .and()
+                // A model that answers but decides nothing. The request must expire into a
+                // denial rather than being treated as consent.
+                .on_event("fido2_register_request")
+                .and_event_data_contains("rp_id", "silent.example")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "show_message", "message": "thinking about it"}
+                ]))
+                .expect_calls(1)
+                .and()
+                .on_event("fido2_device_detached")
+                .respond_with_actions(serde_json::json!([
+                    {"type": "show_message", "message": "detached"}
+                ]))
+                .expect_at_least(0)
+                .and()
+                .on_instruction_containing("refuses to register")
+                .respond_with_actions(serde_json::json!([{
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "usb-fido2",
+                    "instruction": "Refuse every registration",
+                    "startup_params": {
+                        "auto_approve": false,
+                        // Short, so the silence case does not spend the default 30s window.
+                        "approval_timeout_secs": 3
+                    }
+                }]))
+                .expect_calls(1)
+                .and()
+        });
+
+        let server = start_netget_server(config).await?;
+
+        let mut key = CtapHidClient::attach(server.port).await?;
+        server.wait_for_log(ATTACH_CALL_LOG, 10).await?;
+        key.init().await?;
+
+        // 1. Explicit denial.
+        let denied = key
+            .cbor(
+                &ctap2_make_credential("denied.example", "user@denied.example", &CLIENT_DATA_HASH),
+                Duration::from_secs(20),
+            )
+            .await?;
+        assert_eq!(
+            denied.status, CTAP2_ERR_OPERATION_DENIED,
+            "a denied MakeCredential must return CTAP2_ERR_OPERATION_DENIED (0x27), got {:#04x}",
+            denied.status
+        );
+        assert!(
+            denied.payload.is_empty(),
+            "a denied request must carry no credential data, got {} bytes",
+            denied.payload.len()
+        );
+
+        // A denial must leave nothing behind. If a key pair had been generated before the
+        // decision, this would find it.
+        let after_denial = key
+            .cbor(
+                &ctap2_get_assertion("denied.example", &CLIENT_DATA_HASH),
+                Duration::from_secs(20),
+            )
+            .await?;
+        assert_eq!(
+            after_denial.status, CTAP2_ERR_NO_CREDENTIALS,
+            "a denied registration must store nothing, so GetAssertion must report \
+             CTAP2_ERR_NO_CREDENTIALS (0x2e), got {:#04x}",
+            after_denial.status
+        );
+
+        // 2. Silence. The model answers, but with no decision.
+        let unanswered = key
+            .cbor(
+                &ctap2_make_credential("silent.example", "user@silent.example", &CLIENT_DATA_HASH),
+                Duration::from_secs(20),
+            )
+            .await?;
+        assert_eq!(
+            unanswered.status, CTAP2_ERR_OPERATION_DENIED,
+            "an unanswered request must expire into a DENIAL, not an approval; got {:#04x}",
+            unanswered.status
+        );
+
+        let after_silence = key
+            .cbor(
+                &ctap2_get_assertion("silent.example", &CLIENT_DATA_HASH),
+                Duration::from_secs(20),
+            )
+            .await?;
+        assert_eq!(
+            after_silence.status, CTAP2_ERR_NO_CREDENTIALS,
+            "silence must not have created a credential"
+        );
+
+        server.verify_mocks().await?;
+        server.stop().await?;
+        Ok(())
+    }
+
+    // ---- Unit-level tests of the pieces the E2E tests exercise ----
+    //
+    // Kept because they pin behaviour that is awkward to reach over the wire: PIN retry
+    // counters, resident-key bookkeeping, and CTAPHID fragmentation at its exact limits.
+
+    /// PIN set / verify / retry accounting.
     #[tokio::test]
     async fn test_pin_uv_support() {
-        use netget::server::usb::fido2::ctap2::Ctap2CredentialStore;
+        use ::netget::server::usb::fido2::ctap2::Ctap2CredentialStore;
 
-        // Create credential store
         let mut store = Ctap2CredentialStore::new();
 
-        // Test PIN not set initially
         assert!(!store.has_pin(), "PIN should not be set initially");
         assert!(
             !store.pin_verified(),
@@ -93,619 +659,309 @@ mod tests {
         );
         assert_eq!(store.pin_retries(), 8, "Should start with 8 retries");
 
-        // Set a PIN
-        let result = store.set_pin("test1234");
-        assert!(result.is_ok(), "Should set PIN successfully");
+        store.set_pin("test1234").expect("Should set PIN");
         assert!(store.has_pin(), "PIN should be set after setting");
 
-        // Verify correct PIN
-        let result = store.verify_pin("test1234");
-        assert!(result.is_ok(), "PIN verification should not error");
-        assert_eq!(result.unwrap(), true, "Correct PIN should verify");
         assert!(
-            store.pin_verified(),
-            "PIN should be verified after correct entry"
+            store.verify_pin("test1234").expect("no error"),
+            "Correct PIN should verify"
         );
+        assert!(store.pin_verified(), "PIN should be verified");
         assert_eq!(store.pin_retries(), 8, "Retries should reset on success");
 
-        // Verify incorrect PIN
-        let result = store.verify_pin("wrong");
-        assert!(result.is_ok(), "PIN verification should not error");
-        assert_eq!(result.unwrap(), false, "Wrong PIN should not verify");
         assert!(
-            !store.pin_verified(),
-            "PIN should not be verified after wrong entry"
+            !store.verify_pin("wrong").expect("no error"),
+            "Wrong PIN should not verify"
         );
+        assert!(!store.pin_verified(), "PIN verification should be cleared");
         assert_eq!(store.pin_retries(), 7, "Retries should decrement");
 
-        // Test PIN too short
-        let result = store.set_pin("123");
-        assert!(result.is_err(), "PIN too short should fail");
-
-        // Test PIN too long
-        let result = store.set_pin(&"a".repeat(64));
-        assert!(result.is_err(), "PIN too long should fail");
+        assert!(store.set_pin("123").is_err(), "PIN too short should fail");
+        assert!(
+            store.set_pin(&"a".repeat(64)).is_err(),
+            "PIN too long should fail"
+        );
     }
 
-    /// Test resident key creation and storage
+    /// Resident and non-resident credentials, across relying parties.
     #[tokio::test]
     async fn test_resident_keys() {
-        use netget::server::usb::fido2::ctap2::Ctap2CredentialStore;
+        use ::netget::server::usb::fido2::ctap2::Ctap2CredentialStore;
 
         let mut store = Ctap2CredentialStore::new();
 
-        // Create non-resident credential
-        let cred1 = store.make_credential(
-            "example.com",
-            b"user123",
-            "test@example.com",
-            false, // not resident
-            false, // no UV
+        store
+            .make_credential("example.com", b"user123", "test@example.com", false, false)
+            .expect("non-resident credential");
+        store
+            .make_credential("example.com", b"user456", "user2@example.com", true, false)
+            .expect("resident credential");
+        store
+            .make_credential("test.com", b"user789", "user3@test.com", true, false)
+            .expect("credential for a second RP");
+
+        assert_eq!(
+            store.credential_count("example.com"),
+            2,
+            "both credentials for the RP must be counted, which is what the approval event \
+             reports to the model"
         );
-        assert!(cred1.is_ok(), "Should create non-resident credential");
-
-        // Create resident credential
-        let cred2 = store.make_credential(
-            "example.com",
-            b"user456",
-            "user2@example.com",
-            true,  // resident key
-            false, // no UV
-        );
-        assert!(cred2.is_ok(), "Should create resident credential");
-
-        // Verify credential can be found
-        let found = store.find_credentials("example.com", None);
-        assert!(found.is_some(), "Should find credential for RP");
-
-        // Create another resident credential for different RP
-        let cred3 = store.make_credential(
-            "test.com",
-            b"user789",
-            "user3@test.com",
-            true,  // resident key
-            false, // no UV
-        );
-        assert!(cred3.is_ok(), "Should create credential for different RP");
-
-        // Verify both RPs have credentials
         assert!(store.find_credentials("example.com", None).is_some());
         assert!(store.find_credentials("test.com", None).is_some());
-    }
-
-    /// Test approval system with auto-approve mode
-    #[tokio::test]
-    async fn test_approval_auto_approve() {
-        let config = ApprovalConfig {
-            auto_approve: true,
-            timeout: Duration::from_secs(30),
-            timeout_decision: ApprovalDecision::Denied,
-        };
-
-        let manager = ApprovalManager::new(config);
-
-        // Request approval - should instantly approve
-        let (id, decision) = manager
-            .request_approval(
-                OperationType::Register,
-                "example.com".to_string(),
-                Some("user@example.com".to_string()),
-                None,
-            )
-            .await;
-
-        assert_eq!(decision, ApprovalDecision::Approved, "Should auto-approve");
-        assert!(id > 0, "Should have valid approval ID");
-    }
-
-    /// Test approval system with manual approval
-    #[tokio::test]
-    async fn test_approval_manual_approve() {
-        let config = ApprovalConfig {
-            auto_approve: false,
-            timeout: Duration::from_secs(5),
-            timeout_decision: ApprovalDecision::Denied,
-        };
-
-        let manager = ApprovalManager::new(config);
-
-        // Spawn a task to approve after delay
-        let manager_clone = manager.clone();
-        let approve_task = tokio::spawn(async move {
-            // Wait a bit, then approve
-            sleep(Duration::from_millis(100)).await;
-
-            let pending = manager_clone.list_pending().await;
-            assert_eq!(pending.len(), 1, "Should have 1 pending request");
-
-            let approval_id = pending[0].0;
-            manager_clone.approve(approval_id).await
-        });
-
-        // Request approval - should wait and then be approved
-        let (id, decision) = manager
-            .request_approval(
-                OperationType::Authenticate,
-                "test.com".to_string(),
-                None,
-                None,
-            )
-            .await;
 
         assert_eq!(
-            decision,
-            ApprovalDecision::Approved,
-            "Should be approved by task"
+            store.delete_credentials("example.com"),
+            2,
+            "delete_credential must remove every credential for the RP"
         );
-
-        // Verify approval task completed successfully
-        let result = approve_task.await;
-        assert!(result.is_ok(), "Approve task should complete");
-        assert!(result.unwrap().is_ok(), "Approval should succeed");
-    }
-
-    /// Test approval system with manual denial
-    #[tokio::test]
-    async fn test_approval_manual_deny() {
-        let config = ApprovalConfig {
-            auto_approve: false,
-            timeout: Duration::from_secs(5),
-            timeout_decision: ApprovalDecision::Denied,
-        };
-
-        let manager = ApprovalManager::new(config);
-
-        // Spawn a task to deny after delay
-        let manager_clone = manager.clone();
-        tokio::spawn(async move {
-            sleep(Duration::from_millis(100)).await;
-            let pending = manager_clone.list_pending().await;
-            if let Some((id, _, _, _)) = pending.first() {
-                let _ = manager_clone.deny(*id).await;
-            }
-        });
-
-        // Request approval - should be denied
-        let (_id, decision) = manager
-            .request_approval(
-                OperationType::Register,
-                "example.com".to_string(),
-                Some("test@example.com".to_string()),
-                None,
-            )
-            .await;
-
-        assert_eq!(decision, ApprovalDecision::Denied, "Should be denied");
-    }
-
-    /// Test approval system timeout
-    #[tokio::test]
-    async fn test_approval_timeout() {
-        let config = ApprovalConfig {
-            auto_approve: false,
-            timeout: Duration::from_millis(100),
-            timeout_decision: ApprovalDecision::Denied,
-        };
-
-        let manager = ApprovalManager::new(config);
-
-        // Request approval without responding - should timeout
-        let (_id, decision) = manager
-            .request_approval(
-                OperationType::Register,
-                "example.com".to_string(),
-                None,
-                None,
-            )
-            .await;
-
-        assert_eq!(
-            decision,
-            ApprovalDecision::Denied,
-            "Should timeout and deny"
-        );
-    }
-
-    /// Test approval system list pending
-    #[tokio::test]
-    async fn test_approval_list_pending() {
-        let config = ApprovalConfig {
-            auto_approve: false,
-            timeout: Duration::from_secs(30),
-            timeout_decision: ApprovalDecision::Denied,
-        };
-
-        let manager = ApprovalManager::new(config);
-        let manager_clone = manager.clone();
-
-        // Spawn a task that requests an approval and parks on it.
-        //
-        // Both calls used to be made without `.await`, so the futures were created and dropped
-        // unpolled -- `request_approval` is async, and `let _ =` silenced the unused-future
-        // warning that would have said so. No approval was ever registered, `list_pending()`
-        // was correctly empty, and the test failed on every run. It is awaited now, which is
-        // also what leaves it pending: nothing answers it, so it sits until the 30s timeout.
-        let request_task = tokio::spawn(async move {
-            let _ = manager_clone
-                .request_approval(
-                    OperationType::Register,
-                    "example.com".to_string(),
-                    Some("user1@example.com".to_string()),
-                    None,
-                )
-                .await;
-        });
-
-        // Poll rather than sleeping a fixed 50ms: the old fixed wait was a bet on the spawned
-        // task being scheduled inside an arbitrary window, which is exactly the shape that
-        // makes a test flake under parallel load.
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        let pending = loop {
-            let pending = manager.list_pending().await;
-            if !pending.is_empty() || tokio::time::Instant::now() >= deadline {
-                break pending;
-            }
-            sleep(Duration::from_millis(10)).await;
-        };
-
         assert!(
-            !pending.is_empty(),
-            "an awaited request_approval must appear in list_pending() within 5s"
+            store.find_credentials("example.com", None).is_none(),
+            "deletion must actually delete"
         );
-
-        // Cancel the request task
-        request_task.abort();
+        assert!(
+            store.find_credentials("test.com", None).is_some(),
+            "deletion must not touch other relying parties"
+        );
     }
 
-    /// Test PIN requirement for user verification
+    /// UV requires a PIN, and requires it to have been verified.
     #[tokio::test]
     async fn test_pin_required_for_uv() {
-        use netget::server::usb::fido2::ctap2::Ctap2CredentialStore;
+        use ::netget::server::usb::fido2::ctap2::Ctap2CredentialStore;
 
         let mut store = Ctap2CredentialStore::new();
 
-        // Try to create credential with UV but no PIN set - should fail
-        let result = store.make_credential(
-            "example.com",
-            b"user123",
-            "test@example.com",
-            false, // not resident
-            true,  // require UV
-        );
         assert!(
-            result.is_err(),
-            "Should fail when UV required but PIN not set"
+            store
+                .make_credential("example.com", b"user123", "test@example.com", false, true)
+                .is_err(),
+            "UV without a PIN must fail"
         );
 
-        // Set PIN
         store.set_pin("test1234").unwrap();
-
-        // Try again without verifying - should still fail
-        let result = store.make_credential(
-            "example.com",
-            b"user123",
-            "test@example.com",
-            false, // not resident
-            true,  // require UV
-        );
         assert!(
-            result.is_err(),
-            "Should fail when UV required but PIN not verified"
+            store
+                .make_credential("example.com", b"user123", "test@example.com", false, true)
+                .is_err(),
+            "UV with an unverified PIN must fail"
         );
 
-        // Verify PIN
         store.verify_pin("test1234").unwrap();
-
-        // Try again with verified PIN - should succeed
-        let result = store.make_credential(
-            "example.com",
-            b"user123",
-            "test@example.com",
-            false, // not resident
-            true,  // require UV
-        );
         assert!(
-            result.is_ok(),
-            "Should succeed when UV required and PIN verified"
+            store
+                .make_credential("example.com", b"user123", "test@example.com", false, true)
+                .is_ok(),
+            "UV with a verified PIN must succeed"
         );
     }
 
-    /// Test CTAPHID packet fragmentation for small messages
+    /// A message that fits in one frame stays in one frame.
     #[tokio::test]
     async fn test_ctaphid_small_message() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
+        use ::netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
 
         let handler = CtapHidHandler::new();
         let cid = 0x12345678u32;
-        let cmd = CtapHidCommand::Ping;
-
-        // Small message (fits in one packet)
         let data = b"Hello FIDO2!";
 
-        let packets = handler.fragment_response(cid, cmd, data);
-
-        // Should be exactly 1 packet
+        let packets = handler.fragment_response(cid, CtapHidCommand::Ping, data);
         assert_eq!(packets.len(), 1, "Small message should fit in 1 packet");
 
-        // Verify packet structure
         let packet = &packets[0];
         assert_eq!(packet.len(), 64, "Packet should be 64 bytes");
-
-        // Verify CID
-        let packet_cid = u32::from_be_bytes([packet[0], packet[1], packet[2], packet[3]]);
-        assert_eq!(packet_cid, cid, "CID should match");
-
-        // Verify CMD with init bit
         assert_eq!(
-            packet[4],
-            (cmd as u8) | 0x80,
-            "CMD should have init bit set"
+            u32::from_be_bytes([packet[0], packet[1], packet[2], packet[3]]),
+            cid
         );
-
-        // Verify BCNT (byte count)
-        let bcnt = u16::from_be_bytes([packet[5], packet[6]]);
-        assert_eq!(bcnt, data.len() as u16, "BCNT should match data length");
-
-        // Verify data
-        assert_eq!(&packet[7..7 + data.len()], data, "Data should match");
+        assert_eq!(packet[4], (CtapHidCommand::Ping as u8) | 0x80);
+        assert_eq!(
+            u16::from_be_bytes([packet[5], packet[6]]),
+            data.len() as u16
+        );
+        assert_eq!(&packet[7..7 + data.len()], data);
     }
 
-    /// Test CTAPHID packet fragmentation for large messages
+    /// 150 bytes is 1 init frame plus 2 continuations, with the exact byte ranges pinned.
     #[tokio::test]
     async fn test_ctaphid_large_message_fragmentation() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
+        use ::netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
 
         let handler = CtapHidHandler::new();
         let cid = 0xabcdef01u32;
-        let cmd = CtapHidCommand::Cbor;
-
-        // Large message requiring fragmentation (150 bytes)
         let data = vec![0xAAu8; 150];
 
-        let packets = handler.fragment_response(cid, cmd, &data);
-
-        // Calculate expected packet count
-        // First packet: 57 bytes, continuation packets: 59 bytes each
-        // Remaining after first: 150 - 57 = 93 bytes
-        // Continuation packets needed: ceil(93 / 59) = 2
-        // Total: 1 init + 2 cont = 3 packets
+        let packets = handler.fragment_response(cid, CtapHidCommand::Cbor, &data);
         assert_eq!(packets.len(), 3, "150-byte message should need 3 packets");
 
-        // Verify init packet
         let init_packet = &packets[0];
-        assert_eq!(init_packet.len(), 64);
-        assert_eq!(
-            init_packet[4],
-            (cmd as u8) | 0x80,
-            "Init packet should have CMD with init bit"
-        );
-        let bcnt = u16::from_be_bytes([init_packet[5], init_packet[6]]);
-        assert_eq!(bcnt, 150, "BCNT should be total message length");
-        assert_eq!(
-            &init_packet[7..64],
-            &data[0..57],
-            "Init packet data should match first 57 bytes"
-        );
+        assert_eq!(init_packet[4], (CtapHidCommand::Cbor as u8) | 0x80);
+        assert_eq!(u16::from_be_bytes([init_packet[5], init_packet[6]]), 150);
+        assert_eq!(&init_packet[7..64], &data[0..57]);
 
-        // Verify first continuation packet
         let cont1 = &packets[1];
-        assert_eq!(cont1.len(), 64);
-        let cid1 = u32::from_be_bytes([cont1[0], cont1[1], cont1[2], cont1[3]]);
-        assert_eq!(cid1, cid, "Continuation packet CID should match");
+        assert_eq!(
+            u32::from_be_bytes([cont1[0], cont1[1], cont1[2], cont1[3]]),
+            cid
+        );
         assert_eq!(cont1[4], 0, "First continuation packet should have SEQ=0");
-        assert_eq!(
-            &cont1[5..64],
-            &data[57..116],
-            "First cont packet data should match bytes 57-115"
-        );
+        assert_eq!(&cont1[5..64], &data[57..116]);
 
-        // Verify second continuation packet
         let cont2 = &packets[2];
-        assert_eq!(cont2.len(), 64);
         assert_eq!(cont2[4], 1, "Second continuation packet should have SEQ=1");
-        assert_eq!(
-            &cont2[5..5 + 34],
-            &data[116..150],
-            "Second cont packet data should match remaining bytes"
-        );
+        assert_eq!(&cont2[5..5 + 34], &data[116..150]);
     }
 
-    /// Test CTAPHID packet assembly from fragments
+    /// Fragment then reassemble: the round trip must be lossless.
     #[tokio::test]
     async fn test_ctaphid_packet_assembly() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler, CtapHidPacket};
+        use ::netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
 
         let mut handler = CtapHidHandler::new();
         let cid = 0x99887766u32;
-
-        // Create a multi-packet message
         let original_data = vec![0x42u8; 100];
 
-        // Fragment it
         let packets = handler.fragment_response(cid, CtapHidCommand::Ping, &original_data);
         assert!(packets.len() > 1, "Should have multiple packets");
 
-        // Now process the packets through the handler to reassemble
         let mut assembled_message = None;
-
         for packet_bytes in packets {
-            let result = handler.process_packet(&packet_bytes);
-            assert!(result.is_ok(), "Packet processing should not error");
-
-            if let Some(msg) = result.unwrap() {
+            let result = handler
+                .process_packet(&packet_bytes)
+                .expect("Packet processing should not error");
+            if let Some(msg) = result {
                 assembled_message = Some(msg);
             }
         }
 
-        // Verify message was assembled
-        assert!(
-            assembled_message.is_some(),
-            "Message should be assembled after all packets"
-        );
-        let message = assembled_message.unwrap();
-
-        assert_eq!(message.cid, cid, "Assembled message CID should match");
-        assert_eq!(
-            message.cmd,
-            CtapHidCommand::Ping,
-            "Assembled message CMD should match"
-        );
-
-        let reassembled_data = message.into_data();
-        assert_eq!(
-            reassembled_data, original_data,
-            "Reassembled data should match original"
-        );
+        let message = assembled_message.expect("Message should be assembled");
+        assert_eq!(message.cid, cid);
+        assert_eq!(message.cmd, CtapHidCommand::Ping);
+        assert_eq!(message.into_data(), original_data);
     }
 
-    /// Test CTAPHID invalid sequence error
+    /// An out-of-order continuation frame is an error, not silently accepted data.
     #[tokio::test]
     async fn test_ctaphid_invalid_sequence() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidHandler, CtapHidPacket};
+        use ::netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
 
         let mut handler = CtapHidHandler::new();
         let cid = 0x11223344u32;
-
-        // Create a fragmented message
         let data = vec![0x55u8; 150];
-        let packets = handler.fragment_response(
-            cid,
-            netget::server::usb::fido2::ctaphid::CtapHidCommand::Cbor,
-            &data,
-        );
+        let packets = handler.fragment_response(cid, CtapHidCommand::Cbor, &data);
 
-        // Process init packet
-        let result = handler.process_packet(&packets[0]);
-        assert!(result.is_ok());
         assert!(
-            result.unwrap().is_none(),
+            handler
+                .process_packet(&packets[0])
+                .expect("init packet parses")
+                .is_none(),
             "Init packet should not complete message"
         );
 
-        // Skip continuation packet 0, send continuation packet 1 (wrong sequence)
-        let result = handler.process_packet(&packets[2]);
-
-        // Should error due to invalid sequence
-        assert!(result.is_err(), "Should error on invalid sequence");
+        assert!(
+            handler.process_packet(&packets[2]).is_err(),
+            "Should error on invalid sequence"
+        );
     }
 
-    /// Test CTAPHID maximum message size
+    /// The spec's maximum message is exactly 1 init + 128 continuation frames.
     #[tokio::test]
     async fn test_ctaphid_max_message_size() {
-        use netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
+        use ::netget::server::usb::fido2::ctaphid::{CtapHidCommand, CtapHidHandler};
 
         let handler = CtapHidHandler::new();
-        let cid = 0xfedcba98u32;
-
-        // CTAPHID max message size is 7609 bytes (per spec)
-        // First packet: 57 bytes, then 128 continuation packets of 59 bytes each
-        // 57 + (128 * 59) = 57 + 7552 = 7609 bytes
         let data = vec![0x77u8; 7609];
 
-        let packets = handler.fragment_response(cid, CtapHidCommand::Msg, &data);
-
-        // Should be 1 init + 128 continuation = 129 packets
+        let packets = handler.fragment_response(0xfedcba98, CtapHidCommand::Msg, &data);
         assert_eq!(
             packets.len(),
             129,
             "Max size message should use 129 packets"
         );
 
-        // Verify all packets are 64 bytes
         for packet in &packets {
             assert_eq!(packet.len(), 64, "All packets should be 64 bytes");
         }
-
-        // Verify sequence numbers don't overflow (max seq is 127)
         for (i, packet) in packets.iter().enumerate().skip(1) {
-            let seq = packet[4];
-            assert_eq!(seq as usize, i - 1, "Sequence should increment correctly");
-            assert!(seq < 128, "Sequence should not overflow");
+            assert_eq!(packet[4] as usize, i - 1, "Sequence should increment");
+            assert!(packet[4] < 128, "Sequence should not overflow");
         }
     }
 
-    /// Test Browser WebAuthn integration with headless Chrome (requires Chrome)
-    ///
-    /// This test demonstrates WebAuthn API integration with a real browser
+    /// The approval manager's own contract, including the two shapes the E2E tests rely on:
+    /// an unanswered request denies, and `approve`/`deny` are callable from a synchronous
+    /// context (they used to need `Handle::current().block_on`, which panicked).
     #[tokio::test]
-    #[ignore] // Requires Chrome/Chromium and chromedriver
-    async fn test_webauthn_chrome_integration() {
-        // This test would:
-        // 1. Start FIDO2 server with auto-approve mode
-        // 2. Set up virtual USB/IP device
-        // 3. Launch headless Chrome with WebAuthn enabled
-        // 4. Navigate to test page with WebAuthn API calls
-        // 5. Trigger navigator.credentials.create() for registration
-        // 6. Verify credential created successfully
-        // 7. Trigger navigator.credentials.get() for authentication
-        // 8. Verify authentication successful
-        // 9. Clean up browser and USB/IP attachment
+    async fn test_approval_manager_contract() {
+        use ::netget::server::usb::fido2::approval::{
+            ApprovalConfig, ApprovalDecision, ApprovalDetails, ApprovalManager, OperationType,
+        };
 
-        // Example WebAuthn JavaScript that would be executed:
-        /*
-        async function testRegistration() {
-            const challenge = new Uint8Array(32);
-            crypto.getRandomValues(challenge);
+        let details = |rp: &str| ApprovalDetails {
+            operation: OperationType::Register,
+            rp_id: rp.to_string(),
+            user_name: Some("user@example.com".to_string()),
+            credential_count: 0,
+        };
 
-            const publicKey = {
-                challenge: challenge,
-                rp: { name: "NetGet Test", id: "localhost" },
-                user: {
-                    id: new Uint8Array(16),
-                    name: "test@example.com",
-                    displayName: "Test User"
-                },
-                pubKeyCredParams: [{
-                    type: "public-key",
-                    alg: -7 // ES256
-                }],
-                timeout: 60000,
-                attestation: "none"
-            };
+        // Auto-approve short-circuits.
+        let auto = ApprovalManager::new(ApprovalConfig {
+            auto_approve: true,
+            timeout: Duration::from_secs(30),
+            timeout_decision: ApprovalDecision::Denied,
+        });
+        let (id, decision) = auto.request_approval(details("example.com"), None).await;
+        assert_eq!(decision, ApprovalDecision::Approved);
+        assert!(id > 0, "approval ids start at 1");
 
-            const credential = await navigator.credentials.create({ publicKey });
-            return credential;
-        }
+        let manager = ApprovalManager::new(ApprovalConfig {
+            auto_approve: false,
+            timeout: Duration::from_secs(5),
+            timeout_decision: ApprovalDecision::Denied,
+        });
 
-        async function testAuthentication(credentialId) {
-            const challenge = new Uint8Array(32);
-            crypto.getRandomValues(challenge);
+        // Open, then resolve from outside — synchronously, with no runtime handle.
+        let (id, rx) = manager.open(details("example.com"), None);
+        assert_eq!(
+            manager.list_pending().len(),
+            1,
+            "an opened request must be listed as pending"
+        );
+        manager.approve(id).expect("approve must find the request");
+        assert_eq!(
+            manager.wait(id, rx).await,
+            ApprovalDecision::Approved,
+            "the decision must reach the waiter"
+        );
+        assert!(
+            manager.list_pending().is_empty(),
+            "a resolved request must be removed from the pending list"
+        );
 
-            const publicKey = {
-                challenge: challenge,
-                rpId: "localhost",
-                allowCredentials: [{
-                    type: "public-key",
-                    id: credentialId
-                }],
-                timeout: 60000
-            };
+        let (id, rx) = manager.open(details("deny.example"), None);
+        manager.deny(id).expect("deny must find the request");
+        assert_eq!(manager.wait(id, rx).await, ApprovalDecision::Denied);
 
-            const assertion = await navigator.credentials.get({ publicKey });
-            return assertion;
-        }
-        */
+        // Resolving an id that is not pending is an error naming the problem, not a silent
+        // success — a silent success would let a model "approve" a request that never existed.
+        assert!(
+            manager.approve(9999).is_err(),
+            "approving an unknown id must fail"
+        );
 
-        // See tests/server/usb_fido2/CLAUDE.md for manual browser testing instructions
-    }
-
-    /// Integration test: Real USB/IP libfido2 flow (requires system setup)
-    ///
-    /// NOTE: This test requires:
-    /// - libfido2-tools package installed
-    /// - usbip kernel module loaded
-    /// - Root/sudo access
-    #[tokio::test]
-    #[ignore] // Requires libfido2-tools, usbip, and root access
-    async fn test_fido2_real_client_tools() {
-        // This test demonstrates the full flow with real client tools
-        // Actual implementation would:
-        // 1. Start FIDO2 server with auto-approve
-        // 2. Use usbip to attach the virtual device
-        // 3. Use libfido2-tools to interact with it
-        // 4. Verify credentials created and authentication works
-        // 5. Clean up usbip attachment
-
-        // See tests/server/usb_fido2/CLAUDE.md for manual testing instructions
+        // And the one that matters most: nothing answers, so it denies.
+        let quick = ApprovalManager::new(ApprovalConfig {
+            auto_approve: false,
+            timeout: Duration::from_millis(100),
+            timeout_decision: ApprovalDecision::Denied,
+        });
+        let (_, decision) = quick
+            .request_approval(details("silent.example"), None)
+            .await;
+        assert_eq!(
+            decision,
+            ApprovalDecision::Denied,
+            "an unanswered request must deny; defaulting to approval is the fail-open shape \
+             this codebase keeps being bitten by"
+        );
     }
 }
