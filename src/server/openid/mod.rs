@@ -611,15 +611,34 @@ async fn handle_openid_request(
             handle_llm_response(execution_result, status_tx, method, path).await
         }
         Err(e) => {
-            error!("LLM error generating OpenID response: {}", e);
-            let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, path, e));
+            // OpenID Connect inherits OAuth2's error codes (RFC 6749 5.2):
+            // `temporarily_unavailable` with 503 when the backend is merely saturated,
+            // `server_error` with 500 otherwise. Both are 5xx on purpose - a 4xx would tell
+            // the relying party its request was at fault and stop it retrying - and neither
+            // can carry an id_token, so no branch here can complete a sign-in.
+            let overloaded = crate::llm::is_overload_error(&e);
+            let (status, code) = if overloaded {
+                (503, "temporarily_unavailable")
+            } else {
+                (500, "server_error")
+            };
+            error!(
+                "LLM error generating OpenID response for {} {} (overload={}): {}",
+                method, path, overloaded, e
+            );
+            let _ = status_tx.send(format!(
+                "[ERROR] OpenID failing {} {} with {} {}: {}",
+                method, path, status, code, e
+            ));
 
+            let description = crate::utils::truncate_for_log(&e.to_string(), 200)
+                .replace(['\r', '\n'], " ");
             Ok(build_safe_response(
-                500,
+                status,
                 [("content-type".to_string(), "application/json".to_string())],
                 json!({
-                    "error": "server_error",
-                    "error_description": "Failed to generate response"
+                    "error": code,
+                    "error_description": format!("netget: {description}")
                 })
                 .to_string(),
             ))

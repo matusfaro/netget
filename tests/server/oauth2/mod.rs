@@ -3,3 +3,4 @@
 #![cfg(all(test, feature = "oauth2"))]
 
 pub mod e2e_test;
+pub mod llm_failure_test;

@@ -78,6 +78,27 @@ fn build_safe_response(
 }
 
 /// JSON response with the no-store/no-cache headers RFC 6749 §5.1 requires on token replies.
+/// The HTTP status and RFC 6749 error code for a failure of *our* backend, never the client's
+/// request.
+///
+/// RFC 6749 5.2 defines both: `temporarily_unavailable` ("the authorization server is
+/// currently unable to handle the request due to a temporary overloading or maintenance") with
+/// 503, and `server_error` ("unexpected condition") with 500. Neither is a 4xx and neither is
+/// a grant-specific code, so no client can read either as a verdict on what it sent.
+fn oauth2_backend_failure(err: &anyhow::Error) -> (u16, &'static str) {
+    if crate::llm::is_overload_error(err) {
+        (503, "temporarily_unavailable")
+    } else {
+        (500, "server_error")
+    }
+}
+
+/// A bounded, single-line rendering of the failure for `error_description`.
+fn oauth2_failure_description(err: &anyhow::Error) -> String {
+    let reason = crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
+    format!("netget: {reason}")
+}
+
 fn json_response(status: u16, body: String) -> Response<Full<Bytes>> {
     build_safe_response(
         status,
@@ -468,12 +489,21 @@ async fn handle_authorize_request(
             }
         }
         Err(e) => {
-            error!("OAuth2 authorization error: {}", e);
+            // 4xx tells the client *it* got something wrong and the request is not worth
+            // repeating. The client got nothing wrong: our backend did. RFC 6749 5.2 pairs
+            // `server_error` with 500 and `temporarily_unavailable` with 503 for exactly this
+            // distinction, and no branch here can produce an authorization code.
+            let (status, code) = oauth2_backend_failure(&e);
+            error!("OAuth2 authorization error (status {}): {}", status, e);
+            let _ = status_tx.send(format!(
+                "[ERROR] OAuth2 /authorize failing with {} {}: {}",
+                status, code, e
+            ));
             Ok(json_response(
-                400,
+                status,
                 json!({
-                    "error": "server_error",
-                    "error_description": format!("{}", e)
+                    "error": code,
+                    "error_description": oauth2_failure_description(&e)
                 })
                 .to_string(),
             ))
@@ -604,12 +634,22 @@ async fn handle_token_request(
             }
         },
         Err(e) => {
-            error!("OAuth2 token error: {}", e);
+            // Never `invalid_grant` here. That code means the presented grant is bad, and a
+            // conforming client reacts by discarding its refresh token and forcing the user to
+            // sign in again - so an LLM outage would have logged every session out
+            // permanently, and the damage would outlive the outage. A backend failure is a
+            // server error, and clients retry those.
+            let (status, code) = oauth2_backend_failure(&e);
+            error!("OAuth2 token error (status {}): {}", status, e);
+            let _ = status_tx.send(format!(
+                "[ERROR] OAuth2 /token failing with {} {}: {}",
+                status, code, e
+            ));
             Ok(json_response(
-                400,
+                status,
                 json!({
-                    "error": "invalid_grant",
-                    "error_description": format!("{}", e)
+                    "error": code,
+                    "error_description": oauth2_failure_description(&e)
                 })
                 .to_string(),
             ))
@@ -632,7 +672,7 @@ async fn handle_introspect_request(
     server_id: crate::state::ServerId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
-    _status_tx: mpsc::UnboundedSender<String>,
+    status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<OAuth2Protocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Parse form body
@@ -694,7 +734,29 @@ async fn handle_introspect_request(
                 Ok(json_response(200, json!({"active": false}).to_string()))
             }
         },
-        Err(_) => Ok(json_response(200, json!({"active": false}).to_string())),
+        Err(e) => {
+            // `{"active": false}` with a 200 is a *statement about the token* - it says the
+            // authorization server looked and the token is not valid. Nobody looked. It is
+            // fail-closed, which is why it was the previous answer, but it is
+            // indistinguishable from the model deciding the token is bad, and a resource
+            // server has no way to tell "revoked" from "we are broken". A 5xx says only that
+            // the introspection did not happen, which every resource server already treats as
+            // "cannot validate" and therefore also refuses.
+            let (status, code) = oauth2_backend_failure(&e);
+            error!("OAuth2 introspect error (status {}): {}", status, e);
+            let _ = status_tx.send(format!(
+                "[ERROR] OAuth2 /introspect failing with {} {}: {}",
+                status, code, e
+            ));
+            Ok(json_response(
+                status,
+                json!({
+                    "error": code,
+                    "error_description": oauth2_failure_description(&e)
+                })
+                .to_string(),
+            ))
+        }
     }
 }
 
@@ -705,7 +767,7 @@ async fn handle_revoke_request(
     server_id: crate::state::ServerId,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
-    _status_tx: mpsc::UnboundedSender<String>,
+    status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<OAuth2Protocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Parse form body
@@ -731,7 +793,7 @@ async fn handle_revoke_request(
     );
 
     // Call LLM
-    let _ = call_llm(
+    if let Err(e) = call_llm(
         &llm_client,
         &app_state,
         server_id,
@@ -739,7 +801,28 @@ async fn handle_revoke_request(
         &event,
         &*protocol,
     )
-    .await;
+    .await
+    {
+        // RFC 7009 2.2.1 anticipates exactly this: "if the server responds with HTTP status
+        // code 503, the client must assume the token still exists and may retry after a
+        // reasonable delay". A 200 would tell the client the token is gone when nothing
+        // processed the request - the model never saw it, so nothing was revoked, and the
+        // client would stop trying.
+        let (status, code) = oauth2_backend_failure(&e);
+        error!("OAuth2 revoke error (status {}): {}", status, e);
+        let _ = status_tx.send(format!(
+            "[ERROR] OAuth2 /revoke failing with {} {}: {}",
+            status, code, e
+        ));
+        return Ok(json_response(
+            status,
+            json!({
+                "error": code,
+                "error_description": oauth2_failure_description(&e)
+            })
+            .to_string(),
+        ));
+    }
 
     info!("OAuth2 token revoked");
     // RFC 7009 §2.2: answer 200 whether or not the token was valid. Nothing the model says

@@ -342,8 +342,28 @@ async fn handle_saml_sp_request(
             }
         }
         Err(e) => {
-            error!("LLM error for SAML SP request: {}", e);
-            build_safe_response(500, [], format!("LLM error: {}", e))
+            // SAML rides on HTTP here, and the failure is ours rather than the peer's, so it
+            // is a 5xx: 503 while the backend is saturated so the peer retries, 500
+            // otherwise. Critically it is not a SAML Response at all - a 2xx carrying an
+            // assertion is the only thing an SP will accept as a sign-in, and no branch on
+            // this path can produce one.
+            let overloaded = crate::llm::is_overload_error(&e);
+            let status = if overloaded { 503 } else { 500 };
+            error!(
+                "LLM error for SAML SP request (overload={}, status {}): {}",
+                overloaded, status, e
+            );
+            let _ = status_tx.send(format!(
+                "[ERROR] SAML SP failing with {}: {}",
+                status, e
+            ));
+            let reason = crate::utils::truncate_for_log(&e.to_string(), 200)
+                .replace(['\r', '\n'], " ");
+            build_safe_response(
+                status,
+                [("content-type".to_string(), "text/plain; charset=utf-8".to_string())],
+                format!("netget: {reason}"),
+            )
         }
     };
 
