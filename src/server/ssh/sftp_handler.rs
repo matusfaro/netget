@@ -832,15 +832,30 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
                 if let Some(size) = response.get("size").and_then(|v| v.as_u64()) {
                     attrs.size = Some(size);
                 }
-                if let Some(perms) = response.get("permissions").and_then(|v| v.as_u64()) {
-                    attrs.permissions = Some(perms as u32);
-                }
-                if let Some(is_dir) = response.get("is_dir").and_then(|v| v.as_bool()) {
-                    // Set directory bit if needed
-                    if is_dir {
-                        attrs.permissions = Some(attrs.permissions.unwrap_or(0o644) | 0o40000);
-                    }
-                }
+
+                // The mode's *type* bits are what a client reads to decide whether an entry is
+                // a file or a directory, so they must always be set explicitly.
+                //
+                // This used to OR in `S_IFDIR` when `is_dir` was true and otherwise leave
+                // `FileAttributes::default()` alone — and russh-sftp's default is `0o40777`,
+                // a directory. So a handler answering `{"size": 23, "is_dir": false}` had its
+                // file reported to the client as a **directory**: `ls -l` showed `d`, and
+                // clients that check the type before downloading refused it. `is_dir: false`
+                // was, in effect, ignored. The defaults below match what `readdir` already
+                // uses for the same entries, so the two views agree.
+                let is_dir = response
+                    .get("is_dir")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let type_bit = if is_dir { 0o40000 } else { 0o100000 };
+                attrs.permissions =
+                    Some(match response.get("permissions").and_then(|v| v.as_u64()) {
+                        // A handler that supplied the type bits itself is taken at its word.
+                        Some(perms) if perms & 0o170000 != 0 => perms as u32,
+                        Some(perms) => perms as u32 | type_bit,
+                        None if is_dir => 0o40755,
+                        None => 0o100644,
+                    });
 
                 // DEBUG: SFTP response summary
                 debug!(
@@ -937,6 +952,24 @@ impl russh_sftp::server::Handler for LlmSftpHandler {
 
             Err(StatusCode::BadMessage)
         }
+    }
+
+    /// `SSH_FXP_STAT` — the follow-symlinks form of `lstat`.
+    ///
+    /// This used to fall through to `unimplemented()` and answer `SSH_FX_OP_UNSUPPORTED`, so
+    /// `sftp.stat(path)` — what every client calls to size a file before downloading it, and
+    /// what `sftp -P … ls -l` uses — failed against a server whose `lstat` worked fine. There
+    /// is no filesystem behind this handler and therefore no symlink for the two calls to
+    /// disagree about, so `stat` is `lstat`, exactly as `fstat` already is once its handle is
+    /// resolved. The handler still sees a single `lstat` operation and needs no new vocabulary.
+    async fn stat(&mut self, id: u32, path: String) -> Result<Attrs, Self::Error> {
+        debug!("SFTP request: SSH_FXP_STAT id={}, path={}", id, path);
+        let _ = self.status_tx.send(format!(
+            "[DEBUG] SFTP request: SSH_FXP_STAT id={}, path={}",
+            id, path
+        ));
+        trace!("SFTP stat delegating to lstat for path: '{}'", path);
+        self.lstat(id, path).await
     }
 
     async fn realpath(&mut self, id: u32, path: String) -> Result<Name, Self::Error> {

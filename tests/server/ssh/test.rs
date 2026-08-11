@@ -598,6 +598,30 @@ async fn test_ssh_script_update() -> E2EResult<()> {
     Ok(())
 }
 
+/// Authenticate against `port` as `user`, entirely on a blocking thread.
+///
+/// **`ssh2` is a blocking client and the mock Ollama server runs in this test's own Tokio
+/// runtime.** Calling `userauth_password` directly from the async test body parks the runtime
+/// thread inside libssh2, so the mock cannot answer netget's `ssh_auth` request; netget waits,
+/// libssh2 gives up with `[Session(-9)] Timed out waiting on socket`, and the mock records
+/// **zero** calls for an event the server really did emit. Both of the tests below failed
+/// exactly that way, and the deadlock reads as "the event never reached call_llm".
+///
+/// `spawn_blocking` moves libssh2 off the runtime's worker so the mock can serve. This is the
+/// same shape `llm_failure_test.rs` already uses, and it is why those tests pass.
+async fn ssh_password_auth(port: u16, user: &'static str) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || -> Result<bool, String> {
+        let tcp = TcpStream::connect(format!("127.0.0.1:{port}")).map_err(|e| e.to_string())?;
+        let mut sess = ssh2::Session::new().map_err(|e| e.to_string())?;
+        sess.set_tcp_stream(tcp);
+        sess.set_timeout(15000);
+        sess.handshake().map_err(|e| format!("handshake: {e}"))?;
+        Ok(sess.userauth_password(user, "pass").is_ok() && sess.authenticated())
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+}
+
 #[tokio::test]
 async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
     println!("\n=== E2E Test: SSH Script Fallback to LLM ===");
@@ -611,7 +635,7 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
         NetGetConfig::new(prompt)
             .with_mock(|mock| {
                 mock
-                    // Mock: Server startup with script
+                    // Mock 1: Server startup with script
                     .on_instruction_containing("ssh")
                     .and_instruction_containing("script")
                     .respond_with_actions(serde_json::json!([
@@ -626,123 +650,66 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
                     ]))
                     .expect_calls(1)
                     .and()
-                    // Note: LLM fallback mocks for 'eve' and 'frank' are not included
-                    // The ssh2 client library has timing issues with LLM fallback (5-10s response time)
-                    // Script-only auth (dave) works reliably, but script→LLM fallback times out
-                    // For script fallback testing, a custom client with longer timeout would be needed
+                    // Mock 2: the script punted 'eve' to the model, which allows her.
+                    //
+                    // These two mocks used to be absent, with a comment blaming "timing issues"
+                    // in ssh2 for the fallback timing out. The timing issue was this test
+                    // blocking its own runtime (see `ssh_password_auth`), so the model was never
+                    // reachable and the fallback path — the entire subject of this test — was
+                    // never exercised at all.
+                    .on_event("ssh_auth")
+                    .and_event_data_contains("username", "eve")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "ssh_auth_decision", "allowed": true}
+                    ]))
+                    .expect_calls(1)
+                    .and()
+                    // Mock 3: …and denies frank.
+                    .on_event("ssh_auth")
+                    .and_event_data_contains("username", "frank")
+                    .respond_with_actions(serde_json::json!([
+                        {"type": "ssh_auth_decision", "allowed": false}
+                    ]))
+                    .expect_calls(1)
+                    .and()
             })
     ).await?;
     println!("Server started on port {}", server.port);
 
-    // Test 1: User handled by script (dave) - should succeed
-    println!("\n  Test 1: Authenticate as 'dave' (handled by script, should succeed)");
-    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
-        Ok(tcp_stream) => {
-            println!("    ✓ TCP connected");
-            let mut sess = ssh2::Session::new()?;
-            sess.set_tcp_stream(tcp_stream);
-            sess.set_timeout(10000);
+    // 'dave' is handled by the script: allowed, and with no LLM call at all.
+    let dave = ssh_password_auth(server.port, "dave").await?;
+    assert!(
+        dave,
+        "'dave' is allowed by the script and must authenticate"
+    );
+    println!("  ✓ 'dave' authenticated (script handled)");
 
-            match sess.handshake() {
-                Ok(_) => {
-                    println!("    ✓ SSH handshake completed");
-                    match sess.userauth_password("dave", "pass") {
-                        Ok(_) => println!("    ✓ 'dave' authenticated (script handled)"),
-                        Err(e) => println!("    Note: Auth failed: {}", e),
-                    }
-                }
-                Err(e) => println!("    Note: Handshake failed: {}", e),
-            }
-        }
-        Err(e) => println!("    Note: Connection failed: {}", e),
-    }
+    // 'eve' falls through the script to the model, which allows her.
+    let eve = ssh_password_auth(server.port, "eve").await?;
+    assert!(
+        eve,
+        "'eve' must authenticate via the script's fallback_to_llm path; a failure here means \
+         the fallback never reached the model"
+    );
+    println!("  ✓ 'eve' authenticated (LLM fallback)");
 
-    // Test 2: User that triggers LLM fallback (eve) - should succeed
-    println!("\n  Test 2: Authenticate as 'eve' (fallback to LLM, should succeed)");
-    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
-        Ok(tcp_stream) => {
-            println!("    ✓ TCP connected");
-            let mut sess = ssh2::Session::new()?;
-            sess.set_tcp_stream(tcp_stream);
-            sess.set_timeout(10000);
+    // 'frank' falls through to the model too, which denies him. The denial must come from the
+    // model's answer, not from a timeout — mock 3's expect_calls(1) is what distinguishes them.
+    let frank = ssh_password_auth(server.port, "frank").await?;
+    assert!(
+        !frank,
+        "'frank' is denied by the model and must not authenticate"
+    );
+    println!("  ✓ 'frank' denied (LLM fallback)");
 
-            match sess.handshake() {
-                Ok(_) => {
-                    println!("    ✓ SSH handshake completed");
-                    match sess.userauth_password("eve", "pass") {
-                        Ok(_) => println!("    ✓ 'eve' authenticated (LLM handled fallback)"),
-                        Err(e) => println!("    Note: Auth failed: {}", e),
-                    }
-                }
-                Err(e) => println!("    Note: Handshake failed: {}", e),
-            }
-        }
-        Err(e) => println!("    Note: Connection failed: {}", e),
-    }
-
-    // Test 3: Unknown user (frank) - should fail
-    println!("\n  Test 3: Authenticate as 'frank' (fallback to LLM, should deny)");
-    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
-        Ok(tcp_stream) => {
-            println!("    ✓ TCP connected");
-            let mut sess = ssh2::Session::new()?;
-            sess.set_tcp_stream(tcp_stream);
-            sess.set_timeout(10000);
-
-            match sess.handshake() {
-                Ok(_) => {
-                    println!("    ✓ SSH handshake completed");
-                    match sess.userauth_password("frank", "pass") {
-                        Ok(_) => println!("    ✗ 'frank' authenticated (should have been denied)"),
-                        Err(e) => println!("    ✓ 'frank' correctly denied: {}", e),
-                    }
-                }
-                Err(e) => println!("    Note: Handshake failed: {}", e),
-            }
-        }
-        Err(e) => println!("    Note: Connection failed: {}", e),
-    }
-
-    // VERIFY: Check that script was used for dave, and LLM fallback for eve/frank
-    println!("\nVerifying script and LLM fallback behavior...");
-
-    let output = server.get_output().await;
-    println!("  DEBUG: Captured {} output lines", output.len());
-
-    // Should see script_inline in the output
     assert!(
         server.output_contains("script_inline").await,
         "Server should have been configured with a script"
     );
 
-    // Should see script returning fallback_to_llm for some users
-    if server.output_contains("fallback_to_llm").await {
-        println!("  ✓ Verified: Script returned fallback_to_llm for unknown users");
-    }
-
-    // Count LLM requests - we expect:
-    // 1. Initial server setup (creates script)
-    // 2. Possibly LLM calls for eve and frank (fallback)
-    let llm_request_count = server.count_in_output("LLM request:").await;
-    println!("  DEBUG: Found {} LLM request(s)", llm_request_count);
-
-    // We expect at least 1 (setup), possibly more for fallback
-    assert!(
-        llm_request_count >= 1,
-        "Expected at least 1 LLM request (server setup), found {}",
-        llm_request_count
-    );
-
-    // dave should have been handled by script (no extra LLM call)
-    // eve and frank should have triggered LLM fallback (2 extra calls)
-    // So total could be 1 (setup only if fallback not working) or 3 (setup + 2 fallbacks)
-    if llm_request_count == 1 {
-        println!("  Note: Only setup LLM call found - fallback may not be working as expected");
-    } else if llm_request_count >= 2 {
-        println!("  ✓ Verified: Script handled dave, LLM handled fallback for eve/frank");
-    }
-
-    // Verify mock expectations
+    // Verify mock expectations: exactly one setup call, exactly one fallback call each for eve
+    // and frank, and — implicitly — none for dave, since no rule would have matched him and an
+    // unmatched request is an HTTP 500 the server would log.
     server.verify_mocks().await?;
 
     server.stop().await?;
@@ -750,19 +717,102 @@ async fn test_ssh_script_fallback_to_llm() -> E2EResult<()> {
     Ok(())
 }
 
+/// Everything ssh2 does over SFTP, on a blocking thread. See `ssh_password_auth` for why the
+/// blocking client must not run on the test's own runtime: the mock Ollama server lives there,
+/// and every one of these operations needs it to answer.
+struct SftpOutcome {
+    authenticated: bool,
+    entries: Vec<(String, u64, bool)>,
+    contents: String,
+    stat_size: Option<u64>,
+    stat_is_file: bool,
+}
+
+async fn sftp_session(port: u16) -> Result<SftpOutcome, String> {
+    tokio::task::spawn_blocking(move || -> Result<SftpOutcome, String> {
+        let tcp = TcpStream::connect(format!("127.0.0.1:{port}")).map_err(|e| e.to_string())?;
+        let mut sess = ssh2::Session::new().map_err(|e| e.to_string())?;
+        sess.set_tcp_stream(tcp);
+        sess.set_timeout(15000);
+        sess.handshake().map_err(|e| format!("handshake: {e}"))?;
+        sess.userauth_password("test", "testpass")
+            .map_err(|e| format!("auth: {e}"))?;
+        let authenticated = sess.authenticated();
+
+        let sftp = sess.sftp().map_err(|e| format!("sftp subsystem: {e}"))?;
+
+        let entries = sftp
+            .readdir(std::path::Path::new("/"))
+            .map_err(|e| format!("readdir /: {e}"))?
+            .into_iter()
+            .map(|(path, stat)| {
+                (
+                    path.file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    stat.size.unwrap_or(0),
+                    stat.is_dir(),
+                )
+            })
+            .collect();
+
+        let mut contents = String::new();
+        {
+            let mut file = sftp
+                .open(std::path::Path::new("/readme.txt"))
+                .map_err(|e| format!("open /readme.txt: {e}"))?;
+            file.read_to_string(&mut contents)
+                .map_err(|e| format!("read /readme.txt: {e}"))?;
+        }
+
+        let stat = sftp
+            .stat(std::path::Path::new("/readme.txt"))
+            .map_err(|e| format!("stat /readme.txt: {e}"))?;
+
+        Ok(SftpOutcome {
+            authenticated,
+            entries,
+            contents,
+            stat_size: stat.size,
+            stat_is_file: stat.is_file(),
+        })
+    })
+    .await
+    .map_err(|e| format!("join: {e}"))?
+}
+
+/// A full read-only SFTP round trip against a mocked handler.
+///
+/// Two things were wrong with this test and both hid the same way — everything was wrapped in
+/// `match … Err(e) => println!("Note: …")`, so a total failure printed notes and passed:
+///
+/// 1. It blocked its own Tokio runtime with libssh2, so the in-process mock could not answer
+///    `ssh_auth` and authentication timed out (`[Session(-9)] Timed out waiting on socket`)
+///    with the mock recording zero calls. See `ssh_password_auth`.
+/// 2. Its mocks named events and actions that do not exist. The server emits one
+///    `sftp_operation` event carrying an `operation` field, and answers with
+///    `sftp_handle` / `sftp_directory_listing` / `sftp_file_content` / `sftp_file_attributes`
+///    (`src/server/ssh/actions.rs`). The mocks used `sftp_readdir` / `sftp_read` / `sftp_stat`
+///    and `sftp_directory_response` / `sftp_stat_response`, none of which the code has ever
+///    known — so even reaching them would have produced nothing.
+///
+/// The assertions are now unconditional: an operation that fails fails the test.
 #[tokio::test]
 async fn test_sftp_basic_operations() -> E2EResult<()> {
     println!("\n=== E2E Test: SFTP Basic Operations ===");
 
-    // PROMPT: Tell the LLM to act as an SFTP server with a virtual filesystem
+    // 'Hello from NetGet SFTP!' is 23 bytes; readme.txt's advertised size matches it in both
+    // the listing and the attributes, because a size larger than the content truncates or
+    // hangs the download (see src/server/ssh/CLAUDE.md).
+    const README: &str = "Hello from NetGet SFTP!";
+
     let prompt = "listen on port {AVAILABLE_PORT} via ssh. Enable SFTP subsystem. \
         When SFTP clients connect and request directory listing for '/', \
-        return a virtual directory with 3 files: 'readme.txt' (100 bytes), \
+        return a virtual directory with 3 entries: 'readme.txt' (23 bytes), \
         'data.json' (256 bytes), and 'logs' (directory). \
         When clients read 'readme.txt', return the content 'Hello from NetGet SFTP!'. \
         Accept password authentication for user 'test' with any password.";
 
-    // Start the server with mocks
     let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {
         mock
             // Mock 1: Server startup
@@ -782,177 +832,93 @@ async fn test_sftp_basic_operations() -> E2EResult<()> {
             .on_event("ssh_auth")
             .and_event_data_contains("username", "test")
             .respond_with_actions(serde_json::json!([
-                {
-                    "type": "ssh_auth_decision",
-                    "allowed": true
-                }
+                {"type": "ssh_auth_decision", "allowed": true}
             ]))
             .expect_calls(1)
             .and()
-            // Mock 3: SFTP directory listing
-            .on_event("sftp_readdir")
-            .and_event_data_contains("path", "/")
+            // Mocks 3-7: one per SFTP operation. All five arrive as `sftp_operation`; the
+            // `operation` field is what distinguishes them.
+            //
+            // `expect_at_least(1)` rather than an exact count: libssh2 decides how many
+            // round trips a listing or a download takes (a second readdir/read is how it
+            // learns it has hit EOF), and pinning that would test libssh2's chunking rather
+            // than the server.
+            .on_event("sftp_operation")
+            .and_event_data_contains("operation", "opendir")
+            .respond_with_actions(serde_json::json!([
+                {"type": "sftp_handle", "handle": "/"}
+            ]))
+            .expect_at_least(1)
+            .and()
+            .on_event("sftp_operation")
+            .and_event_data_contains("operation", "readdir")
             .respond_with_actions(serde_json::json!([
                 {
-                    "type": "sftp_directory_response",
+                    "type": "sftp_directory_listing",
                     "entries": [
-                        {"name": "readme.txt", "size": 100, "is_dir": false},
+                        {"name": "readme.txt", "size": 23, "is_dir": false},
                         {"name": "data.json", "size": 256, "is_dir": false},
                         {"name": "logs", "size": 0, "is_dir": true}
                     ]
                 }
             ]))
-            .expect_calls(1)
+            .expect_at_least(1)
             .and()
-            // Mock 4: SFTP file read
-            .on_event("sftp_read")
-            .and_event_data_contains("path", "readme.txt")
+            .on_event("sftp_operation")
+            .and_event_data_contains("operation", "open")
             .respond_with_actions(serde_json::json!([
-                {
-                    "type": "sftp_file_content",
-                    "data": "Hello from NetGet SFTP!"
-                }
+                {"type": "sftp_handle", "handle": "/readme.txt"}
             ]))
-            .expect_calls(1)
+            .expect_at_least(1)
             .and()
-            // Mock 5: SFTP file stat
-            .on_event("sftp_stat")
-            .and_event_data_contains("path", "readme.txt")
+            .on_event("sftp_operation")
+            .and_event_data_contains("operation", "read")
             .respond_with_actions(serde_json::json!([
-                {
-                    "type": "sftp_stat_response",
-                    "size": 100,
-                    "is_file": true,
-                    "is_dir": false
-                }
+                {"type": "sftp_file_content", "content": README}
             ]))
-            .expect_calls(1)
+            .expect_at_least(1)
+            .and()
+            .on_event("sftp_operation")
+            .and_event_data_contains("operation", "lstat")
+            .respond_with_actions(serde_json::json!([
+                {"type": "sftp_file_attributes", "size": 23, "is_dir": false}
+            ]))
+            .expect_at_least(1)
             .and()
     }))
     .await?;
     println!("Server started on port {}", server.port);
 
-    // VALIDATION: Test SFTP operations using ssh2
-    println!("Connecting via SFTP...");
+    let outcome = sftp_session(server.port).await?;
 
-    match TcpStream::connect(format!("127.0.0.1:{}", server.port)) {
-        Ok(tcp_stream) => {
-            println!("✓ TCP connected");
+    assert!(outcome.authenticated, "SFTP session must be authenticated");
 
-            let mut sess = ssh2::Session::new()?;
-            sess.set_tcp_stream(tcp_stream);
-            sess.set_timeout(10000); // 10 second timeout for LLM responses
+    let names: Vec<&str> = outcome.entries.iter().map(|(n, _, _)| n.as_str()).collect();
+    assert!(
+        names.contains(&"readme.txt") && names.contains(&"data.json") && names.contains(&"logs"),
+        "the listing must contain every entry the handler returned, got {names:?}"
+    );
+    let logs_is_dir = outcome
+        .entries
+        .iter()
+        .find(|(n, _, _)| n == "logs")
+        .map(|(_, _, is_dir)| *is_dir)
+        .unwrap_or(false);
+    assert!(logs_is_dir, "'logs' must come back as a directory");
 
-            match sess.handshake() {
-                Ok(_) => {
-                    println!("✓ SSH handshake completed");
+    assert_eq!(
+        outcome.contents, README,
+        "the file's bytes must survive the round trip exactly"
+    );
 
-                    // Try to authenticate
-                    match sess.userauth_password("test", "testpass") {
-                        Ok(_) => {
-                            println!("✓ Authentication successful");
+    assert_eq!(
+        outcome.stat_size,
+        Some(README.len() as u64),
+        "stat must report the size the handler declared"
+    );
+    assert!(outcome.stat_is_file, "readme.txt must stat as a file");
 
-                            // Open SFTP channel
-                            match sess.sftp() {
-                                Ok(sftp) => {
-                                    println!("✓ SFTP channel opened");
-
-                                    // Test 1: List root directory
-                                    println!("\nTest: List root directory");
-                                    match sftp.readdir(std::path::Path::new("/")) {
-                                        Ok(entries) => {
-                                            println!("  ✓ Directory listing received:");
-                                            for (path, stat) in &entries {
-                                                println!(
-                                                    "    - {} ({} bytes, is_dir: {})",
-                                                    path.display(),
-                                                    stat.size.unwrap_or(0),
-                                                    stat.is_dir()
-                                                );
-                                            }
-
-                                            // Verify we got some entries
-                                            assert!(
-                                                !entries.is_empty(),
-                                                "Expected non-empty directory listing"
-                                            );
-                                            println!("  ✓ Directory listing validated");
-                                        }
-                                        Err(e) => {
-                                            println!("  Note: Directory listing failed: {}", e);
-                                            println!("  This may indicate the LLM needs more guidance on SFTP responses");
-                                        }
-                                    }
-
-                                    // Test 2: Read a file
-                                    println!("\nTest: Read file 'readme.txt'");
-                                    match sftp.open(std::path::Path::new("/readme.txt")) {
-                                        Ok(mut file) => {
-                                            println!("  ✓ File opened");
-
-                                            let mut contents = String::new();
-                                            match file.read_to_string(&mut contents) {
-                                                Ok(bytes_read) => {
-                                                    println!(
-                                                        "  ✓ Read {} bytes: {:?}",
-                                                        bytes_read, contents
-                                                    );
-                                                    assert!(
-                                                        !contents.is_empty(),
-                                                        "Expected non-empty file content"
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    println!("  Note: File read failed: {}", e);
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            println!("  Note: File open failed: {}", e);
-                                            println!("  The LLM may need to return file metadata");
-                                        }
-                                    }
-
-                                    // Test 3: Get file attributes
-                                    println!("\nTest: Get file attributes");
-                                    match sftp.stat(std::path::Path::new("/readme.txt")) {
-                                        Ok(stat) => {
-                                            println!("  ✓ File stat successful:");
-                                            println!("    Size: {:?} bytes", stat.size);
-                                            println!("    Permissions: {:?}", stat.perm);
-                                            println!("    Is file: {}", stat.is_file());
-                                        }
-                                        Err(e) => {
-                                            println!("  Note: File stat failed: {}", e);
-                                        }
-                                    }
-
-                                    println!("\n✓ SFTP operations completed");
-                                }
-                                Err(e) => {
-                                    println!("Note: SFTP channel creation failed: {}", e);
-                                    println!("  This indicates the SSH server may not be handling SFTP subsystem requests");
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            println!("Note: Authentication failed: {}", e);
-                            println!(
-                                "  The LLM may need to be instructed to accept the authentication"
-                            );
-                        }
-                    }
-                }
-                Err(e) => {
-                    println!("Note: SSH handshake failed: {}", e);
-                    println!("  russh implementation should handle this automatically");
-                }
-            }
-        }
-        Err(e) => {
-            println!("Note: TCP connection failed: {}", e);
-        }
-    }
+    println!("  ✓ auth, readdir, open+read and stat all round-tripped");
 
     // Verify mock expectations were met
     server.verify_mocks().await?;
