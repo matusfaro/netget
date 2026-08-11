@@ -531,6 +531,13 @@ impl EventHandler {
                 );
                 Ok(false)
             }
+            UserCommand::ShowStability => {
+                let min = self.state.get_min_stability().await;
+                for line in crate::protocol::stability_report(min) {
+                    ui.add_llm_message(line);
+                }
+                Ok(false)
+            }
             UserCommand::ListSimple => {
                 // This command is only supported in rolling TUI mode
                 ui.add_llm_message(

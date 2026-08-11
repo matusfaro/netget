@@ -324,6 +324,9 @@ struct AppStateInner {
     web_approval_tx: Option<mpsc::UnboundedSender<WebApprovalRequest>>,
     /// Whether to include disabled protocols (for testing)
     include_disabled_protocols: bool,
+    /// Minimum protocol maturity that may be started (from `--min-stability`).
+    /// `None` means no gate — the default, current behaviour.
+    min_stability: Option<crate::protocol::metadata::DevelopmentState>,
     /// Whether Ollama API locking is enabled (for concurrent test execution)
     ollama_lock_enabled: bool,
     /// Ollama API base URL (default: http://localhost:11434)
@@ -517,6 +520,7 @@ impl AppState {
                 web_search_mode: WebSearchMode::On, // Default to enabled
                 web_approval_tx: None,              // Will be set by TUI
                 include_disabled_protocols,
+                min_stability: None,
                 ollama_lock_enabled,
                 ollama_url,
                 instance_id,
@@ -1079,6 +1083,21 @@ impl AppState {
     /// Get whether disabled protocols should be included
     pub async fn get_include_disabled_protocols(&self) -> bool {
         self.inner.read().await.include_disabled_protocols
+    }
+
+    /// Get the minimum stability required to start a protocol, if any
+    /// (`None` = no gate).
+    pub async fn get_min_stability(&self) -> Option<crate::protocol::metadata::DevelopmentState> {
+        self.inner.read().await.min_stability
+    }
+
+    /// Set the minimum stability required to start a protocol (from
+    /// `--min-stability`). `None` disables the gate.
+    pub async fn set_min_stability(
+        &self,
+        min: Option<crate::protocol::metadata::DevelopmentState>,
+    ) {
+        self.inner.write().await.min_stability = min;
     }
 
     /// Get whether Ollama API locking is enabled

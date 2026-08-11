@@ -9,8 +9,30 @@ use tokio::sync::mpsc;
 
 use crate::events::ActionExecutionError;
 use crate::llm::OllamaClient;
+use crate::protocol::metadata::DevelopmentState;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
+
+/// Format the refusal message when a protocol is below the operator's
+/// `--min-stability` floor.
+///
+/// Names the protocol, its actual declared state and the required minimum, so
+/// the reason is legible in the TUI, the status stream and any MCP tool error —
+/// mirroring how the privilege and dependency gates report a refusal. Shared
+/// with `client_startup` so servers and clients speak with one voice.
+pub(crate) fn min_stability_refusal(
+    kind: &str,
+    protocol: &str,
+    actual: DevelopmentState,
+    min: DevelopmentState,
+) -> String {
+    format!(
+        "Cannot start {protocol} {kind}: its stability is {} but --min-stability requires at least \
+         {}. Raise the protocol's maturity or lower --min-stability.",
+        actual.as_str(),
+        min.as_str()
+    )
+}
 
 /// Did `spawn()` actually bind a listening socket?
 ///
@@ -67,6 +89,23 @@ pub async fn start_server_by_id(
 
     // Check privilege requirements before spawning
     let metadata = protocol.metadata();
+
+    // === --min-stability gate ===
+    // Refuse a protocol below the operator's maturity floor before any spawn.
+    // This is the authoritative enforcement point: even if the LLM was somehow
+    // offered a forbidden protocol, it cannot be started.
+    if let Some(min) = state.get_min_stability().await {
+        if metadata.state < min {
+            let full_error = min_stability_refusal("server", &protocol_name, metadata.state, min);
+            state
+                .update_server_status(server_id, ServerStatus::Error(full_error.clone()))
+                .await;
+            let _ = status_tx.send(format!("[ERROR] {}", full_error));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            return Err(ActionExecutionError::Fatal(anyhow::anyhow!(full_error)));
+        }
+    }
+
     let system_caps = state.get_system_capabilities().await;
 
     // Decide whether this start is blocked for lack of privilege.
@@ -326,6 +365,18 @@ pub async fn start_server_from_action(
     let protocol_impl = registry
         .resolve(protocol)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    // === --min-stability gate ===
+    // Refuse a protocol below the operator's maturity floor before building
+    // anything — no server instance exists yet, so there is nothing to strand.
+    if let Some(min) = state.get_min_stability().await {
+        let actual = protocol_impl.metadata().state;
+        if actual < min {
+            let msg = min_stability_refusal("server", protocol, actual, min);
+            let _ = status_tx.send(format!("[ERROR] {}", msg));
+            return Err(anyhow::anyhow!(msg));
+        }
+    }
 
     // === send_first ===
     //

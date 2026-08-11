@@ -94,6 +94,26 @@ pub async fn start_client_by_id(
         None => return Err(unknown_client_protocol_error(&protocol_name).into()),
     };
 
+    // === --min-stability gate ===
+    // Refuse a protocol below the operator's maturity floor before connecting.
+    if let Some(min) = state.get_min_stability().await {
+        let actual = protocol.metadata().state;
+        if actual < min {
+            let msg = crate::cli::server_startup::min_stability_refusal(
+                "client",
+                &protocol_name,
+                actual,
+                min,
+            );
+            state
+                .update_client_status(client_id, ClientStatus::Error(msg.clone()))
+                .await;
+            let _ = status_tx.send(format!("[ERROR] {}", msg));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            return Err(ActionExecutionError::Fatal(anyhow::anyhow!(msg)));
+        }
+    }
+
     // Build type-safe startup params if provided
     //
     // The JSON comes from the LLM or an MCP client, so a bad key must become a
@@ -193,6 +213,18 @@ pub async fn start_client_from_action(
         Some(p) => p,
         None => return Err(unknown_client_protocol_error(&protocol)),
     };
+
+    // === --min-stability gate ===
+    // Refuse a protocol below the operator's maturity floor before building
+    // anything — no client instance exists yet, so there is nothing to strand.
+    if let Some(min) = state.get_min_stability().await {
+        let actual = protocol_impl.metadata().state;
+        if actual < min {
+            return Err(anyhow::anyhow!(
+                crate::cli::server_startup::min_stability_refusal("client", &protocol, actual, min)
+            ));
+        }
+    }
 
     // === Validate startup params BEFORE registering the client ===
     //

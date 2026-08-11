@@ -1380,6 +1380,7 @@ async fn handle_key_event(
                     | UserCommand::ShowWebSearch
                     | UserCommand::ShowEventHandler
                     | UserCommand::ShowEnvironment
+                    | UserCommand::ShowStability
                     | UserCommand::ShowUsage => {
                         // Handle status/info commands
                         handle_status_command(
@@ -2424,6 +2425,12 @@ async fn handle_status_command(
                 palette,
             )?;
             print_output_line("Or press Ctrl+H to cycle through modes", footer, palette)?;
+        }
+        UserCommand::ShowStability => {
+            let min = state.get_min_stability().await;
+            for line in crate::protocol::stability_report(min) {
+                print_output_line(&line, footer, palette)?;
+            }
         }
         UserCommand::ShowEnvironment => {
             print_output_line("=== Environment Information ===", footer, palette)?;

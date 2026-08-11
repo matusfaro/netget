@@ -516,7 +516,7 @@ pub fn open_server_action(
                     if user says 'smtp' or 'mail server' → use 'smtp' (NOT 'tcp'). \
                     Only use low-level protocols (tcp, udp) for custom protocols without a specific high-level match. \
                     Available: {}",
-                    all_base_stacks(false).join(", ")
+                    all_base_stacks(false, None).join(", ")
                 ),
                 required: true,
             },
@@ -1384,7 +1384,10 @@ pub fn get_network_event_common_actions() -> Vec<ActionDefinition> {
 /// Get all protocol names that should be available to the LLM
 /// Filters out protocols with ProtocolState::Disabled unless include_disabled is true
 /// Dynamically determined from the ProtocolRegistry based on compiled features
-fn all_base_stacks(include_disabled: bool) -> Vec<String> {
+fn all_base_stacks(
+    include_disabled: bool,
+    min_stability: Option<crate::protocol::metadata::DevelopmentState>,
+) -> Vec<String> {
     let registry = crate::protocol::server_registry::registry();
 
     // Get all registered protocols from the registry (only includes compiled features)
@@ -1393,16 +1396,21 @@ fn all_base_stacks(include_disabled: bool) -> Vec<String> {
         .into_iter()
         .map(|(protocol_name, _protocol)| protocol_name)
         .filter(|protocol_name| {
-            if include_disabled {
-                // Include all protocols when flag is set
-                true
-            } else {
-                // Only include protocols that are available to LLM (not Disabled)
-                registry
-                    .metadata(protocol_name)
+            let meta = registry.metadata(protocol_name);
+            // Availability to the model: Incomplete is hidden unless
+            // --include-disabled-protocols overrides it.
+            let available = include_disabled
+                || meta
+                    .as_ref()
                     .map(|m| m.is_available_to_llm())
-                    .unwrap_or(true)
-            }
+                    .unwrap_or(true);
+            // Operator floor: never offer a protocol below --min-stability, even
+            // when include_disabled is set. Unknown metadata is not hidden.
+            let meets_min = match (min_stability, meta.as_ref()) {
+                (Some(min), Some(m)) => m.state >= min,
+                _ => true,
+            };
+            available && meets_min
         })
         .collect();
 
@@ -1413,14 +1421,17 @@ fn all_base_stacks(include_disabled: bool) -> Vec<String> {
 
 /// Generate comprehensive base stack documentation with startup parameters
 /// Returns formatted text listing all available stacks and their configuration options
-pub fn generate_base_stack_documentation(include_disabled: bool) -> String {
+pub fn generate_base_stack_documentation(
+    include_disabled: bool,
+    min_stability: Option<crate::protocol::metadata::DevelopmentState>,
+) -> String {
     let mut doc = String::from("## Available Base Stacks\n\n");
 
     // Group protocols by their group_name
     let registry = crate::protocol::server_registry::registry();
     let mut groups: ProtocolGroups = std::collections::HashMap::new();
 
-    for protocol_name in all_base_stacks(include_disabled) {
+    for protocol_name in all_base_stacks(include_disabled, min_stability) {
         if let Some(protocol) = registry.get(&protocol_name) {
             let group = protocol.group_name();
             groups

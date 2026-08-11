@@ -194,6 +194,14 @@ pub struct Args {
     )]
     pub include_disabled_protocols: bool,
 
+    /// Refuse to start any protocol below this maturity level
+    #[clap(
+        long = "min-stability",
+        value_name = "LEVEL",
+        help = "Refuse to start any protocol whose declared development state is below LEVEL (incomplete, experimental, beta, stable; case-insensitive). Also filters lower-maturity protocols out of the LLM's base-stack menu so the model is not offered a protocol the operator forbade. Default: no minimum (only Incomplete protocols are hidden from the model)."
+    )]
+    pub min_stability: Option<String>,
+
     /// Use file locking to serialize Ollama API access (enables concurrent test execution)
     #[clap(
         long = "ollama-lock",
@@ -706,6 +714,27 @@ impl Args {
                     ),
                 }
             }
+        }
+    }
+
+    /// Parse `--min-stability` into a [`DevelopmentState`].
+    ///
+    /// Returns `Ok(None)` when the flag is absent (no gate — current behaviour).
+    /// An unrecognised value is a hard error naming the allowed set, mirroring
+    /// `parse_scripting_mode`/`parse_event_handler_mode`.
+    pub fn parse_min_stability(
+        &self,
+    ) -> Result<Option<crate::protocol::metadata::DevelopmentState>> {
+        match &self.min_stability {
+            None => Ok(None),
+            Some(raw) => match crate::protocol::metadata::DevelopmentState::parse_ci(raw) {
+                Some(state) => Ok(Some(state)),
+                None => anyhow::bail!(
+                    "Invalid --min-stability value: '{}'\n\
+                     Valid options (case-insensitive): incomplete, experimental, beta, stable",
+                    raw
+                ),
+            },
         }
     }
 

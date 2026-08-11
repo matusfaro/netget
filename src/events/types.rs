@@ -64,6 +64,9 @@ pub enum UserCommand {
     ShowEnvironment,
     /// Show usage statistics (slash command: /usage)
     ShowUsage,
+    /// List registered protocols grouped by development state
+    /// (slash command: /stability or /protocols)
+    ShowStability,
     /// Stop everything - all servers, connections, and clients (slash command: /stop)
     StopAll,
     /// Stop a specific server, connection, or client by unified ID (slash command: /stop <id>)
@@ -226,6 +229,11 @@ impl UserCommand {
         // /usage command - show usage statistics
         if input_lower == "/usage" {
             return UserCommand::ShowUsage;
+        }
+
+        // /stability, /protocols command - list protocols grouped by maturity
+        if input_lower == "/stability" || input_lower == "/protocols" {
+            return UserCommand::ShowStability;
         }
 
         // /save command - save configuration to file

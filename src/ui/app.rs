@@ -342,6 +342,7 @@ impl App {
             "/test_ask - Test web search approval prompt",
             "/backend [ollama|openai <url>] - Show/switch LLM backend",
             "/docs [<protocol>] - Show protocol documentation",
+            "/stability - List protocols grouped by development state",
         ];
 
         // Filter commands based on current input

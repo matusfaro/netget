@@ -175,8 +175,11 @@ so you may include multiple actions in a single response.
     }
 
     /// Build base stack documentation section (used for dynamic generation)
-    fn build_base_stack_docs_section(include_disabled: bool) -> String {
-        generate_base_stack_documentation(include_disabled)
+    fn build_base_stack_docs_section(
+        include_disabled: bool,
+        min_stability: Option<crate::protocol::metadata::DevelopmentState>,
+    ) -> String {
+        generate_base_stack_documentation(include_disabled, min_stability)
     }
 
     /// Build retry message for parse errors (minimal, reusable)
@@ -418,6 +421,9 @@ Check the action definition in "Available Actions" for required parameters and p
         // Prepare template data
         let servers = state.get_all_servers().await;
         let include_disabled = state.get_include_disabled_protocols().await;
+        // The operator's --min-stability floor also shapes the model's base-stack
+        // menu, so it is not guided toward a protocol it would be refused at start.
+        let min_stability = state.get_min_stability().await;
 
         // Split actions into tools and regular actions and convert to JSON
         let (tool_actions_raw, regular_actions_raw): (Vec<_>, Vec<_>) =
@@ -535,7 +541,7 @@ Check the action definition in "Available Actions" for required parameters and p
             )
             .field(
                 "base_stack_docs",
-                Self::build_base_stack_docs_section(include_disabled),
+                Self::build_base_stack_docs_section(include_disabled, min_stability),
             )
             .field(
                 "current_state",

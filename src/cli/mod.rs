@@ -171,6 +171,7 @@ pub async fn run() -> Result<()> {
             .unwrap_or_else(|| "http://localhost:11434".to_string());
         let state =
             AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+        state.set_min_stability(args.parse_min_stability()?).await;
         debug!("AppState created");
 
         // Configure rate limiter from CLI args
@@ -378,6 +379,7 @@ async fn run_client(protocol: &str, args: &Args) -> Result<()> {
         .unwrap_or_else(|| "http://localhost:11434".to_string());
     let state =
         AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+    state.set_min_stability(args.parse_min_stability()?).await;
 
     state
         .configure_rate_limiter(args.build_rate_limiter_config())
@@ -506,6 +508,7 @@ async fn run_simple_protocol(protocol: &str, args: &Args) -> Result<()> {
         .unwrap_or_else(|| "http://localhost:11434".to_string());
     let state =
         AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+    state.set_min_stability(args.parse_min_stability()?).await;
 
     // Configure rate limiter from CLI args
     let rate_limiter_config = args.build_rate_limiter_config();

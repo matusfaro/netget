@@ -91,6 +91,11 @@ impl PrivilegeRequirement {
 }
 
 /// Protocol maturity and readiness state
+///
+/// The derived `PartialOrd`/`Ord` follow the **declaration order below**, which
+/// is deliberately least-mature to most-mature: `Incomplete < Experimental <
+/// Beta < Stable`. Anything that compares maturities (the `--min-stability`
+/// gate, the `/stability` listing) relies on this — do not reorder the variants.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum DevelopmentState {
     /// Incomplete implementation, not functional (e.g., OpenVPN)
@@ -119,6 +124,45 @@ impl DevelopmentState {
             Self::Beta => "Beta",
             Self::Stable => "Stable",
         }
+    }
+
+    /// All variants, least-mature first.
+    ///
+    /// Handy for building help text and grouped listings without hardcoding the
+    /// order at each call site.
+    pub const ALL: [DevelopmentState; 4] = [
+        Self::Incomplete,
+        Self::Experimental,
+        Self::Beta,
+        Self::Stable,
+    ];
+
+    /// Parse a development state from a string, case-insensitively.
+    ///
+    /// Accepts the four variant names in any casing (`"beta"`, `"BETA"`,
+    /// `"Beta"`). Used by the `--min-stability` CLI flag. Returns `None` for an
+    /// unrecognised value so callers can produce their own error message.
+    pub fn parse_ci(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "incomplete" => Some(Self::Incomplete),
+            "experimental" => Some(Self::Experimental),
+            "beta" => Some(Self::Beta),
+            "stable" => Some(Self::Stable),
+            _ => None,
+        }
+    }
+}
+
+impl std::str::FromStr for DevelopmentState {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::parse_ci(s).ok_or_else(|| {
+            format!(
+                "invalid development state '{}' (expected one of: incomplete, experimental, beta, stable)",
+                s
+            )
+        })
     }
 }
 
