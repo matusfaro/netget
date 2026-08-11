@@ -391,9 +391,11 @@ pub async fn run_rolling_tui(
                 // Just triggers potential updates
             }
 
-            // Execute due tasks
+            // Execute due tasks, and drain any feedback that has become due. Both are
+            // timer-driven LLM work that adjusts a running instance, so they share a tick.
             _ = task_execution_interval.tick() => {
                 execute_due_tasks(&state, &llm_client, &status_tx).await;
+                crate::llm::feedback::execute_due_feedback(&state, &llm_client, &status_tx).await;
             }
 
             // Periodic stats update (1 second)

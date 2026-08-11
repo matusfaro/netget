@@ -256,6 +256,25 @@ pub struct AccessLogEntry {
 /// Maximum number of access-log entries retained in memory (ring buffer).
 const ACCESS_LOG_CAPACITY: usize = 200;
 
+/// One instance's accumulated feedback, taken out of its buffer for processing.
+///
+/// Exactly one of `server_id` / `client_id` is set.
+#[derive(Debug, Clone)]
+pub struct DueFeedback {
+    /// The server this feedback belongs to, if it is server feedback
+    pub server_id: Option<ServerId>,
+    /// The client this feedback belongs to, if it is client feedback
+    pub client_id: Option<super::ClientId>,
+    /// The `feedback_instructions` the instance was started with
+    pub instructions: String,
+    /// The instance's current instruction, so the model can adjust it
+    pub instruction: String,
+    /// The instance's current memory
+    pub memory: String,
+    /// The accumulated entries, removed from the buffer
+    pub entries: Vec<serde_json::Value>,
+}
+
 /// Global application state
 #[derive(Clone)]
 pub struct AppState {
@@ -800,6 +819,70 @@ impl AppState {
         } else {
             anyhow::bail!("Server {} not found", server_id)
         }
+    }
+
+    /// Take the feedback that is due for processing, emptying those buffers.
+    ///
+    /// Leading-edge debounce: an instance is due as soon as it has any buffered feedback
+    /// and `debounce` has elapsed since its last processing (so the first feedback after a
+    /// quiet period is acted on at the next tick, and a burst is coalesced into one call).
+    /// `last_feedback_processed` is stamped here rather than after the LLM answers, so a
+    /// slow or failing call cannot re-trigger itself on every tick.
+    ///
+    /// Draining here — under the same write lock that stamps the timestamp — is what makes
+    /// the caller safe to run from a 1s timer: two ticks can never take the same entries.
+    pub async fn take_due_feedback(&self, debounce: std::time::Duration) -> Vec<DueFeedback> {
+        let now = std::time::Instant::now();
+        let mut due = Vec::new();
+        let mut inner = self.inner.write().await;
+
+        for (id, server) in inner.servers.iter_mut() {
+            let Some(instructions) = server.feedback_instructions.clone() else {
+                continue;
+            };
+            if server.feedback_buffer.is_empty() {
+                continue;
+            }
+            if let Some(last) = server.last_feedback_processed {
+                if now.duration_since(last) < debounce {
+                    continue;
+                }
+            }
+            server.last_feedback_processed = Some(now);
+            due.push(DueFeedback {
+                server_id: Some(*id),
+                client_id: None,
+                instructions,
+                instruction: server.instruction.clone(),
+                memory: server.memory.clone(),
+                entries: std::mem::take(&mut server.feedback_buffer),
+            });
+        }
+
+        for (id, client) in inner.clients.iter_mut() {
+            let Some(instructions) = client.feedback_instructions.clone() else {
+                continue;
+            };
+            if client.feedback_buffer.is_empty() {
+                continue;
+            }
+            if let Some(last) = client.last_feedback_processed {
+                if now.duration_since(last) < debounce {
+                    continue;
+                }
+            }
+            client.last_feedback_processed = Some(now);
+            due.push(DueFeedback {
+                server_id: None,
+                client_id: Some(*id),
+                instructions,
+                instruction: client.instruction.clone(),
+                memory: client.memory.clone(),
+                entries: std::mem::take(&mut client.feedback_buffer),
+            });
+        }
+
+        due
     }
 
     /// Add feedback to a client's feedback buffer

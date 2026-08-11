@@ -376,14 +376,26 @@ const CONNECTIONLESS_CLEANUP_TIMEOUT_SECS: u64 = 10;
 /// into `remove_server`, their scheduled tasks — accumulated for the life of the
 /// process.
 ///
+/// It also drains due `provide_feedback` batches. `start_server` accepts
+/// `feedback_instructions`, which makes `provide_feedback` an advertised tool, so
+/// without this an MCP caller could switch the loop on and have every entry
+/// accumulate unread — the TUI and non-interactive modes drive the drain from their
+/// task timer, and MCP has no task timer. (Scheduled tasks are still TUI-only here;
+/// that is a separate gap.)
+///
 /// The handle is deliberately dropped: the reaper lives as long as the process, and
 /// there is nothing to stop it for.
-fn spawn_state_reaper(app_state: AppState) {
+fn spawn_state_reaper(
+    app_state: AppState,
+    llm_client: crate::llm::OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+) {
     tokio::spawn(async move {
         let mut ticker =
             tokio::time::interval(std::time::Duration::from_secs(REAPER_INTERVAL_SECS));
         loop {
             ticker.tick().await;
+            crate::llm::feedback::execute_due_feedback(&app_state, &llm_client, &status_tx).await;
             app_state
                 .cleanup_old_servers(SERVER_CLEANUP_TIMEOUT_SECS)
                 .await;
@@ -537,7 +549,7 @@ impl NetGetMcpService {
         // ticked by the TUI event loop, so an LLM-initiated `close_server` (which
         // marks the server Stopped rather than removing it) left the entry — and its
         // scheduled tasks — in AppState for the life of the process.
-        spawn_state_reaper(app_state.clone());
+        spawn_state_reaper(app_state.clone(), llm_client.clone(), status_tx.clone());
 
         let state = Arc::new(SharedState {
             app_state,

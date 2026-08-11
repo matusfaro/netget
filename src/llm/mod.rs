@@ -12,6 +12,7 @@ pub mod conversation_state; // Conversation history management
 pub mod default_instructions; // Default instructions registry
 pub mod event_handler_executor; // Event handler execution (script/static/llm)
 pub mod event_instructions; // Event-specific instructions
+pub mod feedback; // Draining the provide_feedback buffer into call_llm_for_feedback
 pub mod model_selection;
 pub mod ollama_client;
 pub mod prompt;
