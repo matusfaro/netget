@@ -58,6 +58,11 @@ struct Inner {
 }
 
 /// A queue of pending LLM requests answered out-of-band by the MCP agent.
+///
+/// Every `inner` lock is taken with `unwrap_or_else(|e| e.into_inner())` rather than
+/// `unwrap()`. The queue is process-wide, so a single panic under the lock would poison it
+/// and make every later `submit`/`claim_next`/`answer` panic in turn — one transient fault
+/// becoming a permanent outage. The guarded state is plain collections that stay coherent.
 pub struct LlmRequestQueue {
     inner: Mutex<Inner>,
     notify: Notify,
@@ -99,7 +104,7 @@ impl LlmRequestQueue {
             .unwrap_or(0);
 
         let id = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let id = inner.next_id;
             inner.next_id += 1;
             let request = PendingLlmRequest {
@@ -129,7 +134,7 @@ impl LlmRequestQueue {
     /// Claim the oldest not-yet-claimed request, marking it claimed. Returns `None`
     /// if every pending request has already been claimed.
     pub fn claim_next(&self) -> Option<PendingLlmRequest> {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
 
         let mut target = None;
         for &id in &inner.order {
@@ -176,7 +181,7 @@ impl LlmRequestQueue {
     /// if the waiter has already gone away (timed out / connection closed).
     pub fn answer(&self, id: u64, actions: Vec<Value>) -> Result<()> {
         let entry = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
             let entry = inner.entries.remove(&id).ok_or_else(|| {
                 anyhow!(
                     "no pending LLM request with id {} (already answered, expired, or never existed)",
@@ -199,14 +204,14 @@ impl LlmRequestQueue {
 
     /// Drop a timed-out / abandoned request so it can no longer be answered.
     pub fn expire(&self, id: u64) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.entries.remove(&id);
         inner.order.retain(|&x| x != id);
     }
 
     /// Snapshot of all outstanding requests (pending + claimed-unanswered).
     pub fn list(&self) -> Vec<PendingLlmRequest> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner
             .order
             .iter()

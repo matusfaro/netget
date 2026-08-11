@@ -151,11 +151,17 @@ impl TemplateEngine {
     }
 
     /// Render a template with the given data
+    ///
+    /// The lock is taken with `unwrap_or_else(|e| e.into_inner())` rather than `unwrap()`.
+    /// This is shared infrastructure: a single panic while any reader held it would poison
+    /// the `RwLock` and make **every subsequent prompt build in the process** panic, turning
+    /// one transient fault into a permanent outage. The `Handlebars` registry behind it is
+    /// immutable after construction, so recovering the guard is safe.
     pub fn render<T>(&self, template_name: &str, data: &T) -> Result<String>
     where
         T: serde::Serialize,
     {
-        let handlebars = self.handlebars.read().unwrap();
+        let handlebars = self.handlebars.read().unwrap_or_else(|e| e.into_inner());
 
         // Check if template exists
         if !handlebars.has_template(template_name) {
@@ -193,13 +199,13 @@ impl TemplateEngine {
 
     /// Check if a template exists
     pub fn has_template(&self, template_name: &str) -> bool {
-        let handlebars = self.handlebars.read().unwrap();
+        let handlebars = self.handlebars.read().unwrap_or_else(|e| e.into_inner());
         handlebars.has_template(template_name)
     }
 
     /// Get all registered template names
     pub fn get_templates(&self) -> Vec<String> {
-        let handlebars = self.handlebars.read().unwrap();
+        let handlebars = self.handlebars.read().unwrap_or_else(|e| e.into_inner());
         handlebars
             .get_templates()
             .keys()
