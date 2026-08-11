@@ -17,9 +17,7 @@ use crate::state::app_state::AppState;
 use actions::DHCP_REQUEST_EVENT;
 
 use crate::{console_debug, console_trace};
-#[cfg(feature = "dhcp")]
 use actions::DhcpRequestContext;
-#[cfg(feature = "dhcp")]
 use dhcproto::{v4, Decodable, Decoder};
 
 /// Render a hardware address the way the `dhcp_request` event reports it: lower-case hex
@@ -66,14 +64,23 @@ impl DhcpServer {
                         let hex_str = hex::encode(&data);
                         console_trace!(status_tx, "DHCP data (hex): {}", hex_str);
 
-                        #[cfg(feature = "dhcp")]
-                        let parsed_info = Self::parse_dhcp_message(&data);
-
-                        #[cfg(not(feature = "dhcp"))]
-                        let parsed_info: Option<(
-                            String,
-                            Option<DhcpRequestContext>,
-                        )> = None;
+                        // A datagram that does not decode - or decodes without a DHCP message
+                        // type option - is not a DHCP request. Raising `dhcp_request` for it
+                        // spent an LLM round trip and handed the model an event reading
+                        // "unknown" in every field, out of which no reply could be built:
+                        // `base_reply` has no transaction id to echo and errors. Drop it.
+                        let Some((_, Some(request_ctx))) = Self::parse_dhcp_message(&data) else {
+                            tracing::warn!(
+                                "Dropping non-DHCP datagram ({} bytes) from {}",
+                                n,
+                                peer_addr
+                            );
+                            let _ = status_tx.send(format!(
+                                "[WARN] Dropping non-DHCP datagram ({} bytes) from {}",
+                                n, peer_addr
+                            ));
+                            continue;
+                        };
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -81,15 +88,6 @@ impl DhcpServer {
                             ProtocolConnectionInfo,
                         };
                         let now = std::time::Instant::now();
-
-                        #[cfg(feature = "dhcp")]
-                        let _request_type = parsed_info
-                            .as_ref()
-                            .map(|(desc, _)| desc.clone())
-                            .unwrap_or_else(|| "unknown".to_string());
-
-                        #[cfg(not(feature = "dhcp"))]
-                        let request_type = "request".to_string();
 
                         let conn_state = ServerConnectionState {
                             id: connection_id,
@@ -120,57 +118,14 @@ impl DhcpServer {
                             // build the reply, so two clients whose LLM calls overlap can
                             // never echo each other's transaction ID.
                             let protocol = DhcpProtocol::new();
+                            protocol.set_request_context(request_ctx.clone());
 
-                            #[cfg(feature = "dhcp")]
-                            if let Some((_, Some(ctx))) = parsed_info.as_ref() {
-                                protocol.set_request_context(ctx.clone());
-                            }
-
-                            // Extract event data
-                            #[cfg(feature = "dhcp")]
-                            let (
-                                message_type,
-                                client_mac,
-                                requested_ip,
-                                xid,
-                                client_ip,
-                                gateway_ip,
-                            ) = if let Some((_, Some(ctx))) = &parsed_info {
-                                (
-                                    format!("{:?}", ctx.message_type),
-                                    crate::server::dhcp::format_mac(&ctx.chaddr),
-                                    ctx.requested_ip.map(|ip| ip.to_string()),
-                                    Some(ctx.xid),
-                                    ctx.ciaddr.to_string(),
-                                    ctx.giaddr.to_string(),
-                                )
-                            } else {
-                                (
-                                    "unknown".to_string(),
-                                    "unknown".to_string(),
-                                    None,
-                                    None,
-                                    "0.0.0.0".to_string(),
-                                    "0.0.0.0".to_string(),
-                                )
-                            };
-
-                            #[cfg(not(feature = "dhcp"))]
-                            let (
-                                message_type,
-                                client_mac,
-                                requested_ip,
-                                xid,
-                                client_ip,
-                                gateway_ip,
-                            ) = (
-                                "unknown".to_string(),
-                                "unknown".to_string(),
-                                None::<String>,
-                                None::<u32>,
-                                "0.0.0.0".to_string(),
-                                "0.0.0.0".to_string(),
-                            );
+                            let message_type = format!("{:?}", request_ctx.message_type);
+                            let client_mac = crate::server::dhcp::format_mac(&request_ctx.chaddr);
+                            let requested_ip = request_ctx.requested_ip.map(|ip| ip.to_string());
+                            let xid = Some(request_ctx.xid);
+                            let client_ip = request_ctx.ciaddr.to_string();
+                            let gateway_ip = request_ctx.giaddr.to_string();
 
                             let mut event_data = serde_json::json!({
                                 "message_type": message_type,
@@ -281,7 +236,10 @@ impl DhcpServer {
         Ok(local_addr)
     }
 
-    #[cfg(feature = "dhcp")]
+    /// Decode a datagram into `(description, request context)`.
+    ///
+    /// `None` means the datagram is not usable as a DHCP request: it did not decode, its
+    /// `hlen` is out of range, or it carries no message-type option. The caller drops those.
     fn parse_dhcp_message(data: &[u8]) -> Option<(String, Option<DhcpRequestContext>)> {
         use std::net::Ipv4Addr;
 

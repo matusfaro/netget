@@ -9,8 +9,10 @@ configuration. The LLM controls DHCP DISCOVER/OFFER/REQUEST/ACK flow using struc
 **RFC**: RFC 2131 (DHCP), RFC 2132 (DHCP Options)
 **Port**: 67 (server), 68 (client) - UDP
 **Privilege**: declares `PrivilegeRequirement::PrivilegedPort(67)`; any port above 1023 needs none.
-**Test coverage**: `tests/server/dhcp/test.rs` (the file is `test.rs`, not `e2e_test.rs`) — three
-mocked scenarios building DISCOVER/REQUEST packets by hand.
+**Test coverage**: `tests/server/dhcp/test.rs` (the file is `test.rs`, not `e2e_test.rs`) — two
+mocked tests, 6 LLM calls, asserting OFFER, ACK and NAK field by field against RFC 2131 table 3
+with a decoder written in the test file rather than with `dhcproto`. Until August 2026 this file
+had **zero assertions**: all three tests printed `Note: DHCP OFFER timed out` and passed.
 
 ## Library Choices
 
@@ -114,6 +116,12 @@ a fixed `[u8; 16]` with it, so `hlen > 16` panics inside the library. That parse
 socket task, so the panic would take the whole listener down — one datagram, server gone, status
 still showing `Running`. `parse_dhcp_message` therefore checks `hlen` before touching `chaddr()`
 and drops the datagram with a warning. Keep any new field access behind the same check.
+
+**A datagram that does not decode never reaches the model.** `parse_dhcp_message` returning
+`None` — undecodable, bad `hlen`, or no message-type option — makes the receive loop drop the
+datagram with a WARN. It used to raise `dhcp_request` anyway, with `"unknown"` in every field:
+that spent an LLM round trip on an event from which no reply could be built, since `base_reply`
+has no transaction id to echo and errors out. Fail closed instead.
 
 ## LLM Integration
 

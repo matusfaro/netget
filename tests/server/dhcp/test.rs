@@ -1,353 +1,462 @@
-//! End-to-end DHCP tests for NetGet
+//! End-to-end DHCP tests for NetGet.
 //!
-//! These tests spawn the actual NetGet binary with DHCP prompts
-//! and validate the responses using the dhcproto library for proper DHCP message construction.
+//! Every reply is decoded by the RFC 2131 / RFC 2132 decoder in this file, which is written
+//! from the wire format and deliberately does **not** use `dhcproto` — the codec the server
+//! encodes with. Using the same library on both sides would hide any bug in it, and a DHCP
+//! client on the other end of the wire is a decoder like this one, not a shared codec.
+//!
+//! There is no usable real DHCP client to point at these servers: `dhclient`/`ipconfig` bind
+//! UDP/68, need root, and cannot be aimed at an ephemeral port on loopback. So the peer here
+//! is an independent implementation of the packet format rather than a real binary.
 
 #![cfg(feature = "dhcp")]
 
-// Helper module imported from parent
-
 use super::super::super::helpers::{self, E2EResult};
+use std::collections::HashMap;
+use std::net::Ipv4Addr;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 
-/// Create a basic DHCP DISCOVER message
-fn create_dhcp_discover(transaction_id: u32) -> Vec<u8> {
-    let mut packet = vec![0u8; 300];
+const MAGIC_COOKIE: [u8; 4] = [99, 130, 83, 99];
 
-    // DHCP message structure (simplified)
+// RFC 2132 option codes
+const OPT_SUBNET_MASK: u8 = 1;
+const OPT_ROUTER: u8 = 3;
+const OPT_DNS_SERVERS: u8 = 6;
+const OPT_REQUESTED_IP: u8 = 50;
+const OPT_LEASE_TIME: u8 = 51;
+const OPT_MESSAGE_TYPE: u8 = 53;
+const OPT_SERVER_ID: u8 = 54;
+const OPT_MESSAGE: u8 = 56;
+const OPT_END: u8 = 255;
+
+// RFC 2131 message types (option 53)
+const DHCP_DISCOVER: u8 = 1;
+const DHCP_OFFER: u8 = 2;
+const DHCP_REQUEST: u8 = 3;
+const DHCP_ACK: u8 = 5;
+const DHCP_NAK: u8 = 6;
+
+const CLIENT_MAC: [u8; 6] = [0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
+
+/// Build a BOOTREQUEST carrying the given DHCP message type, per RFC 2131 section 2.
+fn build_request(msg_type: u8, xid: u32, options: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    let mut packet = vec![0u8; 240];
+
     packet[0] = 1; // op: BOOTREQUEST
     packet[1] = 1; // htype: Ethernet
-    packet[2] = 6; // hlen: MAC address length
+    packet[2] = 6; // hlen
     packet[3] = 0; // hops
+    packet[4..8].copy_from_slice(&xid.to_be_bytes());
+    packet[8..10].copy_from_slice(&0u16.to_be_bytes()); // secs
+    packet[10..12].copy_from_slice(&0x8000u16.to_be_bytes()); // flags: broadcast
+                                                              // ciaddr/yiaddr/siaddr/giaddr stay 0.0.0.0
+    packet[28..34].copy_from_slice(&CLIENT_MAC);
+    packet[236..240].copy_from_slice(&MAGIC_COOKIE);
 
-    // Transaction ID (4 bytes)
-    packet[4..8].copy_from_slice(&transaction_id.to_be_bytes());
+    packet.push(OPT_MESSAGE_TYPE);
+    packet.push(1);
+    packet.push(msg_type);
 
-    // Secs (2 bytes)
-    packet[8..10].copy_from_slice(&0u16.to_be_bytes());
+    for (code, value) in options {
+        packet.push(*code);
+        packet.push(value.len() as u8);
+        packet.extend_from_slice(value);
+    }
 
-    // Flags (2 bytes) - broadcast flag
-    packet[10..12].copy_from_slice(&0x8000u16.to_be_bytes());
+    packet.push(OPT_END);
 
-    // Client IP (4 bytes) - 0.0.0.0
-    packet[12..16].copy_from_slice(&[0, 0, 0, 0]);
-
-    // Your IP (4 bytes) - 0.0.0.0
-    packet[16..20].copy_from_slice(&[0, 0, 0, 0]);
-
-    // Server IP (4 bytes) - 0.0.0.0
-    packet[20..24].copy_from_slice(&[0, 0, 0, 0]);
-
-    // Gateway IP (4 bytes) - 0.0.0.0
-    packet[24..28].copy_from_slice(&[0, 0, 0, 0]);
-
-    // Client MAC address (16 bytes, only first 6 used)
-    packet[28..34].copy_from_slice(&[0x00, 0x11, 0x22, 0x33, 0x44, 0x55]);
-
-    // Server hostname (64 bytes) - all zeros
-    // Client hostname (128 bytes) - all zeros
-
-    // Magic cookie (bytes 236-239)
-    packet[236..240].copy_from_slice(&[99, 130, 83, 99]);
-
-    // DHCP options
-    let mut offset = 240;
-
-    // Option 53: DHCP Message Type = DISCOVER (1)
-    packet[offset] = 53; // option code
-    packet[offset + 1] = 1; // length
-    packet[offset + 2] = 1; // DISCOVER
-    offset += 3;
-
-    // Option 255: End
-    packet[offset] = 255;
+    // Real clients pad to the 300-byte BOOTP minimum.
+    while packet.len() < 300 {
+        packet.push(0);
+    }
 
     packet
 }
 
-/// Parse DHCP message type from response
-fn parse_dhcp_message_type(packet: &[u8]) -> Option<u8> {
-    if packet.len() < 240 {
-        return None;
-    }
-
-    // Check magic cookie
-    if &packet[236..240] != &[99, 130, 83, 99] {
-        return None;
-    }
-
-    // Parse options
-    let mut offset = 240;
-    while offset < packet.len() && packet[offset] != 255 {
-        let option_code = packet[offset];
-        if option_code == 0 {
-            // Pad option
-            offset += 1;
-            continue;
-        }
-
-        if offset + 1 >= packet.len() {
-            break;
-        }
-
-        let length = packet[offset + 1] as usize;
-
-        if option_code == 53 && length == 1 && offset + 2 < packet.len() {
-            // DHCP Message Type
-            return Some(packet[offset + 2]);
-        }
-
-        offset += 2 + length;
-    }
-
-    None
+/// A decoded BOOTP/DHCP message.
+#[derive(Debug)]
+struct DhcpMessage {
+    op: u8,
+    htype: u8,
+    hlen: u8,
+    xid: u32,
+    flags: u16,
+    yiaddr: Ipv4Addr,
+    chaddr: Vec<u8>,
+    options: HashMap<u8, Vec<u8>>,
 }
 
+impl DhcpMessage {
+    /// Decode straight from the wire format (RFC 2131 section 2, RFC 2132 section 2).
+    fn decode(data: &[u8]) -> Result<Self, String> {
+        if data.len() < 240 {
+            return Err(format!(
+                "reply is {} bytes, shorter than the 240-byte BOOTP header + magic cookie",
+                data.len()
+            ));
+        }
+        if data[236..240] != MAGIC_COOKIE {
+            return Err(format!(
+                "reply has no DHCP magic cookie at bytes 236..240, got {:02x?}",
+                &data[236..240]
+            ));
+        }
+
+        let hlen = data[2];
+        if hlen as usize > 16 {
+            return Err(format!("reply declares hlen {} (max 16)", hlen));
+        }
+
+        let mut options: HashMap<u8, Vec<u8>> = HashMap::new();
+        let mut offset = 240;
+        loop {
+            if offset >= data.len() {
+                return Err("options ran off the end of the datagram without an End option".into());
+            }
+            let code = data[offset];
+            if code == OPT_END {
+                break;
+            }
+            if code == 0 {
+                // Pad
+                offset += 1;
+                continue;
+            }
+            if offset + 1 >= data.len() {
+                return Err(format!("option {} has no length byte", code));
+            }
+            let len = data[offset + 1] as usize;
+            if offset + 2 + len > data.len() {
+                return Err(format!(
+                    "option {} declares {} bytes but only {} remain",
+                    code,
+                    len,
+                    data.len() - offset - 2
+                ));
+            }
+            options.insert(code, data[offset + 2..offset + 2 + len].to_vec());
+            offset += 2 + len;
+        }
+
+        Ok(DhcpMessage {
+            op: data[0],
+            htype: data[1],
+            hlen,
+            xid: u32::from_be_bytes([data[4], data[5], data[6], data[7]]),
+            flags: u16::from_be_bytes([data[10], data[11]]),
+            yiaddr: Ipv4Addr::new(data[16], data[17], data[18], data[19]),
+            chaddr: data[28..28 + hlen as usize].to_vec(),
+            options,
+        })
+    }
+
+    fn message_type(&self) -> Option<u8> {
+        self.options
+            .get(&OPT_MESSAGE_TYPE)
+            .and_then(|v| v.first())
+            .copied()
+    }
+
+    fn ipv4_option(&self, code: u8) -> Option<Ipv4Addr> {
+        let v = self.options.get(&code)?;
+        if v.len() < 4 {
+            return None;
+        }
+        Some(Ipv4Addr::new(v[0], v[1], v[2], v[3]))
+    }
+
+    fn u32_option(&self, code: u8) -> Option<u32> {
+        let v = self.options.get(&code)?;
+        if v.len() != 4 {
+            return None;
+        }
+        Some(u32::from_be_bytes([v[0], v[1], v[2], v[3]]))
+    }
+
+    fn string_option(&self, code: u8) -> Option<String> {
+        self.options
+            .get(&code)
+            .map(|v| String::from_utf8_lossy(v).to_string())
+    }
+
+    /// Fields RFC 2131 section 4.1 requires every server reply to echo from the request.
+    fn assert_echoes_request(&self, xid: u32) {
+        assert_eq!(
+            self.op, 2,
+            "reply op must be BOOTREPLY (2), got {}",
+            self.op
+        );
+        assert_eq!(self.htype, 1, "reply htype must be 1 (Ethernet)");
+        assert_eq!(self.hlen, 6, "reply hlen must be 6");
+        assert_eq!(
+            self.xid, xid,
+            "reply xid 0x{:08x} does not match the request's 0x{:08x}; a client silently \
+             discards a reply whose transaction id differs",
+            self.xid, xid
+        );
+        assert_eq!(
+            self.chaddr, CLIENT_MAC,
+            "reply chaddr must echo the client hardware address"
+        );
+        assert_eq!(
+            self.flags & 0x8000,
+            0x8000,
+            "the request set the broadcast flag, so RFC 2131 4.1 requires the reply to set it too"
+        );
+    }
+}
+
+/// Send one datagram and decode the reply, failing the test on timeout.
+async fn exchange(
+    socket: &UdpSocket,
+    server_addr: std::net::SocketAddr,
+    packet: &[u8],
+    what: &str,
+) -> DhcpMessage {
+    socket
+        .send_to(packet, server_addr)
+        .await
+        .unwrap_or_else(|e| panic!("failed to send {}: {}", what, e));
+
+    let mut buffer = vec![0u8; 1500];
+    let (n, _from) = tokio::time::timeout(Duration::from_secs(10), socket.recv_from(&mut buffer))
+        .await
+        .unwrap_or_else(|_| panic!("no reply to {} within 10s", what))
+        .unwrap_or_else(|e| panic!("socket error awaiting reply to {}: {}", what, e));
+
+    DhcpMessage::decode(&buffer[..n])
+        .unwrap_or_else(|e| panic!("reply to {} is not a valid DHCP message: {}", what, e))
+}
+
+/// Assert that nothing arrives on the socket within `secs`.
+async fn expect_no_reply(socket: &UdpSocket, secs: u64, what: &str) {
+    let mut buffer = vec![0u8; 1500];
+    if let Ok(Ok((n, from))) =
+        tokio::time::timeout(Duration::from_secs(secs), socket.recv_from(&mut buffer)).await
+    {
+        panic!(
+            "expected no reply to {}, but got {} bytes from {}: {:02x?}",
+            what,
+            n,
+            from,
+            &buffer[..n.min(64)]
+        );
+    }
+}
+
+/// DISCOVER → OFFER, REQUEST → ACK, and a malformed datagram in between.
+///
+/// One server handles all of it: 1 startup call + 2 DISCOVERs + 1 REQUEST = 4 LLM calls.
 #[tokio::test]
-async fn test_dhcp_discover_offer() -> E2EResult<()> {
-    println!("\n=== E2E Test: DHCP DISCOVER/OFFER ===");
+async fn test_dhcp_discover_offer_and_request_ack() -> E2EResult<()> {
+    let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Offer and assign 192.168.1.100 \
+        with subnet mask 255.255.255.0, gateway 192.168.1.1, DNS 8.8.8.8 and 9.9.9.9, \
+        lease time 86400 seconds, server identifier 127.0.0.1";
 
-    // PROMPT: Tell the LLM to act as a DHCP server
-    let prompt = "listen on port {AVAILABLE_PORT} via dhcp. When receiving DHCP DISCOVER messages, respond with DHCP OFFER. Offer IP addresses in the 192.168.1.0/24 range starting from 192.168.1.100";
-
-    // Start the server with debug logging and mocks
     let config = helpers::NetGetConfig::new(prompt)
         .with_log_level("debug")
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup (user command)
-                .on_instruction_containing("listen on port")
+            mock.on_instruction_containing("listen on port")
                 .and_instruction_containing("dhcp")
-                .and_instruction_containing("DISCOVER")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "DHCP",
-                        "instruction": "DHCP server - respond to DISCOVER with OFFER from 192.168.1.100+"
+                        "instruction": "DHCP server: OFFER on DISCOVER, ACK on REQUEST"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Server receives DHCP DISCOVER (dhcp_request event)
-                // Note: dhcproto outputs message types in PascalCase like "Discover"
+                // dhcproto spells message types in PascalCase ("Discover", not "DISCOVER").
                 .on_event("dhcp_request")
                 .and_event_data_contains("message_type", "Discover")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_dhcp_offer",
                         "offered_ip": "192.168.1.100",
+                        "server_ip": "127.0.0.1",
                         "subnet_mask": "255.255.255.0",
                         "router": "192.168.1.1",
-                        "dns_servers": ["8.8.8.8"],
+                        "dns_servers": ["8.8.8.8", "9.9.9.9"],
                         "lease_time": 86400
                     }
                 ]))
-                .expect_calls(1)
+                .expect_calls(2)
                 .and()
-        });
-
-    let server = helpers::start_netget_server(config).await?;
-    println!("DHCP server started on port {}", server.port);
-
-    // Wait for DHCP server to fully initialize (needs LLM call)
-    // Give the server's receive loop time to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    // VALIDATION: Send DHCP DISCOVER
-    let socket = UdpSocket::bind("127.0.0.1:0").await?;
-    let server_addr: std::net::SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
-
-    let discover_packet = create_dhcp_discover(0x12345678);
-    println!(
-        "Sending DHCP DISCOVER ({} bytes) to {}...",
-        discover_packet.len(),
-        server_addr
-    );
-    println!("Client socket bound to: {}", socket.local_addr()?);
-
-    let sent_bytes = socket.send_to(&discover_packet, server_addr).await?;
-    println!("Successfully sent {} bytes", sent_bytes);
-
-    // Wait for DHCP OFFER response
-    let mut buffer = vec![0u8; 1024];
-    let timeout_result =
-        tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
-
-    match timeout_result {
-        Ok(Ok((n, from_addr))) => {
-            println!("Received {} bytes from {}", n, from_addr);
-
-            // Try to parse the message type
-            if let Some(msg_type) = parse_dhcp_message_type(&buffer[..n]) {
-                println!("DHCP message type: {}", msg_type);
-                // Message type 2 = OFFER
-                // Note: LLM might not implement exact DHCP protocol, so we just check for a response
-                println!("  ✓ DHCP server responded to DISCOVER");
-            } else {
-                println!("  Note: Could not parse DHCP message type (LLM implementation varies)");
-                println!("  ✓ DHCP server responded with {} bytes", n);
-            }
-        }
-        Ok(Err(e)) => {
-            println!("Note: Socket error: {}", e);
-        }
-        Err(_) => {
-            println!("Note: DHCP OFFER timed out after 5 seconds");
-            println!("  This may be expected - testing that server accepts DHCP messages");
-        }
-    }
-
-    // Verify mock expectations were met
-    server.verify_mocks().await?;
-
-    server.stop().await?;
-    println!("=== Test completed ===\n");
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_dhcp_request_ack() -> E2EResult<()> {
-    println!("\n=== E2E Test: DHCP REQUEST/ACK ===");
-
-    // PROMPT: Tell the LLM to handle DHCP REQUEST
-    let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Handle DHCP DISCOVER and REQUEST messages. Assign IP addresses from 192.168.1.100 onwards. Respond with OFFER to DISCOVER and ACK to REQUEST";
-
-    // Start the server with mocks
-    let config = helpers::NetGetConfig::new(prompt)
-        .with_log_level("debug")
-        .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("listen on port")
-                .and_instruction_containing("dhcp")
-                .and_instruction_containing("REQUEST")
-                .respond_with_actions(serde_json::json!([
-                    {
-                        "type": "open_server",
-                        "port": 0,
-                        "base_stack": "DHCP",
-                        "instruction": "DHCP server - OFFER on DISCOVER, ACK on REQUEST"
-                    }
-                ]))
-                .expect_calls(1)
-                .and()
-                // Mock 2: Server receives DHCP REQUEST
-                //Note: dhcproto outputs message types in PascalCase like "Request"
                 .on_event("dhcp_request")
                 .and_event_data_contains("message_type", "Request")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "send_dhcp_ack",
                         "assigned_ip": "192.168.1.100",
+                        "server_ip": "127.0.0.1",
                         "subnet_mask": "255.255.255.0",
                         "router": "192.168.1.1",
-                        "dns_servers": ["8.8.8.8"],
+                        "dns_servers": ["8.8.8.8", "9.9.9.9"],
                         "lease_time": 86400
                     }
                 ]))
                 .expect_calls(1)
                 .and()
+                // A datagram the server cannot decode must never reach the model: the event
+                // would carry "unknown" in every field and no reply could be built from it.
+                // This rule exists to fail the run if such a call is ever made.
+                .on_event("dhcp_request")
+                .and_event_data_contains("message_type", "unknown")
+                .respond_with_actions(serde_json::json!([{"type": "ignore_request"}]))
+                .expect_calls(0)
+                .and()
         });
 
     let server = helpers::start_netget_server(config).await?;
-    println!("DHCP server started on port {}", server.port);
-
-    // Give the server's receive loop time to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    // VALIDATION: Send DHCP REQUEST (simplified - usually follows DISCOVER/OFFER)
-    let socket = UdpSocket::bind("127.0.0.1:0").await?;
     let server_addr: std::net::SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
 
-    // Create a DHCP REQUEST packet (similar to DISCOVER but with message type 3)
-    let mut request_packet = create_dhcp_discover(0x87654321);
-    // Change message type from DISCOVER (1) to REQUEST (3)
-    // Find option 53 and change it
-    for i in 240..request_packet.len() - 2 {
-        if request_packet[i] == 53 && request_packet[i + 1] == 1 {
-            request_packet[i + 2] = 3; // REQUEST
-            break;
-        }
-    }
+    // ---- DISCOVER → OFFER -------------------------------------------------------------
+    let discover_xid = 0x12345678u32;
+    let offer = exchange(
+        &socket,
+        server_addr,
+        &build_request(DHCP_DISCOVER, discover_xid, &[]),
+        "DISCOVER",
+    )
+    .await;
 
-    println!(
-        "Sending DHCP REQUEST ({} bytes) to {}...",
-        request_packet.len(),
-        server_addr
+    offer.assert_echoes_request(discover_xid);
+    assert_eq!(
+        offer.message_type(),
+        Some(DHCP_OFFER),
+        "DISCOVER must be answered with option 53 = DHCPOFFER (2), got {:?}",
+        offer.message_type()
     );
-    socket.send_to(&request_packet, server_addr).await?;
+    assert_eq!(
+        offer.yiaddr,
+        Ipv4Addr::new(192, 168, 1, 100),
+        "yiaddr must carry the offered address"
+    );
+    assert_eq!(
+        offer.ipv4_option(OPT_SUBNET_MASK),
+        Some(Ipv4Addr::new(255, 255, 255, 0)),
+        "option 1 (subnet mask)"
+    );
+    assert_eq!(
+        offer.ipv4_option(OPT_ROUTER),
+        Some(Ipv4Addr::new(192, 168, 1, 1)),
+        "option 3 (router)"
+    );
+    assert_eq!(
+        offer.options.get(&OPT_DNS_SERVERS).map(|v| v.as_slice()),
+        Some([8, 8, 8, 8, 9, 9, 9, 9].as_slice()),
+        "option 6 must carry both DNS servers, in order"
+    );
+    assert_eq!(
+        offer.u32_option(OPT_LEASE_TIME),
+        Some(86400),
+        "option 51 (lease time)"
+    );
+    assert_eq!(
+        offer.ipv4_option(OPT_SERVER_ID),
+        Some(Ipv4Addr::new(127, 0, 0, 1)),
+        "RFC 2131 table 3 requires option 54 (server identifier) in a DHCPOFFER; a client \
+         addresses its REQUEST with it"
+    );
 
-    // Wait for DHCP ACK response
-    let mut buffer = vec![0u8; 1024];
-    let timeout_result =
-        tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
+    // ---- REQUEST → ACK ----------------------------------------------------------------
+    let request_xid = 0x87654321u32;
+    let ack = exchange(
+        &socket,
+        server_addr,
+        &build_request(
+            DHCP_REQUEST,
+            request_xid,
+            &[
+                (OPT_REQUESTED_IP, vec![192, 168, 1, 100]),
+                (OPT_SERVER_ID, vec![127, 0, 0, 1]),
+            ],
+        ),
+        "REQUEST",
+    )
+    .await;
 
-    match timeout_result {
-        Ok(Ok((n, from_addr))) => {
-            println!("Received {} bytes from {}", n, from_addr);
+    ack.assert_echoes_request(request_xid);
+    assert_eq!(
+        ack.message_type(),
+        Some(DHCP_ACK),
+        "REQUEST must be answered with option 53 = DHCPACK (5), got {:?}",
+        ack.message_type()
+    );
+    assert_eq!(
+        ack.yiaddr,
+        Ipv4Addr::new(192, 168, 1, 100),
+        "the ACK must assign the address the client requested"
+    );
+    assert_eq!(
+        ack.ipv4_option(OPT_SERVER_ID),
+        Some(Ipv4Addr::new(127, 0, 0, 1)),
+        "option 54 (server identifier) is required in a DHCPACK too"
+    );
+    assert_eq!(ack.u32_option(OPT_LEASE_TIME), Some(86400));
 
-            if let Some(msg_type) = parse_dhcp_message_type(&buffer[..n]) {
-                println!("DHCP message type: {}", msg_type);
-                println!("  ✓ DHCP server responded to REQUEST");
-            } else {
-                println!("  ✓ DHCP server responded with {} bytes", n);
-            }
-        }
-        Ok(Err(e)) => {
-            println!("Note: Socket error: {}", e);
-        }
-        Err(_) => {
-            println!("Note: DHCP ACK timed out after 5 seconds");
-            println!("  This may be expected - testing protocol handling");
-        }
-    }
+    // ---- A malformed datagram must be dropped, not forwarded to the model -------------
+    // hlen = 0xff is the shape that panics inside dhcproto's `Message::chaddr()`.
+    let mut malformed = build_request(DHCP_DISCOVER, 0xdeadbeef, &[]);
+    malformed[2] = 0xff;
+    socket.send_to(&malformed, server_addr).await?;
+    expect_no_reply(&socket, 2, "a datagram with hlen=255").await;
 
-    // Verify mock expectations were met
+    // ---- The server survived it and still answers -------------------------------------
+    let after_xid = 0x0badf00du32;
+    let offer2 = exchange(
+        &socket,
+        server_addr,
+        &build_request(DHCP_DISCOVER, after_xid, &[]),
+        "the DISCOVER following the malformed datagram",
+    )
+    .await;
+    offer2.assert_echoes_request(after_xid);
+    assert_eq!(
+        offer2.message_type(),
+        Some(DHCP_OFFER),
+        "the server must keep serving after dropping a malformed datagram"
+    );
+
     server.verify_mocks().await?;
-
     server.stop().await?;
-    println!("=== Test completed ===\n");
     Ok(())
 }
 
+/// A REQUEST the model rejects must produce a DHCPNAK, not a silent drop and not an ACK.
+///
+/// 1 startup call + 1 REQUEST = 2 LLM calls.
 #[tokio::test]
-async fn test_dhcp_lease_options() -> E2EResult<()> {
-    println!("\n=== E2E Test: DHCP with Lease Options ===");
+async fn test_dhcp_nak_rejects_request() -> E2EResult<()> {
+    let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Reject every REQUEST with a NAK \
+        saying 'Address not on this network'";
 
-    // PROMPT: Tell the LLM to include DHCP options
-    let prompt = "listen on port {AVAILABLE_PORT} via dhcp. Respond to DHCP requests with: IP address 192.168.1.100, subnet mask 255.255.255.0, gateway 192.168.1.1, DNS server 8.8.8.8, lease time 86400 seconds";
-
-    // Start the server with mocks
     let config = helpers::NetGetConfig::new(prompt)
         .with_log_level("debug")
         .with_mock(|mock| {
-            mock
-                // Mock 1: Server startup
-                .on_instruction_containing("listen on port")
+            mock.on_instruction_containing("listen on port")
                 .and_instruction_containing("dhcp")
-                .and_instruction_containing("lease time")
                 .respond_with_actions(serde_json::json!([
                     {
                         "type": "open_server",
                         "port": 0,
                         "base_stack": "DHCP",
-                        "instruction": "DHCP server - respond with full options including lease time"
+                        "instruction": "DHCP server that NAKs every REQUEST"
                     }
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: Server receives DHCP DISCOVER with options request
                 .on_event("dhcp_request")
+                .and_event_data_contains("message_type", "Request")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_dhcp_offer",
-                        "offered_ip": "192.168.1.100",
-                        "subnet_mask": "255.255.255.0",
-                        "router": "192.168.1.1",
-                        "dns_servers": ["8.8.8.8"],
-                        "lease_time": 86400
+                        "type": "send_dhcp_nak",
+                        "server_ip": "127.0.0.1",
+                        "message": "Address not on this network"
                     }
                 ]))
                 .expect_calls(1)
@@ -355,48 +464,46 @@ async fn test_dhcp_lease_options() -> E2EResult<()> {
         });
 
     let server = helpers::start_netget_server(config).await?;
-    println!("DHCP server started on port {}", server.port);
-
-    // Give the server's receive loop time to start
-    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    // VALIDATION: Send DHCP DISCOVER and check for options in response
-    let socket = UdpSocket::bind("127.0.0.1:0").await?;
     let server_addr: std::net::SocketAddr = format!("127.0.0.1:{}", server.port).parse()?;
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
 
-    let discover_packet = create_dhcp_discover(0xAABBCCDD);
-    println!(
-        "Sending DHCP DISCOVER with options request to {}...",
-        server_addr
+    let xid = 0x0000abcdu32;
+    let nak = exchange(
+        &socket,
+        server_addr,
+        &build_request(DHCP_REQUEST, xid, &[(OPT_REQUESTED_IP, vec![10, 0, 0, 5])]),
+        "REQUEST for an address the server rejects",
+    )
+    .await;
+
+    nak.assert_echoes_request(xid);
+    assert_eq!(
+        nak.message_type(),
+        Some(DHCP_NAK),
+        "a rejected REQUEST must be answered with option 53 = DHCPNAK (6), got {:?}",
+        nak.message_type()
     );
-    socket.send_to(&discover_packet, server_addr).await?;
+    assert_eq!(
+        nak.yiaddr,
+        Ipv4Addr::UNSPECIFIED,
+        "RFC 2131 table 3: yiaddr must be zero in a DHCPNAK"
+    );
+    assert!(
+        !nak.options.contains_key(&OPT_LEASE_TIME),
+        "RFC 2131 table 3: a DHCPNAK must not carry option 51 (lease time)"
+    );
+    assert_eq!(
+        nak.string_option(OPT_MESSAGE).as_deref(),
+        Some("Address not on this network"),
+        "option 56 must carry the reason the model gave"
+    );
+    assert_eq!(
+        nak.ipv4_option(OPT_SERVER_ID),
+        Some(Ipv4Addr::new(127, 0, 0, 1)),
+        "option 54 (server identifier) is required in a DHCPNAK"
+    );
 
-    // Wait for response
-    let mut buffer = vec![0u8; 1024];
-    let timeout_result =
-        tokio::time::timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
-
-    match timeout_result {
-        Ok(Ok((n, _))) => {
-            println!("Received DHCP response ({} bytes)", n);
-
-            // The response should contain various DHCP options
-            // For this test, we just verify we got a response
-            // A full implementation would parse all options
-            println!("  ✓ DHCP server responded with lease information");
-        }
-        Ok(Err(e)) => {
-            println!("Note: Socket error: {}", e);
-        }
-        Err(_) => {
-            println!("Note: DHCP with options timed out after 5 seconds");
-        }
-    }
-
-    // Verify mock expectations were met
     server.verify_mocks().await?;
-
     server.stop().await?;
-    println!("=== Test completed ===\n");
     Ok(())
 }
