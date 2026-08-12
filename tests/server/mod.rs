@@ -68,6 +68,8 @@ pub mod dynamo;
 pub mod elasticsearch;
 #[cfg(feature = "yarn")]
 pub mod yarn;
+#[cfg(feature = "spark")]
+pub mod spark;
 #[cfg(feature = "etcd")]
 pub mod etcd;
 #[cfg(feature = "ftp")]
@@ -122,6 +124,8 @@ pub mod mqtt;
 pub mod mssql;
 #[cfg(feature = "mysql")]
 pub mod mysql;
+#[cfg(feature = "snowflake")]
+pub mod snowflake;
 #[cfg(all(feature = "named_pipe", unix))]
 pub mod named_pipe;
 #[cfg(all(feature = "pty", unix))]

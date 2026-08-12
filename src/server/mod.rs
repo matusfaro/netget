@@ -569,6 +569,13 @@ pub use yarn::actions::YarnProtocol;
 #[cfg(feature = "yarn")]
 pub use yarn::YarnServer;
 
+#[cfg(feature = "spark")]
+pub mod spark;
+#[cfg(feature = "spark")]
+pub use spark::actions::SparkProtocol;
+#[cfg(feature = "spark")]
+pub use spark::SparkServer;
+
 #[cfg(feature = "dynamo")]
 pub mod dynamo;
 #[cfg(feature = "dynamo")]

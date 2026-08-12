@@ -300,6 +300,9 @@ impl ServerRegistry {
         #[cfg(feature = "yarn")]
         self.register(Arc::new(crate::server::YarnProtocol::new()));
 
+        #[cfg(feature = "spark")]
+        self.register(Arc::new(crate::server::SparkProtocol::new()));
+
         #[cfg(feature = "npm")]
         self.register(Arc::new(crate::server::NpmProtocol::new()));
 
@@ -1020,6 +1023,7 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("Elasticsearch", "elasticsearch"),
     ("CouchDB", "couchdb"),
     ("YARN", "yarn"),
+    ("Spark", "spark"),
     ("NPM", "npm"),
     ("OCI-Registry", "oci-registry"),
     ("Kubernetes", "kubernetes-server"),
