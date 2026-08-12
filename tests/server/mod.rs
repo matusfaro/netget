@@ -52,6 +52,8 @@ pub mod coap;
 pub mod couchdb;
 #[cfg(feature = "datalink")]
 pub mod datalink;
+#[cfg(feature = "db2")]
+pub mod db2;
 #[cfg(feature = "dc")]
 pub mod dc;
 #[cfg(feature = "dhcp")]
@@ -66,10 +68,6 @@ pub mod dot;
 pub mod dynamo;
 #[cfg(feature = "elasticsearch")]
 pub mod elasticsearch;
-#[cfg(feature = "yarn")]
-pub mod yarn;
-#[cfg(feature = "spark")]
-pub mod spark;
 #[cfg(feature = "etcd")]
 pub mod etcd;
 #[cfg(feature = "ftp")]
@@ -78,6 +76,8 @@ pub mod ftp;
 pub mod git;
 #[cfg(feature = "grpc")]
 pub mod grpc;
+#[cfg(feature = "hls")]
+pub mod hls;
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http2")]
@@ -124,14 +124,8 @@ pub mod mqtt;
 pub mod mssql;
 #[cfg(feature = "mysql")]
 pub mod mysql;
-#[cfg(feature = "snowflake")]
-pub mod snowflake;
-#[cfg(feature = "db2")]
-pub mod db2;
 #[cfg(all(feature = "named_pipe", unix))]
 pub mod named_pipe;
-#[cfg(all(feature = "pty", unix))]
-pub mod pty;
 #[cfg(feature = "nfc")]
 pub mod nfc;
 #[cfg(feature = "nfs")]
@@ -164,18 +158,28 @@ pub mod pop3;
 pub mod postgresql;
 #[cfg(feature = "proxy")]
 pub mod proxy;
+#[cfg(all(feature = "pty", unix))]
+pub mod pty;
 #[cfg(feature = "pypi")]
 pub mod pypi;
 #[cfg(feature = "quic")]
 pub mod quic;
 #[cfg(feature = "radius")]
 pub mod radius;
+#[cfg(feature = "rdp")]
+pub mod rdp;
 #[cfg(feature = "redis")]
 pub mod redis;
+#[cfg(feature = "reverse-shell")]
+pub mod reverse_shell;
 #[cfg(feature = "rip")]
 pub mod rip;
 #[cfg(feature = "rss")]
 pub mod rss;
+#[cfg(feature = "rtp")]
+pub mod rtp;
+#[cfg(feature = "rtsp")]
+pub mod rtsp;
 #[cfg(feature = "s3")]
 pub mod s3;
 #[cfg(feature = "saml-idp")]
@@ -184,22 +188,20 @@ pub mod saml_idp;
 pub mod saml_sp;
 #[cfg(feature = "sip")]
 pub mod sip;
-#[cfg(feature = "rtp")]
-pub mod rtp;
-#[cfg(feature = "rtsp")]
-pub mod rtsp;
-#[cfg(feature = "hls")]
-pub mod hls;
 #[cfg(feature = "smb")]
 pub mod smb;
 #[cfg(feature = "smtp")]
 pub mod smtp;
 #[cfg(feature = "snmp")]
 pub mod snmp;
+#[cfg(feature = "snowflake")]
+pub mod snowflake;
 #[cfg(all(feature = "socket_file", unix))]
 pub mod socket_file;
 #[cfg(feature = "socks5")]
 pub mod socks5;
+#[cfg(feature = "spark")]
+pub mod spark;
 #[cfg(feature = "sqs")]
 pub mod sqs;
 #[cfg(feature = "ssh")]
@@ -256,10 +258,6 @@ pub mod usb_serial;
 pub mod usb_smartcard;
 #[cfg(feature = "vnc")]
 pub mod vnc;
-#[cfg(feature = "reverse-shell")]
-pub mod reverse_shell;
-#[cfg(feature = "rdp")]
-pub mod rdp;
 #[cfg(feature = "webdav")]
 pub mod webdav;
 #[cfg(feature = "webrtc")]
@@ -276,6 +274,8 @@ pub mod wireguard;
 pub mod xmlrpc;
 #[cfg(feature = "xmpp")]
 pub mod xmpp;
+#[cfg(feature = "yarn")]
+pub mod yarn;
 #[cfg(feature = "zookeeper")]
 pub mod zookeeper;
 

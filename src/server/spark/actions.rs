@@ -130,7 +130,9 @@ fn send_spark_applications_action() -> ActionDefinition {
                 }]
             }]
         }),
-        log_template: Some(LogTemplate::new().with_info("-> Spark {applications_len} applications")),
+        log_template: Some(
+            LogTemplate::new().with_info("-> Spark {applications_len} applications"),
+        ),
     }
 }
 
@@ -314,12 +316,16 @@ impl Protocol for SparkProtocol {
             .state(DevelopmentState::Experimental)
             .implementation("hyper v1 HTTP/1.1 server, manual Spark monitoring REST arrays")
             .llm_control("Applications, jobs, stages and executors invented by the LLM")
-            .e2e_testing("curl / reqwest asserting the documented Spark REST array shapes \
-                          (shape-conformance, not a real Spark client)")
-            .notes("Virtual application, no storage. GET /api/v1/version is answered \
+            .e2e_testing(
+                "curl / reqwest asserting the documented Spark REST array shapes \
+                          (shape-conformance, not a real Spark client)",
+            )
+            .notes(
+                "Virtual application, no storage. GET /api/v1/version is answered \
                     statically; applications/jobs/stages/executors are LLM-driven. \
                     Fail-closed: LLM failure returns 503/500 JSON error, never an empty-but-200 \
-                    array.")
+                    array.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {

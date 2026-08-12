@@ -101,9 +101,7 @@ impl Protocol for PtyProtocol {
 
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
-            .implementation(
-                "libc::openpty; slave set raw (cfmakeraw); master via tokio AsyncFd",
-            )
+            .implementation("libc::openpty; slave set raw (cfmakeraw); master via tokio AsyncFd")
             .llm_control("Full byte stream: reacts to terminal input, writes bytes onto the PTY")
             .e2e_testing("Real terminal client opens the slave device and drives it (std::fs)")
             .notes(

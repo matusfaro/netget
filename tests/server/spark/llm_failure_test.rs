@@ -13,17 +13,18 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_spark_answers_error_when_llm_fails() -> E2EResult<()> {
-    let config = NetGetConfig::new_no_scripts("Open an Apache Spark REST API on port {AVAILABLE_PORT}")
-        .with_mock(|mock| {
-            mock.on_instruction_containing("Apache Spark REST API")
-                .respond_with_actions(serde_json::json!([{
-                    "type": "open_server", "port": 0, "base_stack": "spark",
-                    "instruction": "Spark monitoring API"
-                }]))
-                .expect_calls(1)
-                .and()
-            // No rule for the spark_request event -> the mock 500s -> call_llm errors.
-        });
+    let config =
+        NetGetConfig::new_no_scripts("Open an Apache Spark REST API on port {AVAILABLE_PORT}")
+            .with_mock(|mock| {
+                mock.on_instruction_containing("Apache Spark REST API")
+                    .respond_with_actions(serde_json::json!([{
+                        "type": "open_server", "port": 0, "base_stack": "spark",
+                        "instruction": "Spark monitoring API"
+                    }]))
+                    .expect_calls(1)
+                    .and()
+                // No rule for the spark_request event -> the mock 500s -> call_llm errors.
+            });
 
     let server = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -32,7 +33,10 @@ async fn test_spark_answers_error_when_llm_fails() -> E2EResult<()> {
     let response = tokio::time::timeout(
         Duration::from_secs(25),
         client
-            .get(format!("http://127.0.0.1:{}/api/v1/applications", server.port))
+            .get(format!(
+                "http://127.0.0.1:{}/api/v1/applications",
+                server.port
+            ))
             .send(),
     )
     .await
@@ -55,7 +59,10 @@ async fn test_spark_answers_error_when_llm_fails() -> E2EResult<()> {
         "a failure must be a JSON error object, never a (possibly-empty) success array: {text}"
     );
     assert!(
-        body["error"].as_str().unwrap_or_default().contains("netget"),
+        body["error"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("netget"),
         "the error should name the source of the failure: {text}"
     );
 

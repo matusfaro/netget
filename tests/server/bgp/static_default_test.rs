@@ -20,7 +20,12 @@ const BGP_MSG_OPEN: u8 = 1;
 const BGP_MSG_KEEPALIVE: u8 = 4;
 const BGP_MARKER: [u8; 16] = [0xff; 16];
 
-fn build_bgp_open(my_as: u16, hold_time: u16, router_id: [u8; 4], four_octet_as: Option<u32>) -> Vec<u8> {
+fn build_bgp_open(
+    my_as: u16,
+    hold_time: u16,
+    router_id: [u8; 4],
+    four_octet_as: Option<u32>,
+) -> Vec<u8> {
     let mut params = Vec::new();
     if let Some(asn) = four_octet_as {
         params.push(0x02); // Optional Parameter type 2: Capabilities
@@ -72,8 +77,8 @@ async fn read_bgp_message(stream: &mut TcpStream) -> E2EResult<(u8, Vec<u8>)> {
 
 #[tokio::test]
 async fn test_bgp_open_handshake_needs_no_llm() -> E2EResult<()> {
-    let config = NetGetConfig::new_no_scripts("listen on port {AVAILABLE_PORT} via bgp").with_mock(
-        |mock| {
+    let config =
+        NetGetConfig::new_no_scripts("listen on port {AVAILABLE_PORT} via bgp").with_mock(|mock| {
             mock
                 // Startup: the only legitimate LLM call. EMPTY instruction => no policy, so the
                 // configured OPEN (default AS 65000 / router-id 192.168.1.1) is used.
@@ -92,8 +97,7 @@ async fn test_bgp_open_handshake_needs_no_llm() -> E2EResult<()> {
                 .respond_with_actions(serde_json::json!([{ "type": "wait_for_more" }]))
                 .expect_calls(0)
                 .and()
-        },
-    );
+        });
 
     let server = start_netget_server(config).await?;
 
@@ -109,7 +113,8 @@ async fn test_bgp_open_handshake_needs_no_llm() -> E2EResult<()> {
         .await?;
 
     // 1. The server's configured OPEN — sent statically, no model call.
-    let (msg_type, _open) = timeout(Duration::from_secs(10), read_bgp_message(&mut client)).await??;
+    let (msg_type, _open) =
+        timeout(Duration::from_secs(10), read_bgp_message(&mut client)).await??;
     assert_eq!(
         msg_type, BGP_MSG_OPEN,
         "expected the configured OPEN as the static handshake, got type {msg_type}"

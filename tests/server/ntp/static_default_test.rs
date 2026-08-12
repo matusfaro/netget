@@ -76,7 +76,10 @@ async fn test_ntp_time_response_needs_no_llm() -> E2EResult<()> {
     );
 
     let transmit = u64::from_be_bytes(buf[40..48].try_into().expect("8 bytes"));
-    assert_ne!(transmit, 0, "the transmit timestamp must be a real clock reading");
+    assert_ne!(
+        transmit, 0,
+        "the transmit timestamp must be a real clock reading"
+    );
     let transmit_secs = (transmit >> 32) as u64;
     let now_ntp = SystemTime::now()
         .duration_since(UNIX_EPOCH)

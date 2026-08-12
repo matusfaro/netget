@@ -31,8 +31,8 @@ fn build_rip_request_all() -> Vec<u8> {
 
 #[tokio::test]
 async fn test_rip_stays_silent_without_policy_and_needs_no_llm() -> E2EResult<()> {
-    let config = NetGetConfig::new_no_scripts("listen on port {AVAILABLE_PORT} via rip").with_mock(
-        |mock| {
+    let config =
+        NetGetConfig::new_no_scripts("listen on port {AVAILABLE_PORT} via rip").with_mock(|mock| {
             mock
                 // Startup: the only legitimate LLM call. EMPTY instruction => no routing policy.
                 .on_instruction_containing("listen")
@@ -47,8 +47,7 @@ async fn test_rip_stays_silent_without_policy_and_needs_no_llm() -> E2EResult<()
                 .respond_with_actions(serde_json::json!([{ "type": "ignore_request" }]))
                 .expect_calls(0)
                 .and()
-        },
-    );
+        });
 
     let server = start_netget_server(config).await?;
     tokio::time::sleep(Duration::from_millis(500)).await;

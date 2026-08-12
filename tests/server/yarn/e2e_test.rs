@@ -170,7 +170,11 @@ async fn test_yarn_submit_application_accepted() -> E2EResult<()> {
     })
     .await?;
 
-    assert_eq!(resp.status().as_u16(), 202, "YARN submit acceptance is 202 Accepted");
+    assert_eq!(
+        resp.status().as_u16(),
+        202,
+        "YARN submit acceptance is 202 Accepted"
+    );
     let location = resp
         .headers()
         .get("location")

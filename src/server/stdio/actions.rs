@@ -388,9 +388,10 @@ pub static STDIO_INPUT_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         Parameter {
             name: "encoding".to_string(),
             type_hint: "string".to_string(),
-            description: "How to read 'data': \"utf8\" means literal text, \"hex\" means the bytes \
+            description:
+                "How to read 'data': \"utf8\" means literal text, \"hex\" means the bytes \
                 hex-encoded (used when they are not all printable ASCII)."
-                .to_string(),
+                    .to_string(),
             required: true,
         },
     ])

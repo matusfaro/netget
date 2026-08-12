@@ -20,7 +20,8 @@ async fn test_pty_prompt_and_command() -> E2EResult<()> {
     let _ = std::fs::create_dir_all("./tmp");
     let _ = std::fs::remove_file(LINK);
 
-    let prompt = "Open a pseudo terminal symlinked at netget-test.pty. Print the prompt 'netget$ ' \
+    let prompt =
+        "Open a pseudo terminal symlinked at netget-test.pty. Print the prompt 'netget$ ' \
                   on connect and answer the whoami command with root";
 
     let server = helpers::start_netget_server(NetGetConfig::new(prompt).with_mock(|mock| {

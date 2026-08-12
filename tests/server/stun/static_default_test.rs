@@ -44,9 +44,7 @@ async fn test_stun_binding_response_needs_no_llm() -> E2EResult<()> {
                 let transaction_id = event_data["transaction_id"]
                     .as_str()
                     .unwrap_or("000000000000000000000000");
-                let peer_addr = event_data["peer_addr"]
-                    .as_str()
-                    .unwrap_or("127.0.0.1:1");
+                let peer_addr = event_data["peer_addr"].as_str().unwrap_or("127.0.0.1:1");
                 serde_json::json!([{
                     "type": "send_stun_binding_response",
                     "transaction_id": transaction_id,

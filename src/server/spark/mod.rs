@@ -64,8 +64,8 @@ impl SparkServer {
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("Spark connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx
-                            .send(format!("[INFO] Spark connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[INFO] Spark connection from {}", remote_addr));
 
                         use crate::state::server::{
                             ConnectionState as ServerConnectionState, ConnectionStatus,
@@ -174,7 +174,10 @@ async fn handle_spark_request(
 
     let (operation, app_id) = detect_spark_operation(&method, &path);
     debug!("Spark {} {} op={}", method, path, operation);
-    let _ = status_tx.send(format!("[DEBUG] Spark {} {} op={}", method, path, operation));
+    let _ = status_tx.send(format!(
+        "[DEBUG] Spark {} {} op={}",
+        method, path, operation
+    ));
     trace!("Spark request body: {}", body_str);
 
     if operation == "version" {
@@ -216,8 +219,11 @@ async fn handle_spark_request(
                     if name == "spark_response" {
                         let status =
                             data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
-                        let body =
-                            data.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let body = data
+                            .get("body")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
                         let ct = data
                             .get("content_type")
                             .and_then(|v| v.as_str())
@@ -232,17 +238,28 @@ async fn handle_spark_request(
             // 200 is a valid "no applications/jobs" result and a client cannot tell it from a
             // backend that never ran — so answer 500 instead of that empty array.
             error!("Spark: LLM returned no spark_response action; answering 500");
-            let _ = status_tx
-                .send("[ERROR] Spark: model produced no response action, answering 500".to_string());
-            Ok(build_spark_error(500, "netget: model produced no Spark response"))
+            let _ = status_tx.send(
+                "[ERROR] Spark: model produced no response action, answering 500".to_string(),
+            );
+            Ok(build_spark_error(
+                500,
+                "netget: model produced no Spark response",
+            ))
         }
         Err(e) => {
             let overloaded = crate::llm::is_overload_error(&e);
             let status = if overloaded { 503u16 } else { 500u16 };
             error!("LLM error for Spark request (status {}): {}", status, e);
-            console_error!(status_tx, "Spark answering {} on LLM failure: {}", status, e);
-            let reason =
-                format!("netget: {}", crate::utils::truncate_for_log(&e.to_string(), 200));
+            console_error!(
+                status_tx,
+                "Spark answering {} on LLM failure: {}",
+                status,
+                e
+            );
+            let reason = format!(
+                "netget: {}",
+                crate::utils::truncate_for_log(&e.to_string(), 200)
+            );
             Ok(build_spark_error(status, &reason))
         }
     }

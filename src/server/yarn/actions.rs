@@ -124,20 +124,18 @@ fn send_yarn_metrics_action() -> ActionDefinition {
                       self-consistent (allocatedMB <= totalMB, activeNodes <= totalNodes). \
                       Wrapped in the {\"clusterMetrics\": {...}} envelope automatically."
             .to_string(),
-        parameters: vec![
-            Parameter {
-                name: "metrics".to_string(),
-                type_hint: "object".to_string(),
-                description: "Object of clusterMetrics fields: appsSubmitted, appsRunning, \
+        parameters: vec![Parameter {
+            name: "metrics".to_string(),
+            type_hint: "object".to_string(),
+            description: "Object of clusterMetrics fields: appsSubmitted, appsRunning, \
                               appsPending, appsCompleted, appsFailed, appsKilled, totalMB, \
                               availableMB, allocatedMB, reservedMB, totalVirtualCores, \
                               availableVirtualCores, allocatedVirtualCores, containersAllocated, \
                               totalNodes, activeNodes, lostNodes, unhealthyNodes, \
                               decommissionedNodes. Any field you omit defaults to 0."
-                    .to_string(),
-                required: true,
-            },
-        ],
+                .to_string(),
+            required: true,
+        }],
         example: json!({
             "type": "send_yarn_metrics",
             "metrics": {
@@ -279,7 +277,9 @@ fn send_yarn_new_application_action() -> ActionDefinition {
             "max_memory_mb": 8192,
             "max_vcores": 4
         }),
-        log_template: Some(LogTemplate::new().with_info("-> YARN new-application {application_id}")),
+        log_template: Some(
+            LogTemplate::new().with_info("-> YARN new-application {application_id}"),
+        ),
     }
 }
 
@@ -443,11 +443,15 @@ impl Protocol for YarnProtocol {
             .state(DevelopmentState::Experimental)
             .implementation("hyper v1 HTTP/1.1 server, manual YARN RM REST envelopes")
             .llm_control("Applications, nodes and cluster metrics invented by the LLM")
-            .e2e_testing("curl / reqwest asserting the documented YARN RM JSON envelopes \
-                          (shape-conformance, not a real Hadoop client)")
-            .notes("Virtual cluster, no storage. GET /ws/v1/cluster/info is answered \
+            .e2e_testing(
+                "curl / reqwest asserting the documented YARN RM JSON envelopes \
+                          (shape-conformance, not a real Hadoop client)",
+            )
+            .notes(
+                "Virtual cluster, no storage. GET /ws/v1/cluster/info is answered \
                     statically; metrics/apps/nodes are LLM-driven. Fail-closed: LLM failure \
-                    returns 503/500 RemoteException, never an empty-but-200 cluster.")
+                    returns 503/500 RemoteException, never an empty-but-200 cluster.",
+            )
             .build()
     }
     fn description(&self) -> &'static str {
@@ -510,7 +514,11 @@ impl Server for YarnProtocol {
             let rm_version = ctx
                 .startup_params
                 .as_ref()
-                .and_then(|p| p.get_optional_string("resource_manager_version").ok().flatten())
+                .and_then(|p| {
+                    p.get_optional_string("resource_manager_version")
+                        .ok()
+                        .flatten()
+                })
                 .unwrap_or_else(|| "3.3.6".to_string());
             let cluster_id = ctx
                 .startup_params
@@ -554,13 +562,31 @@ impl Server for YarnProtocol {
                 // Fill the mandatory keys clients read so a partial object still parses.
                 let mut m = metrics;
                 for key in [
-                    "appsSubmitted", "appsCompleted", "appsPending", "appsRunning", "appsFailed",
-                    "appsKilled", "reservedMB", "availableMB", "allocatedMB", "totalMB",
-                    "reservedVirtualCores", "availableVirtualCores", "allocatedVirtualCores",
-                    "totalVirtualCores", "containersAllocated", "containersReserved",
-                    "containersPending", "totalNodes", "activeNodes", "lostNodes",
-                    "unhealthyNodes", "decommissionedNodes", "decommissioningNodes",
-                    "rebootedNodes", "shutdownNodes",
+                    "appsSubmitted",
+                    "appsCompleted",
+                    "appsPending",
+                    "appsRunning",
+                    "appsFailed",
+                    "appsKilled",
+                    "reservedMB",
+                    "availableMB",
+                    "allocatedMB",
+                    "totalMB",
+                    "reservedVirtualCores",
+                    "availableVirtualCores",
+                    "allocatedVirtualCores",
+                    "totalVirtualCores",
+                    "containersAllocated",
+                    "containersReserved",
+                    "containersPending",
+                    "totalNodes",
+                    "activeNodes",
+                    "lostNodes",
+                    "unhealthyNodes",
+                    "decommissionedNodes",
+                    "decommissioningNodes",
+                    "rebootedNodes",
+                    "shutdownNodes",
                 ] {
                     if m.get(key).is_none() {
                         m[key] = json!(0);
@@ -606,8 +632,14 @@ impl Server for YarnProtocol {
                     .get("application_id")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow::anyhow!("Missing 'application_id'"))?;
-                let mem = action.get("max_memory_mb").and_then(|v| v.as_u64()).unwrap_or(8192);
-                let vcores = action.get("max_vcores").and_then(|v| v.as_u64()).unwrap_or(4);
+                let mem = action
+                    .get("max_memory_mb")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(8192);
+                let vcores = action
+                    .get("max_vcores")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(4);
                 custom(
                     200,
                     json!({

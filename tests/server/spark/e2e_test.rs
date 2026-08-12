@@ -58,7 +58,10 @@ async fn test_spark_version_static_and_applications() -> E2EResult<()> {
     let apps = client.get(&apps_url).send().await?;
     assert!(apps.status().is_success());
     let a: serde_json::Value = serde_json::from_str(&apps.text().await?)?;
-    assert!(a.is_array(), "Spark /applications must be a JSON array, got {a}");
+    assert!(
+        a.is_array(),
+        "Spark /applications must be a JSON array, got {a}"
+    );
     assert_eq!(a[0]["id"], "app-20161116163331-0000");
     assert_eq!(a[0]["attempts"][0]["completed"], false);
 

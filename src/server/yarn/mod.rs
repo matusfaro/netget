@@ -56,7 +56,11 @@ impl YarnServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "YARN ResourceManager listening on {}", local_addr);
+        console_info!(
+            status_tx,
+            "YARN ResourceManager listening on {}",
+            local_addr
+        );
 
         let protocol = Arc::new(YarnProtocol::new());
         let banner = Arc::new((rm_version, cluster_id));
@@ -70,8 +74,8 @@ impl YarnServer {
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("YARN connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx
-                            .send(format!("[INFO] YARN connection from {}", remote_addr));
+                        let _ =
+                            status_tx.send(format!("[INFO] YARN connection from {}", remote_addr));
 
                         use crate::state::server::{
                             ConnectionState as ServerConnectionState, ConnectionStatus,
@@ -224,10 +228,15 @@ async fn handle_yarn_request(
                     if name == "yarn_response" {
                         let status =
                             data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
-                        let body =
-                            data.get("body").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let location =
-                            data.get("location").and_then(|v| v.as_str()).map(str::to_string);
+                        let body = data
+                            .get("body")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let location = data
+                            .get("location")
+                            .and_then(|v| v.as_str())
+                            .map(str::to_string);
                         let _ = status_tx.send(format!("[DEBUG] YARN -> {}", status));
                         trace!("YARN response body: {}", body);
                         return Ok(build_yarn_response_str(status, body, location));
@@ -238,9 +247,8 @@ async fn handle_yarn_request(
             // through to a success-shaped empty cluster — that is indistinguishable from a
             // real idle cluster and is the fail-open trap.
             error!("YARN: LLM returned no yarn_response action; answering 500");
-            let _ = status_tx.send(
-                "[ERROR] YARN: model produced no response action, answering 500".to_string(),
-            );
+            let _ = status_tx
+                .send("[ERROR] YARN: model produced no response action, answering 500".to_string());
             Ok(build_yarn_response(
                 500,
                 yarn_remote_exception(
@@ -262,8 +270,10 @@ async fn handle_yarn_request(
             };
             error!("LLM error for YARN request (status {}): {}", status, e);
             console_error!(status_tx, "YARN answering {} on LLM failure: {}", status, e);
-            let reason =
-                format!("netget: {}", crate::utils::truncate_for_log(&e.to_string(), 200));
+            let reason = format!(
+                "netget: {}",
+                crate::utils::truncate_for_log(&e.to_string(), 200)
+            );
             Ok(build_yarn_response(
                 status,
                 yarn_remote_exception(status, exception, &reason),
@@ -313,7 +323,11 @@ fn build_yarn_response(
     body: serde_json::Value,
     location: Option<String>,
 ) -> Response<Full<Bytes>> {
-    build_yarn_response_str(status, serde_json::to_string(&body).unwrap_or_default(), location)
+    build_yarn_response_str(
+        status,
+        serde_json::to_string(&body).unwrap_or_default(),
+        location,
+    )
 }
 
 /// Build a YARN response from an already-serialized body string.
