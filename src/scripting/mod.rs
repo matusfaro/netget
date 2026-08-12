@@ -8,6 +8,7 @@ pub mod event_handler;
 pub mod executor;
 pub mod highlight;
 pub mod manager;
+pub mod resident;
 pub mod types;
 
 // Re-export commonly used types
@@ -18,6 +19,10 @@ pub use executor::{
     DEFAULT_SCRIPT_TIMEOUT, SCRIPT_TIMEOUT_SECS,
 };
 pub use manager::ScriptManager;
+pub use resident::{
+    resident_available, resident_language_supported, ResidentScope, ResidentScript,
+    ResidentScriptManager,
+};
 pub use types::{
     ConnectionContext, ScriptConfig, ScriptInput, ScriptLanguage, ScriptResponse, ScriptSource,
     ServerContext,

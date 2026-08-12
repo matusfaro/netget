@@ -92,6 +92,29 @@ Use scripts when responses are **deterministic and rule-based**. Scripts receive
 
 **CRITICAL**: Use the **protocol-specific action types** from your protocol's documentation. **DO NOT** use generic actions like "send_data" - instead use the actual action types available for your protocol. Check the protocol documentation (via `read_documentation`) to see the exact action types and their parameters for your protocol.
 
+**ALWAYS branch on `event_type_id` with a switch/case (or if/elif) — even for a single event.**
+One handler routed with `event_pattern: "*"` receives every event type the protocol
+emits, so the first thing your code should do is switch on `event["event_type_id"]` (or,
+in resident mode, the `event_type` argument) and handle each case explicitly. This keeps
+the handler correct when new event types arrive and makes the intended behavior obvious:
+
+```python
+import json, sys
+data = json.load(sys.stdin)
+event_type = data["event_type_id"]
+event = data["event"]
+
+if event_type == "http_request":
+    actions = [{"type": "send_http_response", "status": 200, "body": "ok"}]
+elif event_type == "connection_opened":
+    actions = []
+else:
+    # Unknown event: do nothing (or return {"fallback_to_llm": true} to defer)
+    actions = []
+
+print(json.dumps({"actions": actions}))
+```
+
 ---
 
 ## 📝 Using XML References for Code (NO JSON ESCAPING!)
@@ -193,9 +216,78 @@ print(json.dumps({"actions": [{"type": "<protocol_action>", ...}]}))
 ```
 
 **Script constraints:**
-- Must complete within 5 seconds or terminated
+- Must complete within 30 seconds per event or it is terminated
 - Can return `{"fallback_to_llm": true}` to delegate complex cases back to LLM
 - Supported languages: python, javascript, go, perl
+
+---
+
+## Handler Type: Script (Resident / Persistent Mode)
+
+By default a script handler spawns a **fresh interpreter for every event**, so it keeps
+**no state between events** and pays start-up each time. Set **`"resident": true`** to keep
+one interpreter process **alive across events**: it is started once and then receives each
+event on stdin, so module-level variables persist — a running counter, a parsed config, a
+per-connection map — with no re-reading.
+
+**Use resident mode when the handler needs memory across events:** counting requests,
+accumulating a session, maintaining a small state machine, caching a parsed structure.
+Use the default per-event mode for stateless logic (routing, fixed transforms).
+
+**Contract — you define a `handle` function, do NOT read stdin yourself.** The runtime
+feeds events to your `handle` and serializes its return value as the actions. **Always
+switch/case on `event_type`.**
+
+```json
+{
+  "event_pattern": "*",
+  "handler": {
+    "type": "script",
+    "language": "python",
+    "resident": true,
+    "scope": "server",
+    "code": "<resident>"
+  }
+}
+
+<resident>
+# Module-level state persists across every event (this is the whole point):
+request_count = 0
+seen = {}
+
+def handle(event_type, event, message):
+    global request_count
+    # ALWAYS switch on the event type:
+    if event_type == "http_request":
+        request_count += 1
+        return [{"type": "send_http_response", "status": 200,
+                 "body": "request #%d" % request_count}]
+    elif event_type == "connection_opened":
+        return []
+    else:
+        return []   # unknown event: no action
+</resident>
+```
+
+JavaScript uses the same shape (`function handle(event_type, event, message) { ... }`
+with module-level `let` for state and a `switch (event_type)`); Perl uses
+`sub handle { my ($event_type, $event, $message) = @_; ... }` returning an array-ref.
+
+**`handle` return values:** an array of actions, or `{"actions": [...]}`, or an empty
+array / `None` for "do nothing". Raising an exception defers this one event to the LLM
+(the process stays alive for the next event).
+
+**`scope`** decides which events share one process and therefore share state:
+- `"server"` (default) — one process for the whole server; every connection's events share
+  the same state (e.g. a server-wide counter).
+- `"connection"` — one process **per connection**; each connection has independent state.
+
+**Notes:**
+- Resident languages: `python`, `javascript`, `perl`. `go` has no persistent form and
+  transparently falls back to per-event execution.
+- Each event still has the 30-second budget; a resident that hangs on one event is killed
+  and the event is deferred to the LLM. Resident processes are shut down when the server
+  closes.
 
 ---
 

@@ -87,7 +87,12 @@ pub async fn try_execute_event_handler(
             })
         }
 
-        EventHandlerType::Script { language, code } => {
+        EventHandlerType::Script {
+            language,
+            code,
+            resident,
+            scope,
+        } => {
             // Execute script handler
             execute_script_handler(
                 state,
@@ -98,6 +103,8 @@ pub async fn try_execute_event_handler(
                 event_data,
                 language,
                 code,
+                *resident,
+                scope.as_deref(),
                 protocol,
             )
             .await
@@ -130,6 +137,8 @@ async fn execute_script_handler(
     event_data: Option<serde_json::Value>,
     language: &str,
     code: &str,
+    resident: bool,
+    scope: Option<&str>,
     protocol: Option<&dyn Server>,
 ) -> Result<EventHandlerResult> {
     // Get server info to build script input
@@ -209,8 +218,36 @@ async fn execute_script_handler(
         handles_contexts: vec![event_type_id.to_string()],
     };
 
+    // Choose resident (persistent) or per-event execution.
+    //
+    // Resident mode is opt-in and keeps one interpreter process alive per scope
+    // so in-process state survives between events. A resident handler for a
+    // language that has no persistent form (Go) transparently falls back to the
+    // per-event path so the request is still handled.
+    let use_resident =
+        resident && crate::scripting::resident::resident_language_supported(script_language);
+    if resident && !use_resident {
+        warn!(
+            "Resident mode requested for '{}' but that language runs per-event only; \
+             falling back to per-event execution",
+            script_language.as_str()
+        );
+    }
+
+    let script_result = if use_resident {
+        let resident_scope = crate::scripting::ResidentScope::parse(scope);
+        crate::scripting::ResidentScriptManager::dispatch(
+            &script_config,
+            &script_input,
+            resident_scope,
+        )
+        .await
+    } else {
+        crate::scripting::executor::execute_script_async(&script_config, &script_input).await
+    };
+
     // Execute the script
-    match crate::scripting::executor::execute_script_async(&script_config, &script_input).await {
+    match script_result {
         Ok(response) => {
             debug!(
                 "Script handled event '{}' ({} actions)",

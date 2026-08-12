@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 /// Supported scripting languages
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ScriptLanguage {
     Python,

@@ -1030,6 +1030,9 @@ impl EventHandler {
                     sid.as_u32()
                 ));
 
+                // Shut down any resident script processes for this server
+                crate::scripting::ResidentScriptManager::shutdown_server(sid.as_u32()).await;
+
                 // Check if all servers are stopped/error
                 let all_stopped =
                     self.state.get_all_servers().await.iter().all(|s| {
@@ -1062,6 +1065,10 @@ impl EventHandler {
                         "[TASK] Cleaned up tasks for server #{}",
                         server_id.as_u32()
                     ));
+
+                    // Shut down any resident script processes for this server
+                    crate::scripting::ResidentScriptManager::shutdown_server(server_id.as_u32())
+                        .await;
                 }
 
                 // Set mode to Idle
@@ -1810,7 +1817,21 @@ impl EventHandler {
                         .ok_or_else(|| {
                             anyhow::anyhow!("Missing 'code' field for script handler")
                         })?;
-                    EventHandlerType::script(language, code)
+                    // Opt-in resident (persistent) mode: keeps one interpreter
+                    // alive per scope so in-process state survives across events.
+                    let resident = handler_type_json
+                        .get("resident")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if resident {
+                        let scope = handler_type_json
+                            .get("scope")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+                        EventHandlerType::script_resident(language, code, scope)
+                    } else {
+                        EventHandlerType::script(language, code)
+                    }
                 }
                 "static" => {
                     let actions = handler_type_json
@@ -1875,6 +1896,7 @@ impl EventHandler {
                 .update_server_status(server_id, ServerStatus::Stopped)
                 .await;
             self.state.cleanup_server_tasks(server_id).await;
+            crate::scripting::ResidentScriptManager::shutdown_server(server_id.as_u32()).await;
             ui.add_llm_message(format!("[SERVER] Stopped server #{}", server_id.as_u32()));
         }
 

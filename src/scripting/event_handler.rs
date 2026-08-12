@@ -116,6 +116,18 @@ pub enum EventHandlerType {
         language: String,
         /// Inline script code
         code: String,
+        /// Run the script as a **resident** process: spawned once per scope and
+        /// driven with one event per stdin line, keeping in-process state
+        /// between events. Opt-in; defaults to `false` (the stateless per-event
+        /// path). A resident script defines `handle(event_type, event, message)`
+        /// instead of reading stdin itself. See `src/scripting/resident.rs`.
+        #[serde(default)]
+        resident: bool,
+        /// Resident scope: `"server"` (default — one process shared by all the
+        /// server's connections) or `"connection"` (one process per
+        /// connection). Ignored unless `resident` is `true`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        scope: Option<String>,
     },
 
     /// Handle with static response (actions array)
@@ -129,11 +141,28 @@ pub enum EventHandlerType {
 }
 
 impl EventHandlerType {
-    /// Create a script handler
+    /// Create a per-event (stateless) script handler.
     pub fn script(language: impl Into<String>, code: impl Into<String>) -> Self {
         EventHandlerType::Script {
             language: language.into(),
             code: code.into(),
+            resident: false,
+            scope: None,
+        }
+    }
+
+    /// Create a resident (persistent) script handler with the given scope
+    /// (`"server"` or `"connection"`; `None` defaults to server scope).
+    pub fn script_resident(
+        language: impl Into<String>,
+        code: impl Into<String>,
+        scope: Option<String>,
+    ) -> Self {
+        EventHandlerType::Script {
+            language: language.into(),
+            code: code.into(),
+            resident: true,
+            scope,
         }
     }
 
