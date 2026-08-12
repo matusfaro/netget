@@ -361,6 +361,9 @@ struct AppStateInner {
     access_logs: std::collections::VecDeque<AccessLogEntry>,
     /// Next access-log entry id to assign
     next_access_log_id: u64,
+    /// Declared pipes: `from` server's `on` event forwarded into `to` server.
+    /// Keyed by pipe id. Torn down when either endpoint server closes.
+    pipes: HashMap<crate::pipe::PipeId, crate::pipe::PipeSpec>,
     /// Maximum LLM calls a single client session may make (0 = unlimited)
     client_llm_call_limit: u32,
     /// LLM calls consumed so far, per client session.
@@ -422,6 +425,18 @@ impl AppStateInner {
         // A live-instance handle must never outlive the server it points at.
         self.server_handles.remove(&server_id);
         self.drop_tasks_for_server(server_id);
+
+        // Tear down any pipe touching this server (as source or sink), mirroring
+        // scheduled-task scoping: a pipe cannot outlive either of its endpoints.
+        let doomed: Vec<crate::pipe::PipeId> = self
+            .pipes
+            .iter()
+            .filter(|(_, p)| p.from == server_id.as_u32() || p.to == server_id.as_u32())
+            .map(|(&pid, _)| pid)
+            .collect();
+        for pid in doomed {
+            self.pipes.remove(&pid);
+        }
     }
 
     /// Remove the scheduled tasks scoped to a server, including the tasks scoped to
@@ -538,6 +553,7 @@ impl AppState {
                 documented_client_protocols: std::collections::HashSet::new(),
                 access_logs: std::collections::VecDeque::new(),
                 next_access_log_id: 1,
+                pipes: HashMap::new(),
                 client_llm_call_limit: client_llm_call_limit_from_env(),
                 client_llm_calls: HashMap::new(),
                 client_tasks: HashMap::new(),
@@ -609,6 +625,76 @@ impl AppState {
         }
 
         server
+    }
+
+    /// Declare a pipe: forward `from`'s `on` events into `to` as `as_action`,
+    /// rendering `map` templates against the event data.
+    ///
+    /// Fails cleanly if either endpoint does not exist, or if the edge would
+    /// close a cycle among existing pipes (including the self-loop `from == to`).
+    pub async fn add_pipe(
+        &self,
+        from: ServerId,
+        on: String,
+        to: ServerId,
+        as_action: String,
+        map: std::collections::BTreeMap<String, String>,
+    ) -> anyhow::Result<crate::pipe::PipeId> {
+        let mut inner = self.inner.write().await;
+        if !inner.servers.contains_key(&from) {
+            anyhow::bail!("pipe source server #{} does not exist", from.as_u32());
+        }
+        if !inner.servers.contains_key(&to) {
+            anyhow::bail!("pipe target server #{} does not exist", to.as_u32());
+        }
+        let existing: Vec<crate::pipe::PipeSpec> = inner.pipes.values().cloned().collect();
+        if crate::pipe::would_create_cycle(&existing, from.as_u32(), to.as_u32()) {
+            anyhow::bail!(
+                "pipe #{} -> #{} refused: it would create a delivery cycle",
+                from.as_u32(),
+                to.as_u32()
+            );
+        }
+        let id = inner.next_unified_id;
+        inner.next_unified_id += 1;
+        inner.pipes.insert(
+            id,
+            crate::pipe::PipeSpec {
+                id,
+                from: from.as_u32(),
+                on,
+                to: to.as_u32(),
+                as_action,
+                map,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Remove a pipe by id, returning it if present.
+    pub async fn remove_pipe(&self, id: crate::pipe::PipeId) -> Option<crate::pipe::PipeSpec> {
+        self.inner.write().await.pipes.remove(&id)
+    }
+
+    /// All declared pipes (cloned).
+    pub async fn list_pipes(&self) -> Vec<crate::pipe::PipeSpec> {
+        self.inner.read().await.pipes.values().cloned().collect()
+    }
+
+    /// Pipes whose source is `from` and that tap `event_id`.
+    pub async fn pipes_matching(
+        &self,
+        from: ServerId,
+        event_id: &str,
+    ) -> Vec<crate::pipe::PipeSpec> {
+        self.inner
+            .read()
+            .await
+            .pipes
+            .values()
+            .filter(|p| p.from == from.as_u32() && p.on == event_id)
+            .cloned()
+            .collect()
     }
 
     /// Register a background task owned by a server so it can be aborted on stop.

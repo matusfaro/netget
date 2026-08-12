@@ -13,6 +13,7 @@ pub mod llm;
 pub mod logging;
 #[cfg(any(feature = "mcp-stdio", feature = "mcp-http"))]
 pub mod mcp_stdio;
+pub mod pipe;
 pub mod privilege;
 pub mod protocol;
 pub mod scripting;

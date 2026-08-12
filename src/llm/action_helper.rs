@@ -391,6 +391,13 @@ pub async fn call_llm(
     // Log event start (DEBUG level)
     log_ctx.log_start(event_status_tx);
 
+    // PIPE TAP: forward this event into any wired sink instances, deterministically
+    // and before any handler runs, so a pipe fires regardless of how this server
+    // answers its own peer (and even if the LLM call below fails). Delivery is
+    // spawned under a bounded semaphore inside `dispatch_pipes`, so this does not
+    // block the response path.
+    crate::pipe::dispatch_pipes(state, server_id, event).await;
+
     // TRY EASY PROTOCOL HANDLER FIRST if this server is managed by an easy protocol
     if let Some(easy_id) = state.get_easy_for_server(server_id).await {
         use crate::protocol::EASY_REGISTRY;

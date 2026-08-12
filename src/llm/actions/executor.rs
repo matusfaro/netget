@@ -241,6 +241,23 @@ pub async fn execute_actions(
             .unwrap_or("unknown")
             .to_string();
 
+        // Pipe wiring actions (create_pipe / remove_pipe): the LLM or an operator can
+        // wire one instance's events into another. Handled here rather than as a
+        // CommonAction variant so the enum and its many exhaustive matches stay
+        // untouched. The executor already holds `state` and the server context.
+        if action_name == "create_pipe" || action_name == "remove_pipe" {
+            if let Err(e) =
+                crate::pipe::execute_pipe_action(&action_name, action, state, server_id).await
+            {
+                warn!(
+                    "Pipe action '{}' failed: {} (action: {})",
+                    action_name, e, action
+                );
+                result.add_failure(i, action_name, e.to_string());
+            }
+            continue;
+        }
+
         // Try to parse as common action first
         if let Ok(common_action) = CommonAction::from_json(action) {
             if let Err(e) =
