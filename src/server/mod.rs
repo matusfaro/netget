@@ -562,6 +562,13 @@ pub use couchdb::actions::CouchDbProtocol;
 #[cfg(feature = "couchdb")]
 pub use couchdb::CouchDbServer;
 
+#[cfg(feature = "yarn")]
+pub mod yarn;
+#[cfg(feature = "yarn")]
+pub use yarn::actions::YarnProtocol;
+#[cfg(feature = "yarn")]
+pub use yarn::YarnServer;
+
 #[cfg(feature = "dynamo")]
 pub mod dynamo;
 #[cfg(feature = "dynamo")]

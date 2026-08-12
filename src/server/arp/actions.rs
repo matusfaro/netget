@@ -83,7 +83,7 @@ impl Protocol for ArpProtocol {
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("libpcap (pcap crate) + pnet for ARP packet handling")
-            .llm_control("Full control - can respond to ARP requests with custom MAC addresses")
+            .llm_control("Optional: which MAC to advertise for a queried IP is a policy decision (LLM); with no mapping configured the server answers nothing with no LLM call")
             .e2e_testing(
                 "tests/capture_startup_reports_failure_test.rs asserts spawn() returns Err for \
                  an unknown device and for missing capture privilege, unprivileged. \
@@ -97,7 +97,11 @@ impl Protocol for ArpProtocol {
                  and the 'arp' BPF filter, so a privilege failure lands in ServerStatus::Error \
                  rather than Running. UNVERIFIED: the request/reply path has only ever been \
                  exercised by the #[ignore]d test. Loopback is not useful - ARP is not observable \
-                 there; pass a real NIC.",
+                 there; pass a real NIC. An ARP reply is NOT wire-determined — the MAC advertised \
+                 is a policy choice (spoofing/honeypot/custom mapping), like DNS/DHCP — so with no \
+                 operator policy (no instruction, no handler) the server answers nothing and takes \
+                 NO LLM round-trip per captured packet; the LLM is consulted only when the \
+                 operator supplies the mapping. Zero-LLM path is compile-verified; e2e needs a NIC.",
             )
             .build()
     }

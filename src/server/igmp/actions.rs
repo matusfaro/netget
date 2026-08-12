@@ -56,11 +56,17 @@ impl Protocol for IgmpProtocol {
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::RawSockets)
             .implementation("Raw AF_INET/SOCK_RAW/IPPROTO_IGMP socket (libc + socket2)")
-            .llm_control("Full control - multicast group membership, query responses")
+            .llm_control("Optional: which groups to report membership in is a policy decision (LLM); with no policy configured the server stays silent with no LLM call")
             .e2e_testing("Manual IGMP packet construction")
             .notes(
                 "IGMPv2 support, multicast group management. \
-                 Requires root/CAP_NET_RAW; Unix only (no Windows raw-socket path)",
+                 Requires root/CAP_NET_RAW; Unix only (no Windows raw-socket path). \
+                 Handling is NOT wire-determined: which groups to report is membership policy \
+                 (a general query names 0.0.0.0), and an observed report/leave needs no reply. \
+                 So with no operator policy (no instruction, no handler) the server applies the \
+                 spec-safe STATIC default of advertising no memberships and staying silent, with \
+                 NO LLM round-trip; the LLM is consulted only when the operator supplies the \
+                 membership policy. Zero-LLM path is compile-verified; full e2e needs root.",
             )
             .build()
     }

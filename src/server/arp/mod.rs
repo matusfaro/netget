@@ -244,6 +244,33 @@ impl ArpServer {
                                 }),
                             );
 
+                            // An ARP reply is NOT wire-determined: the MAC advertised as owning
+                            // the queried IP is a chosen answer (the whole point is deciding
+                            // which MAC to claim — spoofing, honeypot, custom mapping), exactly
+                            // the kind of policy DNS/DHCP leave to the model. There is no
+                            // mechanical reply to synthesise from the request. So with no operator
+                            // policy — no server instruction and no per-event handler — the
+                            // spec-safe default is to answer nothing (we have no MAC to claim),
+                            // WITHOUT burning an LLM round-trip per captured packet. The model is
+                            // consulted only when the operator opts in with the mapping to serve.
+                            if !operator_wants_dynamic(
+                                &state_clone,
+                                server_id,
+                                &event.event_type.id,
+                            )
+                            .await
+                            {
+                                debug!(
+                                    "ARP ignoring {} packet: no operator policy configured (no instruction or handler), no MAC to advertise and no LLM call",
+                                    operation_to_string(operation)
+                                );
+                                let _ = status_clone.send(format!(
+                                    "ARP {} ignored: no policy configured (static default, no LLM)",
+                                    operation_to_string(operation)
+                                ));
+                                return;
+                            }
+
                             debug!(
                                 "ARP calling LLM for {} packet",
                                 operation_to_string(operation)
@@ -412,4 +439,28 @@ fn operation_to_string(op: pnet::packet::arp::ArpOperation) -> &'static str {
         ArpOperations::Reply => "REPLY",
         _ => "UNKNOWN",
     }
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for this
+/// server: either a non-empty server instruction was given, or an event handler is configured
+/// for `event_id`. When false the protocol applies its static default and never consults the
+/// model — for a policy protocol like ARP that default is to answer nothing, because with no
+/// configured mapping there is no MAC it can legitimately claim.
+async fn operator_wants_dynamic(
+    state: &AppState,
+    server_id: crate::state::ServerId,
+    event_id: &str,
+) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
 }

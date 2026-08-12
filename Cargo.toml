@@ -86,6 +86,7 @@ portable-base = [
     "socks5",
     "elasticsearch",
     "couchdb",
+    "yarn",
     "dynamo",
     "s3",
     "sqs",
@@ -226,6 +227,7 @@ amqp = ["dep:lapin"]  # AMQP broker and client for RabbitMQ compatibility
 socks5 = ["dep:tokio-socks"]  # SOCKS5 server and client (client uses tokio-socks)
 elasticsearch = []  # Elasticsearch uses only HTTP, no extra deps
 couchdb = ["dep:couch_rs", "dep:form_urlencoded"]  # CouchDB server and client (server uses HTTP, client uses couch_rs)
+yarn = []  # Hadoop YARN ResourceManager REST server - HTTP only, no extra deps
 dynamo = ["aws-config", "aws-sdk-dynamodb", "aws-smithy-types"]  # DynamoDB client
 dynamodb = ["aws-config", "aws-sdk-dynamodb", "aws-smithy-types"]  # DynamoDB client (alternate name)
 s3 = ["aws-config", "dep:aws-sdk-s3", "dep:aws-credential-types", "dep:rust-s3"]  # S3 client
@@ -421,6 +423,7 @@ dist-windows = [
     "socks5",
     "elasticsearch",
     "couchdb",
+    "yarn",
     "dynamo",
     "s3",
     "sqs",
@@ -534,6 +537,7 @@ all-protocols = [
     "socks5",
     "elasticsearch",
     "couchdb",
+    "yarn",
     "dynamo",
     "s3",
     "sqs",

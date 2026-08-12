@@ -363,6 +363,36 @@ impl IgmpServer {
                                 ),
                             };
 
+                            // What to do with an IGMP message is not wire-determined. Which
+                            // groups to report membership in (answering a query) is a membership
+                            // policy choice, not derivable from the query (a general query names
+                            // group 0.0.0.0); and an observed report or leave has no spec-mandated
+                            // packet response at all (report suppression / passive observation).
+                            // So with no operator policy — no server instruction and no per-event
+                            // handler — the spec-safe default is to advertise no memberships and
+                            // stay silent, WITHOUT burning an LLM round-trip per captured packet.
+                            // The model is consulted only when the operator supplies the
+                            // membership policy it should apply.
+                            if !operator_wants_dynamic(
+                                &state_clone,
+                                server_id,
+                                &event.event_type.id,
+                            )
+                            .await
+                            {
+                                debug!(
+                                    "IGMP ignoring {} from {}: no operator membership policy configured (no instruction or handler), no report to send and no LLM call",
+                                    igmp_msg.msg_type.as_str(),
+                                    peer_addr
+                                );
+                                let _ = status_clone.send(format!(
+                                    "IGMP {} from {} ignored: no membership policy configured (static default, no LLM)",
+                                    igmp_msg.msg_type.as_str(),
+                                    peer_addr
+                                ));
+                                return;
+                            }
+
                             debug!(
                                 "IGMP calling LLM for {} from {}",
                                 igmp_msg.msg_type.as_str(),
@@ -579,4 +609,29 @@ impl IgmpServer {
 
         Ok(local_addr)
     }
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for this
+/// server: either a non-empty server instruction was given, or an event handler is configured
+/// for `event_id`. When false the protocol applies its static default and never consults the
+/// model — for IGMP that default is to advertise no memberships and stay silent, because with no
+/// configured membership policy there is nothing to report and an observed report/leave needs no
+/// reply.
+async fn operator_wants_dynamic(
+    state: &AppState,
+    server_id: crate::state::ServerId,
+    event_id: &str,
+) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
 }

@@ -66,6 +66,8 @@ pub mod dot;
 pub mod dynamo;
 #[cfg(feature = "elasticsearch")]
 pub mod elasticsearch;
+#[cfg(feature = "yarn")]
+pub mod yarn;
 #[cfg(feature = "etcd")]
 pub mod etcd;
 #[cfg(feature = "ftp")]

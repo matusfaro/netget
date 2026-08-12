@@ -174,6 +174,33 @@ impl RipServer {
 
                             let event = Event::new(&RIP_REQUEST_EVENT, event_data);
 
+                            // A RIP response is NOT wire-determined: which routes to advertise
+                            // (and their metrics, including 16 = withdraw) is a routing-policy
+                            // decision, exactly like DNS resolution or DHCP leasing. There is no
+                            // mechanical reply to synthesise. So with no operator policy — no
+                            // server instruction and no per-event handler — the spec-safe default
+                            // is to advertise nothing and stay silent, WITHOUT burning an LLM
+                            // round-trip (which would otherwise be asked to invent routes). The
+                            // model is consulted only when the operator opts in with the routing
+                            // policy it should apply.
+                            if !operator_wants_dynamic(
+                                &state_clone,
+                                server_id,
+                                &event.event_type.id,
+                            )
+                            .await
+                            {
+                                debug!(
+                                    "RIP ignoring {} from {}: no operator routing policy configured (no instruction or handler), so nothing to advertise and no LLM call",
+                                    message_type, peer_addr
+                                );
+                                let _ = status_clone.send(format!(
+                                    "RIP {} from {} ignored: no routing policy configured (static default, no LLM)",
+                                    message_type, peer_addr
+                                ));
+                                return;
+                            }
+
                             debug!("RIP calling LLM for {} from {}", message_type, peer_addr);
                             let _ = status_clone.send(format!(
                                 "[DEBUG] RIP calling LLM for {} from {}",
@@ -280,4 +307,28 @@ impl RipServer {
 
         Ok(local_addr)
     }
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for this
+/// server: either a non-empty server instruction was given, or an event handler is configured
+/// for `event_id`. When false the protocol applies its static default and never consults the
+/// model — for a policy protocol like RIP that default is to stay silent, because with no
+/// configured policy there is nothing correct to advertise.
+async fn operator_wants_dynamic(
+    state: &AppState,
+    server_id: crate::state::ServerId,
+    event_id: &str,
+) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
 }
