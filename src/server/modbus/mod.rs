@@ -13,15 +13,15 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
 
 use actions::{
     ModbusProtocol, MODBUS_READ_BITS_EVENT, MODBUS_READ_REGISTERS_EVENT,
@@ -66,8 +66,7 @@ impl ModbusServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Modbus server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] Modbus server listening on {local_addr}"));
+        Log::new(Some(&status_tx)).info(format!("Modbus server listening on {local_addr}"));
 
         let connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>> =
             Arc::new(Mutex::new(HashMap::new()));
@@ -75,8 +74,7 @@ impl ModbusServer {
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
-            info!("Modbus accept loop started on {}", local_addr);
-            let _ = status_tx.send(format!("[INFO] Modbus accept loop started on {local_addr}"));
+            Log::new(Some(&status_tx)).info(format!("Modbus accept loop started on {local_addr}"));
 
             loop {
                 match listener.accept().await {
@@ -139,6 +137,7 @@ impl ModbusServer {
 
                         tokio::spawn(async move {
                             let mut read_buf = vec![0u8; 4096];
+                            let log = Log::new(Some(&status_clone));
                             loop {
                                 match read_half.read(&mut read_buf).await {
                                     Ok(0) => {
@@ -146,25 +145,24 @@ impl ModbusServer {
                                         state_clone
                                             .close_connection_on_server(server_id, connection_id)
                                             .await;
-                                        let _ = status_clone.send(format!(
-                                            "✗ Modbus connection {connection_id} closed"
+                                        log.info(format!(
+                                            "Modbus connection {connection_id} closed"
                                         ));
                                         let _ = status_clone.send("__UPDATE_UI__".to_string());
                                         break;
                                     }
                                     Ok(n) => {
                                         let data = read_buf[..n].to_vec();
-                                        console_debug!(
-                                            status_clone,
+                                        // Summary + full payload FileOnly: the modbus_* event
+                                        // templates render the equivalent line to the TUI.
+                                        log.debug(format!(
                                             "Modbus received {} bytes on {}",
-                                            n,
-                                            connection_id
-                                        );
-                                        console_trace!(
-                                            status_clone,
+                                            n, connection_id
+                                        ));
+                                        log.trace(format!(
                                             "Modbus received (hex): {}",
                                             hex::encode(&data)
-                                        );
+                                        ));
                                         state_clone
                                             .update_connection_stats(
                                                 server_id,
@@ -236,6 +234,8 @@ impl ModbusServer {
         connections: Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
         protocol: Arc<ModbusProtocol>,
     ) {
+        let log = Log::new(Some(&status_tx));
+
         // Append, and bail out early if a request is already in flight: the in-flight
         // invocation will pick these bytes up when it loops.
         {
@@ -245,8 +245,8 @@ impl ModbusServer {
             };
             conn.buffer.extend_from_slice(&data);
             if conn.state == ConnectionState::Processing {
-                let _ = status_tx.send(format!(
-                    "⏸ Queued {} bytes for Modbus {connection_id}",
+                log.debug(format!(
+                    "Queued {} bytes for Modbus {connection_id}",
                     data.len()
                 ));
                 return;
@@ -307,9 +307,7 @@ impl ModbusServer {
                 Err(e) => {
                     // Neither error is answerable: we no longer know where the next frame
                     // starts, so the only honest signal is to close.
-                    error!("Modbus framing error on {}: {}", connection_id, e);
-                    let _ =
-                        status_tx.send(format!("✗ Modbus framing error on {connection_id}: {e}"));
+                    log.error(format!("Modbus framing error on {connection_id}: {e}"));
                     Self::close(
                         connection_id,
                         server_id,
@@ -401,8 +399,9 @@ impl ModbusServer {
                     )
                 }
                 Err(e) => {
-                    error!("Modbus LLM error on {}: {}", connection_id, e);
-                    let _ = status_tx.send(format!("✗ Modbus LLM error: {e}"));
+                    // Non-fatal: the client still gets a device-failure exception (wire
+                    // fallback), so this is WARN not ERROR.
+                    log.warn(format!("Modbus LLM error on {connection_id}: {e}"));
                     // Fail closed and say so on the wire. Writing nothing would leave the
                     // client blocked until its own timeout with no diagnostic.
                     codec::encode_exception(
@@ -630,20 +629,17 @@ impl ModbusServer {
             )
             .await;
 
-        debug!(
+        // Summary + full payload FileOnly: the send_modbus_* action template already
+        // reports the send to the TUI.
+        let log = Log::new(Some(status_tx));
+        log.debug(format!(
             "Modbus sent {} bytes to {} (txid={}, fc={:#04x})",
             adu.len(),
             connection_id,
             transaction_id,
             pdu.first().copied().unwrap_or(0)
-        );
-        let _ = status_tx.send(format!(
-            "[DEBUG] Modbus sent {} bytes to {connection_id}",
-            adu.len()
         ));
-        trace!("Modbus sent (hex): {}", hex::encode(&adu));
-        let _ = status_tx.send(format!("[TRACE] Modbus sent (hex): {}", hex::encode(&adu)));
-        let _ = status_tx.send(format!("→ Modbus response to {connection_id}"));
+        log.trace(format!("Modbus sent (hex): {}", hex::encode(&adu)));
     }
 
     /// Drop a connection from both the local map and `AppState`.
@@ -665,7 +661,7 @@ impl ModbusServer {
         app_state
             .close_connection_on_server(server_id, connection_id)
             .await;
-        let _ = status_tx.send(format!("✗ Modbus connection {connection_id} closed"));
+        Log::new(Some(status_tx)).info(format!("Modbus connection {connection_id} closed"));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 }

@@ -20,11 +20,11 @@ use crate::display::{Color, DisplayCanvas, DisplayCommand};
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::{Log, Sink};
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
-use crate::{console_debug, console_info, console_warn};
 use actions::{
     VncProtocol, RESULT_CLIPBOARD, RESULT_DISPLAY, RESULT_NO_CHANGE, VNC_CLIENT_CUT_TEXT_EVENT,
     VNC_FRAMEBUFFER_UPDATE_REQUEST_EVENT, VNC_KEY_EVENT, VNC_POINTER_EVENT,
@@ -35,7 +35,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 /// VNC server whose display contents are decided by the LLM.
 pub struct VncServer;
@@ -169,14 +169,11 @@ impl VncServer {
 
         // Keep the address at the end of this line: the E2E harness parses the port out of
         // everything after the last "on ".
-        console_info!(status_tx, "VNC server listening on {}", local_addr);
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!("VNC server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).debug(format!(
             "VNC framebuffer {}x{}, desktop name '{}'",
-            width,
-            height,
-            desktop_name
-        );
+            width, height, desktop_name
+        ));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -191,9 +188,8 @@ impl VncServer {
                         let llm_clone = llm_client.clone();
                         let name_clone = desktop_name.clone();
 
-                        info!("VNC client connected from {}", remote_addr);
-                        let _ = status_clone
-                            .send(format!("[INFO] VNC client connected from {}", remote_addr));
+                        Log::new(Some(&status_clone))
+                            .info(format!("VNC client connected from {}", remote_addr));
 
                         tokio::spawn(async move {
                             if let Err(e) = Self::handle_connection(
@@ -219,9 +215,8 @@ impl VncServer {
                         // Break rather than continue: a persistent accept error (EMFILE, the
                         // socket being closed under us) previously spun this loop at full CPU
                         // forever, logging on every iteration.
-                        error!("Failed to accept VNC connection: {}", e);
-                        let _ =
-                            status_tx.send(format!("✗ VNC accept failed, stopping loop: {}", e));
+                        Log::new(Some(&status_tx))
+                            .error(format!("VNC accept failed, stopping loop: {}", e));
                         break;
                     }
                 }
@@ -275,7 +270,7 @@ impl VncServer {
         let result = async {
             Self::perform_handshake(&mut read_half, &write_half, &status_tx).await?;
 
-            console_debug!(status_tx, "VNC handshake complete for {}", remote_addr);
+            Log::new(Some(&status_tx)).debug(format!("VNC handshake complete for {}", remote_addr));
             app_state
                 .update_vnc_connection_auth(server_id, connection_id, true, None)
                 .await;
@@ -359,7 +354,7 @@ impl VncServer {
             writer.write_u32(0).await?; // 0 = OK
             writer.flush().await?;
             trace!("Sent SecurityResult: OK");
-            let _ = status_tx.send("[DEBUG] VNC client authenticated".to_string());
+            Log::new(Some(status_tx)).debug("VNC client authenticated");
             Ok(())
         } else {
             // RFB 3.8 requires a reason string after a failed SecurityResult.
@@ -413,12 +408,8 @@ impl VncServer {
             writer.flush().await?;
         }
 
-        debug!(
-            "Sent ServerInit: {}x{}, name '{}'",
-            width, height, desktop_name
-        );
-        let _ = status_tx.send(format!(
-            "[DEBUG] VNC initialized: {}x{} framebuffer '{}'",
+        Log::new(Some(status_tx)).debug(format!(
+            "VNC initialized: {}x{} framebuffer '{}'",
             width, height, desktop_name
         ));
 
@@ -437,7 +428,7 @@ impl VncConnection {
             let message_type = match read_half.read_u8().await {
                 Ok(t) => t,
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    debug!("VNC client disconnected");
+                    Log::new(Some(&self.status_tx)).info("VNC client disconnected");
                     break;
                 }
                 Err(e) => return Err(e.into()),
@@ -501,12 +492,10 @@ impl VncConnection {
                     if length > MAX_CUT_TEXT_LEN {
                         // The buffer used to be allocated straight from this client-controlled
                         // u32, so a nine-byte message could ask for a 4 GiB allocation.
-                        console_warn!(
-                            self.status_tx,
+                        Log::new(Some(&self.status_tx)).warn(format!(
                             "VNC ClientCutText length {} exceeds {} byte cap, closing connection",
-                            length,
-                            MAX_CUT_TEXT_LEN
-                        );
+                            length, MAX_CUT_TEXT_LEN
+                        ));
                         false
                     } else {
                         let mut text = vec![0u8; length as usize];
@@ -517,11 +506,10 @@ impl VncConnection {
                 other => {
                     // The message length is unknown, so the stream cannot be resynchronised:
                     // continuing would read this message's body as message types. Close.
-                    console_warn!(
-                        self.status_tx,
+                    Log::new(Some(&self.status_tx)).warn(format!(
                         "VNC client sent unknown message type {}, closing connection",
                         other
-                    );
+                    ));
                     false
                 }
             };
@@ -584,13 +572,11 @@ impl VncConnection {
     /// A key went down or up.
     async fn handle_key_event(&mut self, down: bool, keysym: u32) -> Result<bool> {
         let key_name = keysym_name(keysym);
-        console_debug!(
-            self.status_tx,
+        // FileOnly: the vnc_key_event template renders the equivalent line to the TUI.
+        Log::new(Some(&self.status_tx)).debug(format!(
             "VNC KeyEvent: down={}, key={}, keysym={}",
-            down,
-            key_name,
-            keysym
-        );
+            down, key_name, keysym
+        ));
 
         let event = Event::new(
             &VNC_KEY_EVENT,
@@ -619,25 +605,28 @@ impl VncConnection {
         self.last_button_mask = button_mask;
 
         if button_mask == previous {
-            console_debug!(
-                self.status_tx,
-                "VNC PointerEvent: move to {},{} (buttons={:#04b})",
-                x,
-                y,
-                button_mask
+            // Movement raises no event, so this DEBUG line is the only record of it:
+            // keep it on the TUI (Both) so input is never silently invisible.
+            Log::new(Some(&self.status_tx)).debug_to(
+                Sink::Both,
+                format!(
+                    "VNC PointerEvent: move to {},{} (buttons={:#04b})",
+                    x, y, button_mask
+                ),
             );
             return Ok(true);
         }
 
         let pressed = button_mask.count_ones() > previous.count_ones();
-        console_debug!(
-            self.status_tx,
+        // FileOnly: a button change raises vnc_pointer_event, whose template renders
+        // the equivalent line to the TUI.
+        Log::new(Some(&self.status_tx)).debug(format!(
             "VNC PointerEvent: {} at {},{} (buttons={:#04b})",
             if pressed { "press" } else { "release" },
             x,
             y,
             button_mask
-        );
+        ));
 
         let event = Event::new(
             &VNC_POINTER_EVENT,
@@ -662,12 +651,12 @@ impl VncConnection {
         // RFB says ClientCutText is Latin-1. Decoding byte-per-character can never fail, which
         // matters: this is attacker-controlled input and must not be able to abort the task.
         let text: String = raw.iter().map(|&b| b as char).collect();
-        console_debug!(
-            self.status_tx,
+        // FileOnly: the vnc_client_cut_text template renders the equivalent line to the TUI.
+        Log::new(Some(&self.status_tx)).debug(format!(
             "VNC ClientCutText: {} bytes from {}",
             raw.len(),
             self.connection_id
-        );
+        ));
         trace!("VNC ClientCutText payload: {:?}", text);
 
         let event = Event::new(
@@ -705,11 +694,9 @@ impl VncConnection {
         {
             Ok(execution) => execution,
             Err(e) => {
-                warn!("VNC event {} was not answered: {}", event.event_type.id, e);
-                let _ = self.status_tx.send(format!(
-                    "[WARN] VNC {} not answered: {}",
-                    event.event_type.id, e
-                ));
+                // Non-fatal: a placeholder screen (wire fallback) is drawn, so WARN.
+                Log::new(Some(&self.status_tx))
+                    .warn(format!("VNC {} not answered: {}", event.event_type.id, e));
                 decision.no_answer = Some(e.to_string());
                 return decision;
             }
@@ -773,12 +760,9 @@ impl VncConnection {
                     .collect::<Vec<_>>()
                     .join("; ")
             };
-            warn!(
-                "VNC event {} produced no usable action ({})",
-                event.event_type.id, detail
-            );
-            let _ = self.status_tx.send(format!(
-                "[WARN] VNC {} produced no usable action ({})",
+            // Non-fatal: a placeholder screen (wire fallback) is drawn, so WARN.
+            Log::new(Some(&self.status_tx)).warn(format!(
+                "VNC {} produced no usable action ({})",
                 event.event_type.id, detail
             ));
             decision.no_answer = Some(detail);
@@ -862,14 +846,15 @@ impl VncConnection {
 
         self.pending_request = false;
         self.dirty = false;
-        console_debug!(
-            self.status_tx,
+        // Send summary FileOnly: the vnc_render_display action template already reports
+        // the render to the TUI.
+        Log::new(Some(&self.status_tx)).debug(format!(
             "VNC sent {}x{} framebuffer update ({} bytes) to {}",
             self.width,
             self.height,
             frame.len(),
             self.connection_id
-        );
+        ));
         Ok(())
     }
 
@@ -890,12 +875,13 @@ impl VncConnection {
         let mut writer = self.write_half.lock().await;
         writer.write_all(&message).await?;
         writer.flush().await?;
-        console_debug!(
-            self.status_tx,
+        // Send summary FileOnly: the vnc_set_clipboard action template already reports
+        // the send to the TUI.
+        Log::new(Some(&self.status_tx)).debug(format!(
             "VNC sent {} bytes of clipboard text to {}",
             latin1.len(),
             self.connection_id
-        );
+        ));
         Ok(())
     }
 }
