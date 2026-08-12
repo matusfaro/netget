@@ -45,6 +45,13 @@ pub mod http_examples_test;
 #[cfg(test)]
 pub mod protocol_examples_test;
 
+// Runnability harness: classifies every protocol's startup examples into concrete problem
+// categories (placeholder script code, unknown static actions, empty llm instruction) and
+// enforces a shrink-only allowlist of currently-broken protocols. Runs with all features to
+// see every protocol; harmless on subset builds.
+#[cfg(test)]
+pub mod example_runnability_test;
+
 // Coverage test runs with all features to verify all protocols have tests
 #[cfg(test)]
 pub mod coverage_test;
