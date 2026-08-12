@@ -87,17 +87,36 @@ impl Protocol for DnsProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // A fixed-resolve DNS server: everything under example.com answers with a
+        // fixed A record, everything else NXDOMAIN. Reads the event from stdin
+        // and echoes the client's random transaction id (query_id) — the one
+        // thing a static handler cannot do, which is why DNS needs script mode.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "dns_query":
+    domain = event.get("domain", "").rstrip(".")
+    if domain.endswith("example.com"):
+        actions = [{"type": "send_dns_a_response", "query_id": event["query_id"],
+                    "domain": event["domain"], "ip": "93.184.216.34", "ttl": 300}]
+    else:
+        actions = [{"type": "send_dns_nxdomain", "query_id": event["query_id"],
+                    "domain": event["domain"],
+                    "query_type": event.get("query_type", "A")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all DNS responses intelligently
+            // LLM mode: a different answer per subdomain — genuine reasoning.
             json!({
                 "type": "open_server",
                 "port": 53,
                 "base_stack": "dns",
-                "instruction": "DNS server that resolves queries based on domain patterns"
+                "instruction": "Act as a DNS resolver that returns a different IP per query: map each queried hostname to a stable address in 10.0.0.0/8 derived from the name, but return the real public IP for well-known names such as www.example.com. Always echo the query's transaction id."
             }),
-            // Script mode: the right way to build a deterministic DNS server.
-            // The script sees the event and can echo the client's random
-            // transaction ID, which a static handler cannot do.
+            // Script mode: deterministic fixed-resolve, no LLM call. The script
+            // sees the event and can echo the client's random transaction id.
             json!({
                 "type": "open_server",
                 "port": 53,
@@ -107,7 +126,7 @@ impl Protocol for DnsProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "if event.get('domain', '').rstrip('.').endswith('example.com'):\n    respond([{'type': 'send_dns_a_response', 'query_id': event['query_id'], 'domain': event['domain'], 'ip': '93.184.216.34', 'ttl': 300}])\nelse:\n    respond([{'type': 'send_dns_nxdomain', 'query_id': event['query_id'], 'domain': event['domain'], 'query_type': event.get('query_type', 'A')}])"
+                        "code": script
                     }
                 }]
             }),

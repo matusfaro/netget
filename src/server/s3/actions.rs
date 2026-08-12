@@ -360,15 +360,37 @@ impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic S3 responses routed on the parsed operation: one bucket,
+        // one canned object, NoSuchKey for everything else. No LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "s3_request":
+    op = event.get("operation", "")
+    if op == "ListBuckets":
+        actions = [{"type": "send_s3_bucket_list",
+                    "buckets": [{"name": "test-bucket",
+                                 "creation_date": "2024-01-01T00:00:00Z"}]}]
+    elif op == "GetObject":
+        actions = [{"type": "send_s3_object", "content": "Hello, World!",
+                    "encoding": "utf8", "content_type": "text/plain"}]
+    else:
+        actions = [{"type": "send_s3_error", "error_code": "NoSuchKey",
+                    "message": "The specified key does not exist",
+                    "status_code": 404}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all S3 responses
+            // LLM mode: generate object contents on demand from the request key.
             json!({
                 "type": "open_server",
                 "port": 9000,
                 "base_stack": "s3",
-                "instruction": "S3-compatible object storage server with test-bucket"
+                "instruction": "Serve an S3 bucket named 'reports'. When a client GETs any object whose key ends in .json, generate a small JSON report containing the current date and the object key; for .txt objects return a short generated note. Remember which keys have been requested and list them when the bucket is listed."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: fixed bucket/object responses, no LLM call.
             json!({
                 "type": "open_server",
                 "port": 9000,
@@ -378,7 +400,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<s3_handler>"
+                        "code": script
                     }
                 }]
             }),

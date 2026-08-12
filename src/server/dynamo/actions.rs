@@ -166,15 +166,32 @@ impl Protocol for DynamoProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic DynamoDB (JSON protocol) replies routed on the operation.
+        // Items use DynamoDB's typed attribute-value shape. No LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "dynamo_request":
+    op = event.get("operation", "")
+    if op == "GetItem":
+        body = json.dumps({"Item": {"id": {"S": "item-1"},
+                                    "name": {"S": "Example"}}})
+    else:
+        body = json.dumps({})
+    actions = [{"type": "send_dynamo_response", "status_code": 200, "body": body}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all DynamoDB responses intelligently
+            // LLM mode: maintain a real keyed table across requests.
             json!({
                 "type": "open_server",
                 "port": 8000,
                 "base_stack": "dynamo",
-                "instruction": "DynamoDB-compatible database handling API requests"
+                "instruction": "Emulate a DynamoDB table 'Users' keyed by userId. On PutItem remember the item; on GetItem return the stored item for that key (or an empty response if absent); on Query return every remembered item whose userId matches. Format all responses in DynamoDB JSON with typed attribute values."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: fixed typed responses per operation, no LLM call.
             json!({
                 "type": "open_server",
                 "port": 8000,
@@ -184,7 +201,7 @@ impl Protocol for DynamoProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<dynamo_handler>"
+                        "code": script
                     }
                 }]
             }),

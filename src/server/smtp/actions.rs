@@ -245,15 +245,39 @@ impl Protocol for SmtpProtocol {
     }
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
+        // Deterministic SMTP state machine: standard replies for each command
+        // verb. Reads the event from stdin and switches on event_type_id.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "smtp_command":
+    cmd = event.get("command", "").upper()
+    if cmd.startswith("EHLO") or cmd.startswith("HELO"):
+        actions = [{"type": "send_smtp_ehlo", "hostname": "mail.example.com",
+                    "extensions": ["8BITMIME", "SIZE 10240000"]}]
+    elif cmd.startswith("MAIL FROM"):
+        actions = [{"type": "send_smtp_ok", "message": "Sender OK"}]
+    elif cmd.startswith("RCPT TO"):
+        actions = [{"type": "send_smtp_ok", "message": "Recipient OK"}]
+    elif cmd == "DATA":
+        actions = [{"type": "send_smtp_start_data"}]
+    elif cmd == "QUIT":
+        actions = [{"type": "send_smtp_quit"}]
+    else:
+        actions = [{"type": "send_smtp_ok"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM-driven example
+            // LLM mode: policy decisions per recipient — real reasoning.
             json!({
                 "type": "open_server",
                 "port": 25,
                 "base_stack": "smtp",
-                "instruction": "SMTP server accepting mail for any domain, respond with 220 greeting and standard SMTP flow"
+                "instruction": "Act as the SMTP server for example.com: complete the SMTP handshake, accept mail only for recipients @example.com and reject any other recipient with a 550 error, and note the subject line of each accepted message."
             }),
-            // Script-based example
+            // Script mode: standard SMTP flow with fixed replies, no LLM call.
             json!({
                 "type": "open_server",
                 "port": 25,
@@ -263,7 +287,7 @@ impl Protocol for SmtpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "# Handle SMTP commands\ncmd = event.get('command', '').upper()\nif cmd.startswith('EHLO') or cmd.startswith('HELO'):\n    respond([{'type': 'send_smtp_ehlo', 'hostname': 'mail.example.com', 'extensions': ['8BITMIME', 'SIZE 10240000']}])\nelif cmd.startswith('MAIL FROM'):\n    respond([{'type': 'send_smtp_ok', 'message': 'Sender OK'}])\nelif cmd.startswith('RCPT TO'):\n    respond([{'type': 'send_smtp_ok', 'message': 'Recipient OK'}])\nelif cmd == 'DATA':\n    respond([{'type': 'send_smtp_start_data'}])\nelif cmd == 'QUIT':\n    respond([{'type': 'send_smtp_quit'}])\nelse:\n    respond([{'type': 'send_smtp_ok'}])"
+                        "code": script
                     }
                 }]
             }),

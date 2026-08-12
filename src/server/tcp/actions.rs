@@ -133,15 +133,29 @@ impl Protocol for TcpProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // The textbook deterministic case: echo received bytes straight back.
+        // Inbound 'data' is hex-encoded when the bytes are not printable, so the
+        // handler echoes the 'encoding' field back unchanged to stay symmetric.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "tcp_data_received":
+    actions = [{"type": "send_tcp_data",
+                "data": event.get("data", ""),
+                "encoding": event.get("encoding", "utf8")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all TCP responses intelligently
+            // LLM mode: dynamic, per-line reasoning over a raw TCP stream.
             json!({
                 "type": "open_server",
                 "port": 9000,
                 "base_stack": "tcp",
-                "instruction": "Echo server that responds to TCP data"
+                "instruction": "Act as a line-based chat server: send a greeting when a client connects, and for each line of text the client sends, reply in character with a short response that references what they said."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: a pure echo server, no LLM call.
             json!({
                 "type": "open_server",
                 "port": 9000,
@@ -151,7 +165,7 @@ impl Protocol for TcpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<tcp_handler>"
+                        "code": script
                     }
                 }]
             }),

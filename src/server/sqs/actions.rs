@@ -175,15 +175,34 @@ impl Protocol for SqsProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic SQS (AWS JSON protocol) replies routed on the operation.
+        // The body is a JSON string in the SQS response shape. No LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "sqs_request":
+    op = event.get("operation", "")
+    if op == "SendMessage":
+        body = json.dumps({"MessageId": "00000000-0000-0000-0000-000000000001",
+                           "MD5OfMessageBody": "d41d8cd98f00b204e9800998ecf8427e"})
+    elif op == "ReceiveMessage":
+        body = json.dumps({"Messages": []})
+    else:
+        body = json.dumps({})
+    actions = [{"type": "send_sqs_response", "status_code": 200, "body": body}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all SQS responses intelligently
+            // LLM mode: keep a real FIFO of messages across requests.
             json!({
                 "type": "open_server",
                 "port": 9324,
                 "base_stack": "sqs",
-                "instruction": "AWS SQS-compatible message queue handling queue operations"
+                "instruction": "Act as an SQS queue named 'jobs'. Accept SendMessage requests and remember each message body in order; on ReceiveMessage return the oldest not-yet-received message with a fresh receipt handle, and an empty response once the queue is drained."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: fixed AWS-JSON responses per operation, no LLM call.
             json!({
                 "type": "open_server",
                 "port": 9324,
@@ -193,7 +212,7 @@ impl Protocol for SqsProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<sqs_handler>"
+                        "code": script
                     }
                 }]
             }),

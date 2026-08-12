@@ -98,15 +98,37 @@ impl Protocol for MysqlProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic answers for a couple of well-known queries, falling back
+        // to an empty OK for writes. Real column/row shapes, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "mysql_query":
+    q = event.get("query", "").strip().rstrip(";").upper()
+    if q.startswith("SELECT VERSION()"):
+        actions = [{"type": "mysql_query_response",
+                    "columns": [{"name": "version", "type": "VARCHAR"}],
+                    "rows": [["8.0.36"]]}]
+    elif q.startswith("SELECT"):
+        actions = [{"type": "mysql_query_response",
+                    "columns": [{"name": "id", "type": "INT"},
+                                {"name": "name", "type": "VARCHAR"}],
+                    "rows": [[1, "alice"], [2, "bob"]]}]
+    else:
+        actions = [{"type": "mysql_ok_response", "affected_rows": 0}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all MySQL responses intelligently
+            // LLM mode: reason about the SQL to synthesise coherent rows.
             json!({
                 "type": "open_server",
                 "port": 3306,
                 "base_stack": "mysql",
-                "instruction": "MySQL database server answering SQL queries"
+                "instruction": "Act as a MySQL server for a 'products' database. Answer SELECT queries by generating plausible rows that satisfy the WHERE clause and requested columns; treat INSERT/UPDATE/DELETE as succeeding and report affected_rows. Keep results consistent across queries in the same session."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: fixed answers for known queries, no LLM call.
             json!({
                 "type": "open_server",
                 "port": 3306,
@@ -116,7 +138,7 @@ impl Protocol for MysqlProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<mysql_handler>"
+                        "code": script
                     }
                 }]
             }),

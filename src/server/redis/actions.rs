@@ -103,15 +103,37 @@ impl Protocol for RedisProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic RESP replies keyed off the command verb. The 'command'
+        // event field is the full command line, so split off the first word.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "redis_command":
+    parts = event.get("command", "").split()
+    verb = parts[0].upper() if parts else ""
+    if verb == "PING":
+        actions = [{"type": "redis_simple_string", "value": "PONG"}]
+    elif verb == "SET":
+        actions = [{"type": "redis_simple_string", "value": "OK"}]
+    elif verb == "GET":
+        actions = [{"type": "redis_bulk_string", "value": "cached-value"}]
+    elif verb == "INCR":
+        actions = [{"type": "redis_integer", "value": 1}]
+    else:
+        actions = [{"type": "redis_error", "message": "ERR unknown command"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all Redis responses intelligently
+            // LLM mode: model acts as a coherent key-value store across commands.
             json!({
                 "type": "open_server",
                 "port": 6379,
                 "base_stack": "redis",
-                "instruction": "Redis in-memory data store responding to commands"
+                "instruction": "Act as a Redis server backing a session cache. Remember values set with SET and return them on GET, treat INCR/DECR as maintaining running counters, and answer TTL/EXISTS consistently with what has been stored so far in this connection."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: fixed replies per command verb, no LLM call.
             json!({
                 "type": "open_server",
                 "port": 6379,
@@ -121,7 +143,7 @@ impl Protocol for RedisProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<redis_handler>"
+                        "code": script
                     }
                 }]
             }),

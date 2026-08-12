@@ -2026,6 +2026,14 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
             result.push_str(&format!("{}\n\n", notes));
         }
 
+        // Concrete, ready-to-run `open_server` examples for THIS protocol, in each
+        // handler mode. These come from the protocol's own `get_startup_examples()`
+        // (the existing `StartupExamples` machinery) so they use real base_stack names,
+        // real event patterns and — for script/static mode — real protocol action types.
+        // Shown only for the protocol the model actually asked about, so they cost
+        // nothing on the always-on system prompt.
+        result.push_str(&server_protocol.get_startup_examples().to_prompt_text());
+
         // Add protocol-specific event examples if available
         let event_types = server_protocol.get_event_types();
         if !event_types.is_empty() {
@@ -2069,23 +2077,15 @@ async fn execute_read_server_documentation(protocols: &[String]) -> ToolResult {
         );
     }
 
-    // Add open_server action description once at the end
+    // Add open_server action description once at the end. The concrete, ready-to-run
+    // `open_server` examples are emitted per protocol above (via each protocol's own
+    // `get_startup_examples()`), so there is no need for a generic stub here.
     result.push_str("## open_server Action (Now Enabled)\n\n");
     result.push_str(
-        "The `open_server` action is now enabled for the protocols documented above.\n\n",
+        "The `open_server` action is now enabled for the protocols documented above. \
+         Use the LLM-mode / Script-mode / Static-mode examples shown under each protocol \
+         as your starting point.\n\n",
     );
-
-    // Add examples for each documented protocol
-    for protocol in &found_protocols {
-        result.push_str(&format!("**Example for {}:**\n```json\n{{\n", protocol));
-        result.push_str("  \"type\": \"open_server\",\n");
-        result.push_str("  \"port\": 8080,\n");
-        result.push_str(&format!("  \"base_stack\": \"{}\",\n", protocol));
-        result.push_str(
-            "  \"instruction\": \"Handle requests according to protocol specification\"\n",
-        );
-        result.push_str("}\n```\n\n");
-    }
 
     if !not_found_protocols.is_empty() {
         result.push_str(&format!(
@@ -2338,7 +2338,15 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
         let protocol_upper = protocol.to_uppercase();
         let protocol_lower = protocol.to_lowercase();
 
-        let server_protocol = server_registry.get(&protocol_upper);
+        // Exact registry key first (e.g. "HTTP", "S3"), then fall back to keyword
+        // resolution so mixed-case keys ("DynamoDB") and keyword/base_stack forms
+        // ("dynamo", "dynamodb", "s3 bucket") still reach the docs — uppercasing
+        // alone never matches "DynamoDB".
+        let server_protocol = server_registry.get(&protocol_upper).or_else(|| {
+            server_registry
+                .parse_from_str(protocol)
+                .and_then(|name| server_registry.get(&name))
+        });
         let client_protocol = client_registry.get(&protocol_lower);
 
         let found_any = server_protocol.is_some() || client_protocol.is_some();
@@ -2354,12 +2362,14 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
 
         // Document server mode if available
         if let Some(server) = server_protocol {
-            found_server_protocols.push(protocol_upper.clone());
+            // Canonical registry name (e.g. "DynamoDB"), not the uppercased input.
+            let server_name = server.protocol_name();
+            found_server_protocols.push(server_name.to_string());
 
             let metadata = server.metadata();
             let startup_params = server.get_startup_parameters();
 
-            result.push_str(&format!("# {} (Server Mode)\n\n", protocol_upper));
+            result.push_str(&format!("# {} (Server Mode)\n\n", server_name));
             result.push_str("**Mode:** Server - listens for incoming connections\n");
             result.push_str(&format!("**Stack:** {}\n", server.stack_name()));
             result.push_str(&format!("**Group:** {}\n", server.group_name()));
@@ -2394,6 +2404,12 @@ async fn execute_read_documentation(protocols: &[String]) -> ToolResult {
                 result.push_str("## Notes\n\n");
                 result.push_str(&format!("{}\n\n", notes));
             }
+
+            // Concrete `open_server` examples for THIS protocol in each handler
+            // mode, from its own `get_startup_examples()`. Shown only for the
+            // protocol the model asked about, so it costs nothing on the
+            // always-on system prompt.
+            result.push_str(&server.get_startup_examples().to_prompt_text());
 
             // Add protocol-specific event examples
             let event_types = server.get_event_types();

@@ -85,15 +85,34 @@ impl Protocol for HttpProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic path routing: a canned health check and a 404 for
+        // everything else, with no LLM call. Reads the event from stdin and
+        // switches on event_type_id, as every handler should.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "http_request":
+    if event.get("path", "/") == "/health":
+        actions = [{"type": "send_http_response", "status": 200,
+                    "headers": {"Content-Type": "application/json"},
+                    "body": '{"status": "ok"}'}]
+    else:
+        actions = [{"type": "send_http_response", "status": 404,
+                    "headers": {"Content-Type": "text/plain"},
+                    "body": "Not Found"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all HTTP responses intelligently
+            // LLM mode: dynamic reasoning per request path.
             json!({
                 "type": "open_server",
                 "port": 8080,
                 "base_stack": "http",
-                "instruction": "HTTP server serving a simple API"
+                "instruction": "Serve a REST API for a blog. For GET /posts return a JSON array of posts; for GET /posts/{id} return that single post, inventing a plausible title and body from the id; return 404 with a JSON error object for any unknown path. Reason about the method and path of each request."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: deterministic canned response + routing (no LLM call).
             json!({
                 "type": "open_server",
                 "port": 8080,
@@ -103,7 +122,7 @@ impl Protocol for HttpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<http_handler>"
+                        "code": script
                     }
                 }]
             }),

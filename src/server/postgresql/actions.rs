@@ -102,15 +102,37 @@ impl Protocol for PostgresqlProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic answers for a version probe and generic SELECTs, with an
+        // empty command-complete tag for writes. Real column/row shapes.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "postgresql_query":
+    q = event.get("query", "").strip().rstrip(";").upper()
+    if q.startswith("SELECT VERSION()"):
+        actions = [{"type": "postgresql_query_response",
+                    "columns": [{"name": "version", "type": "text"}],
+                    "rows": [["PostgreSQL 16.2"]]}]
+    elif q.startswith("SELECT"):
+        actions = [{"type": "postgresql_query_response",
+                    "columns": [{"name": "id", "type": "int4"},
+                                {"name": "name", "type": "text"}],
+                    "rows": [[1, "alice"], [2, "bob"]]}]
+    else:
+        actions = [{"type": "postgresql_ok_response", "tag": "OK"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
-            // LLM mode: LLM handles all PostgreSQL responses intelligently
+            // LLM mode: reason about the SQL to synthesise coherent rows.
             json!({
                 "type": "open_server",
                 "port": 5432,
                 "base_stack": "postgresql",
-                "instruction": "PostgreSQL database server answering SQL queries"
+                "instruction": "Act as a PostgreSQL server for a 'users' database. Answer SELECT queries by generating plausible rows that satisfy the WHERE clause and requested columns; treat INSERT/UPDATE/DELETE as succeeding with a suitable command tag. Keep results consistent across queries in the same session."
             }),
-            // Script mode: Code-based deterministic responses
+            // Script mode: fixed answers for known queries, no LLM call.
             json!({
                 "type": "open_server",
                 "port": 5432,
@@ -120,7 +142,7 @@ impl Protocol for PostgresqlProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<postgresql_handler>"
+                        "code": script
                     }
                 }]
             }),
