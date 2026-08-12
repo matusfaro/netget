@@ -1,15 +1,10 @@
-//! What a STUN client gets when the LLM backend fails while the operator opted into LLM
-//! control: the correct static Binding Success Response, not an error and not silence.
+//! Regression test: a STUN Binding request is answered CORRECTLY with ZERO LLM calls.
 //!
-//! A STUN Binding response is fully determined by the request — reflect the source address into
-//! XOR-MAPPED-ADDRESS and echo the 96-bit transaction ID — so it is the safe fallback here. It
-//! can never be a credential or an approval, so answering with the client's own real address on
-//! LLM failure fails *closed*, not open: the worst case is that a request to lie about the
-//! address is quietly ignored and the truth is told instead. A silent drop, by contrast, is
-//! indistinguishable from packet loss and costs the client its full retransmission schedule.
-//!
-//! The response is decoded here from the raw bytes against the RFC's header and attribute
-//! layout, not through the server's own builder.
+//! A Binding response is fully determined by the request (reflect the source address into
+//! XOR-MAPPED-ADDRESS, echo the transaction ID), so when the operator gives neither a server
+//! instruction nor an event handler, the server must answer statically and never consult the
+//! model. The mock has a `stun_binding_request` rule with `expect_calls(0)`: if the mechanical
+//! path ever reaches the LLM, that rule fires and `verify_mocks()` fails.
 
 #![cfg(feature = "stun")]
 
@@ -19,33 +14,53 @@ use tokio::net::UdpSocket;
 
 const MAGIC_COOKIE: u32 = 0x2112_A442;
 const TRANSACTION_ID: [u8; 12] = [
-    0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+    0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6, 0x07, 0x18, 0x29, 0x3a, 0x4b, 0x5c,
 ];
 
 #[tokio::test]
-async fn test_stun_answers_static_response_when_llm_fails() -> E2EResult<()> {
-    // The instruction opts this server into LLM control; the mock then fails every
-    // binding request (no matching rule -> HTTP 500), forcing the fallback path.
-    let prompt = "listen on port {AVAILABLE_PORT} via stun. Reflect the client address";
+async fn test_stun_binding_response_needs_no_llm() -> E2EResult<()> {
+    let prompt = "listen on port {AVAILABLE_PORT} via stun";
 
     let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
-        mock.on_instruction_containing("via stun")
+        mock
+            // Startup: the only legitimate LLM call. The resulting server has an EMPTY
+            // instruction, so the binding path is purely static.
+            .on_instruction_containing("via stun")
             .respond_with_actions(serde_json::json!([
                 {
                     "type": "open_server",
                     "port": 0,
                     "base_stack": "STUN",
-                    "instruction": "Reflect the client address"
+                    "instruction": ""
                 }
             ]))
             .expect_calls(1)
             .and()
-        // No rule for `stun_binding_request`: the mock answers 500, the LLM call fails,
-        // and the server must fall back to the correct static Binding Success Response.
+            // If the mechanical binding path ever calls the LLM, this rule fires and the
+            // expect_calls(0) assertion fails. It also returns a valid action so a
+            // regression cannot be masked by a coincidental timeout.
+            .on_event("stun_binding_request")
+            .respond_with_actions_from_event(|event_data| {
+                let transaction_id = event_data["transaction_id"]
+                    .as_str()
+                    .unwrap_or("000000000000000000000000");
+                let peer_addr = event_data["peer_addr"]
+                    .as_str()
+                    .unwrap_or("127.0.0.1:1");
+                serde_json::json!([{
+                    "type": "send_stun_binding_response",
+                    "transaction_id": transaction_id,
+                    "mapped_address": peer_addr,
+                    "xor_mapped_address": true
+                }])
+            })
+            .expect_calls(0)
+            .and()
     });
 
     let server = start_netget_server(server_config).await?;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    server.wait_for_log("STUN receive loop started", 5).await?;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Binding Request: type 0x0001, length 0, magic cookie, transaction ID.
     let mut request = Vec::with_capacity(20);
@@ -60,19 +75,16 @@ async fn test_stun_answers_static_response_when_llm_fails() -> E2EResult<()> {
     socket.send(&request).await?;
 
     let mut buf = vec![0u8; 2048];
-    let n = tokio::time::timeout(Duration::from_secs(20), socket.recv(&mut buf))
+    let n = tokio::time::timeout(Duration::from_secs(10), socket.recv(&mut buf))
         .await
-        .map_err(|_| {
-            "No STUN response within 20s - the server went silent on LLM failure, which is the \
-             exact defect this test exists to catch"
-        })??;
+        .map_err(|_| "No static STUN response within 10s")??;
 
     assert!(n >= 20, "response shorter than a STUN header: {n} bytes");
 
     let message_type = u16::from_be_bytes([buf[0], buf[1]]);
     assert_eq!(
         message_type, 0x0101,
-        "expected a Binding Success Response (0x0101) as the static fallback, got 0x{message_type:04x}"
+        "expected a Binding Success Response (0x0101), got 0x{message_type:04x}"
     );
     assert_eq!(
         u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]),
@@ -89,18 +101,17 @@ async fn test_stun_answers_static_response_when_llm_fails() -> E2EResult<()> {
         find_xor_mapped_address(&buf[..n]).expect("XOR-MAPPED-ADDRESS attribute must be present");
     assert_eq!(
         mapped, client_addr,
-        "the static fallback must reflect the client's own source address"
+        "XOR-MAPPED-ADDRESS must decode to the client's own source address"
     );
 
+    // Asserts the binding rule was hit 0 times: the mechanical path took NO LLM call.
     server.verify_mocks().await?;
     server.stop().await?;
     Ok(())
 }
 
-/// Decode the XOR-MAPPED-ADDRESS (0x0020) attribute from a STUN message into a SocketAddr,
-/// undoing the RFC 8489 §14.2 XOR with the magic cookie. IPv4 only, which is all this server
-/// emits.
-pub(crate) fn find_xor_mapped_address(msg: &[u8]) -> Option<std::net::SocketAddr> {
+/// Decode the XOR-MAPPED-ADDRESS (0x0020) attribute into a SocketAddr (IPv4 only).
+fn find_xor_mapped_address(msg: &[u8]) -> Option<std::net::SocketAddr> {
     let message_length = u16::from_be_bytes([msg[2], msg[3]]) as usize;
     let attributes = msg.get(20..20 + message_length)?;
     let magic = MAGIC_COOKIE.to_be_bytes();
@@ -117,7 +128,6 @@ pub(crate) fn find_xor_mapped_address(msg: &[u8]) -> Option<std::net::SocketAddr
         }
         if attr_type == 0x0020 && attr_len >= 8 {
             let value = &attributes[value_start..value_end];
-            // reserved(1) | family(1) | x-port(2) | x-address(4)
             let xport = u16::from_be_bytes([value[2], value[3]]);
             let port = xport ^ (MAGIC_COOKIE >> 16) as u16;
             let ip = std::net::Ipv4Addr::new(

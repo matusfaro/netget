@@ -1,13 +1,11 @@
-//! What an NTP client gets when the LLM backend fails: a Kiss-o'-Death packet.
+//! What an NTP client gets when the LLM backend fails while the operator opted into LLM
+//! control: the correct static time response, not silence and not a fabricated clock.
 //!
-//! NTP has no error message, but RFC 5905 §7.4 defines a packet whose whole purpose is for a
-//! server to say "do not use me": stratum 0, leap indicator 3, and a four-character kiss code
-//! in the reference identifier. `chrony`, `ntpd` and `ntpdate` recognise it, refuse to take
-//! time from it, and stop polling.
-//!
-//! That matters twice over. Silence looks to a client like a merely slow server, so it keeps
-//! retrying; and a KoD can never be mistaken for a time sample, so an outage cannot silently
-//! hand anyone a fabricated clock reading.
+//! A normal NTP time response is fully determined by the request plus the server's own clock,
+//! so the mechanical answer is the safe fallback here. Falling back to the TRUE current time
+//! fails *closed*, not open: an operator who opted into the LLM to skew the clock simply gets
+//! the truth instead of a lie in their favour, and a client is never handed a fabricated
+//! reading. Silence, by contrast, looks like a merely slow server and the client keeps polling.
 //!
 //! The packet is decoded here byte by byte against the RFC's field layout rather than through
 //! the server's own builder, so the test is evidence and not a tautology.
@@ -15,14 +13,19 @@
 #![cfg(feature = "ntp")]
 
 use crate::server::helpers::{start_netget_server, E2EResult, NetGetConfig};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 
 /// The client's transmit timestamp, which must come back as the reply's origin timestamp.
 const CLIENT_TRANSMIT: u64 = 0xE5F1_2345_89AB_CDEF;
 
+/// NTP epoch (1900) is this many seconds before the Unix epoch (1970).
+const NTP_UNIX_OFFSET: u64 = 2_208_988_800;
+
 #[tokio::test]
-async fn test_ntp_answers_kiss_of_death_when_llm_fails() -> E2EResult<()> {
+async fn test_ntp_answers_static_time_when_llm_fails() -> E2EResult<()> {
+    // The instruction opts this server into LLM control; the mock then fails every request
+    // (no matching rule -> HTTP 500), forcing the static fallback.
     let prompt = "listen on port {AVAILABLE_PORT} via ntp. Answer with the current time";
 
     let server_config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
@@ -37,7 +40,8 @@ async fn test_ntp_answers_kiss_of_death_when_llm_fails() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
-        // No rule for `ntp_request`: the mock answers 500.
+        // No rule for `ntp_request`: the mock answers 500, the LLM call fails, and the
+        // server must fall back to the correct static time response.
     });
 
     let server = start_netget_server(server_config).await?;
@@ -68,19 +72,12 @@ async fn test_ntp_answers_kiss_of_death_when_llm_fails() -> E2EResult<()> {
     assert_eq!(mode, 4, "mode must be 4 (server)");
     assert_eq!(version, 4, "the reply must use the client's NTP version");
     assert_eq!(
-        leap_indicator, 3,
-        "LI must be 3 (unsynchronized) so no client treats this as usable time"
+        leap_indicator, 0,
+        "LI must be 0 (no warning): the static fallback is a usable time answer"
     );
     assert_eq!(
-        buf[1], 0,
-        "stratum 0 is what marks a packet as a Kiss-o'-Death (RFC 5905 §7.4)"
-    );
-
-    // The kiss code lives in the reference identifier, bytes 12-15.
-    let kiss_code = String::from_utf8_lossy(&buf[12..16]).to_string();
-    assert_eq!(
-        kiss_code, "INIT",
-        "a non-overload failure should report the INIT kiss code, got {kiss_code:?}"
+        buf[1], 2,
+        "the static default answers as stratum 2, not a Kiss-o'-Death (stratum 0)"
     );
 
     // Origin timestamp (bytes 24-31) must be the client's transmit timestamp verbatim, or the
@@ -89,6 +86,21 @@ async fn test_ntp_answers_kiss_of_death_when_llm_fails() -> E2EResult<()> {
     assert_eq!(
         origin, CLIENT_TRANSMIT,
         "the client's transmit timestamp must be echoed as the origin timestamp"
+    );
+
+    // Transmit timestamp (bytes 40-47) must be a real, current clock reading.
+    let transmit = u64::from_be_bytes(buf[40..48].try_into().expect("8 bytes"));
+    assert_ne!(transmit, 0, "the transmit timestamp must be a real clock reading");
+    let transmit_secs = (transmit >> 32) as u64;
+    let now_ntp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + NTP_UNIX_OFFSET;
+    assert!(
+        transmit_secs.abs_diff(now_ntp) < 300,
+        "the static fallback must report the true current time, not a fabricated one \
+         (transmit {transmit_secs} vs now {now_ntp})"
     );
 
     server.verify_mocks().await?;

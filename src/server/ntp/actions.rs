@@ -83,9 +83,9 @@ impl Protocol for NtpProtocol {
             .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(123))
             .implementation("Manual 48-byte NTP packet construction")
-            .llm_control("Time responses (stratum, timestamps)")
+            .llm_control("Optional: normal time responses are static by default (mechanical), LLM only on opt-in")
             .e2e_testing("rsntp client + raw packets (tests/server/ntp/test.rs)")
-            .notes("Client/server mode only (mode 3 -> mode 4). Origin timestamp and version are echoed from the request automatically. Sub-ms with scripting")
+            .notes("Client/server mode only (mode 3 -> mode 4). A normal time response is mechanical (stratum 2, LOCL, current-time timestamps, origin+version echoed from the request), so it is answered STATICALLY with no LLM round-trip by default. The LLM is consulted only when the operator opts in with a server instruction or per-event handler — the way to make the server skew or lie about the time. On LLM failure in opt-in mode the server falls back to the correct static time response. Sub-ms with scripting")
             .build()
     }
     fn description(&self) -> &'static str {

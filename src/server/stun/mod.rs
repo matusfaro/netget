@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::{ActionResult, Server};
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::StunProtocol;
@@ -125,6 +126,32 @@ impl StunServer {
 
                             let event = Event::new(&STUN_BINDING_REQUEST_EVENT, event_data);
 
+                            // A STUN Binding response is 100% mechanical: reflect the source
+                            // address into XOR-MAPPED-ADDRESS and echo the 96-bit transaction ID.
+                            // There is nothing to decide, so by default we answer statically with
+                            // NO LLM round-trip. The model is consulted only when the operator
+                            // opts in — a server instruction or a per-event handler — which is
+                            // how one asks for non-standard behaviour (e.g. lying about the
+                            // mapped address for NAT testing).
+                            let wants_dynamic = operator_wants_dynamic(
+                                &state_clone,
+                                server_id,
+                                &event.event_type.id,
+                            )
+                            .await;
+
+                            if !wants_dynamic {
+                                send_static_binding_response(
+                                    protocol_clone.as_ref(),
+                                    socket_clone.as_ref(),
+                                    peer_addr,
+                                    &transaction_id_hex,
+                                    &status_clone,
+                                )
+                                .await;
+                                return;
+                            }
+
                             debug!("STUN calling LLM for binding request from {}", peer_addr);
                             let _ = status_clone.send(format!(
                                 "[DEBUG] STUN calling LLM for binding request from {}",
@@ -209,69 +236,29 @@ impl StunServer {
                                     }
                                 }
                                 Err(e) => {
+                                    // Fail closed to the correct static default, not to a
+                                    // permissive or misleading answer. The operator opted into
+                                    // LLM control and the LLM failed; the mechanical response
+                                    // (the client's real reflected address) is the safe fallback
+                                    // here — a STUN Binding response is never a credential or an
+                                    // approval — so send it and say so, rather than dropping the
+                                    // request or inventing an address.
                                     error!(
-                                        "STUN LLM call failed for request from {} ({}): {}",
+                                        "STUN LLM call failed for request from {} ({}): {} — falling back to static binding response",
                                         peer_addr, connection_id, e
                                     );
-                                    let _ = status_clone.send(format!("✗ STUN LLM error: {}", e));
-
-                                    // Answer with a Binding Error Response rather than
-                                    // dropping the request. A silent drop is indistinguishable
-                                    // from packet loss, so the client works through its whole
-                                    // retransmission schedule (~39.5s) before giving up; a 500
-                                    // ends the transaction immediately. The transaction ID is
-                                    // echoed, without which the client discards the response.
-                                    let overloaded = crate::llm::is_overload_error(&e);
-                                    let reason = if overloaded {
-                                        "Server Error: capacity exhausted"
-                                    } else {
-                                        "Server Error"
-                                    };
-                                    if overloaded {
-                                        warn!("STUN 500 to {}: LLM capacity exhausted", peer_addr);
-                                    }
-
-                                    match transaction_id.as_ref() {
-                                        Some(tid) if tid.len() == 12 => {
-                                            match StunProtocol::build_error_response(
-                                                tid, 500, reason,
-                                            ) {
-                                                Ok(packet) => {
-                                                    let _ = socket_clone
-                                                        .send_to(&packet, peer_addr)
-                                                        .await;
-                                                    let _ = status_clone.send(format!(
-                                                        "→ STUN 500 error response to {} ({} bytes)",
-                                                        peer_addr,
-                                                        packet.len()
-                                                    ));
-                                                }
-                                                Err(build_err) => {
-                                                    error!(
-                                                        "STUN failed to build error response for {}: {}",
-                                                        peer_addr, build_err
-                                                    );
-                                                    let _ = status_clone.send(format!(
-                                                        "✗ STUN failed to build error response: {build_err}"
-                                                    ));
-                                                }
-                                            }
-                                        }
-                                        _ => {
-                                            // Without a 12-byte transaction ID there is no
-                                            // response the client would accept, so silence is
-                                            // the only option. Say so rather than leaving it
-                                            // to be inferred.
-                                            warn!(
-                                                "STUN cannot answer {} with an error response: no usable transaction ID",
-                                                peer_addr
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "✗ STUN no transaction ID for {}, no error response possible",
-                                                peer_addr
-                                            ));
-                                        }
-                                    }
+                                    let _ = status_clone.send(format!(
+                                        "✗ STUN LLM error: {} — sending static binding response",
+                                        e
+                                    ));
+                                    send_static_binding_response(
+                                        protocol_clone.as_ref(),
+                                        socket_clone.as_ref(),
+                                        peer_addr,
+                                        &transaction_id_hex,
+                                        &status_clone,
+                                    )
+                                    .await;
                                 }
                             }
                         });
@@ -339,5 +326,73 @@ impl StunServer {
         let transaction_id = data[8..20].to_vec();
 
         (Some(transaction_id), message_type.to_string(), true)
+    }
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for
+/// this server: either a non-empty server instruction was given, or an event handler is
+/// configured for `event_id`. When false the protocol answers with a correct static default
+/// and never consults the model — a STUN Binding response is fully determined by the request.
+async fn operator_wants_dynamic(
+    state: &AppState,
+    server_id: crate::state::ServerId,
+    event_id: &str,
+) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
+}
+
+/// Build and send the mechanical STUN Binding Success Response with no LLM involvement:
+/// XOR-MAPPED-ADDRESS = the client's own source address, transaction ID echoed verbatim.
+async fn send_static_binding_response(
+    protocol: &StunProtocol,
+    socket: &UdpSocket,
+    peer_addr: SocketAddr,
+    transaction_id_hex: &str,
+    status: &mpsc::UnboundedSender<String>,
+) {
+    let action = serde_json::json!({
+        "type": "send_stun_binding_response",
+        "transaction_id": transaction_id_hex,
+        "mapped_address": peer_addr.to_string(),
+        "xor_mapped_address": true
+    });
+    match protocol.execute_action(action) {
+        Ok(ActionResult::Output(bytes)) => {
+            let _ = socket.send_to(&bytes, peer_addr).await;
+            debug!(
+                "STUN sent static binding response ({} bytes) to {}",
+                bytes.len(),
+                peer_addr
+            );
+            let _ = status.send(format!(
+                "→ STUN static binding response to {} ({} bytes)",
+                peer_addr,
+                bytes.len()
+            ));
+        }
+        Ok(_) => {
+            warn!(
+                "STUN static binding response produced no output for {}",
+                peer_addr
+            );
+        }
+        Err(e) => {
+            error!(
+                "STUN failed to build static binding response for {}: {}",
+                peer_addr, e
+            );
+            let _ = status.send(format!("✗ STUN static binding response failed: {e}"));
+        }
     }
 }

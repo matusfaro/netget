@@ -54,9 +54,16 @@ impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
         ProtocolMetadataV2::builder()
             .state(DevelopmentState::Experimental)
             .implementation("Manual STUN protocol (RFC 8489)")
-            .llm_control("Binding responses with XOR-MAPPED-ADDRESS")
+            .llm_control("Optional: Binding responses are static by default (mechanical), LLM only on opt-in")
             .e2e_testing("stuntman-client / WebRTC")
-            .notes("IPv4 only, stateless UDP")
+            .notes(
+                "IPv4 only, stateless UDP. A Binding response is fully determined by the request \
+                 (reflect source into XOR-MAPPED-ADDRESS, echo the transaction ID), so it is \
+                 answered STATICALLY with no LLM round-trip by default. The LLM is consulted only \
+                 when the operator opts in with a server instruction or a per-event handler — the \
+                 way to request non-standard behaviour such as lying about the mapped address. On \
+                 LLM failure in opt-in mode the server falls back to the correct static response.",
+            )
             .build()
     }
 

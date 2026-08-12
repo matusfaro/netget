@@ -10,6 +10,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::{ActionResult, Server};
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::NtpProtocol;
@@ -150,6 +151,31 @@ impl NtpServer {
 
                             let event = Event::new(&NTP_REQUEST_EVENT, event_data);
 
+                            // A normal NTP time response is mechanical: every field has a
+                            // correct default (stratum 2, LOCL reference id, current-time
+                            // timestamps) and the client's transmit timestamp is echoed as the
+                            // origin. There is nothing to decide, so by default we answer
+                            // statically with NO LLM round-trip. The model is consulted only when
+                            // the operator opts in — a server instruction or a per-event handler
+                            // — which is how one asks the server to skew or lie about the time.
+                            let wants_dynamic = operator_wants_dynamic(
+                                &state_clone,
+                                server_id,
+                                &event.event_type.id,
+                            )
+                            .await;
+
+                            if !wants_dynamic {
+                                send_static_time_response(
+                                    &protocol,
+                                    socket_clone.as_ref(),
+                                    peer_addr,
+                                    &status_clone,
+                                )
+                                .await;
+                                return;
+                            }
+
                             debug!("NTP calling LLM for request from {}", peer_addr);
                             let _ = status_clone.send(format!(
                                 "[DEBUG] NTP calling LLM for request from {}",
@@ -234,42 +260,28 @@ impl NtpServer {
                                     }
                                 }
                                 Err(e) => {
-                                    // Answer with a Kiss-o'-Death rather than dropping the
-                                    // request. Silence looks to the client like a slow server
-                                    // and it keeps polling; a KoD tells it to stop, and can
-                                    // never be mistaken for a time sample, so an outage cannot
-                                    // hand anyone a fabricated clock reading.
+                                    // Fail closed to the correct static default, not to a
+                                    // permissive or fabricated answer. The operator opted into
+                                    // LLM control and the LLM failed; the mechanical response
+                                    // (the true current time) is the safe fallback here — it can
+                                    // never be a lie in the operator's favour — so send it and
+                                    // say so, rather than dropping the request or inventing a
+                                    // clock reading.
                                     error!(
-                                        "NTP LLM call failed for request from {} ({}): {}",
+                                        "NTP LLM call failed for request from {} ({}): {} — falling back to static time response",
                                         peer_addr, connection_id, e
                                     );
-                                    let _ = status_clone.send(format!("✗ NTP LLM error: {}", e));
-
-                                    let overloaded = crate::llm::is_overload_error(&e);
-                                    // RATE says "you are polling too fast", which is the
-                                    // truthful shape of capacity exhaustion; INIT says "not
-                                    // synchronized yet", which is the truthful shape of
-                                    // everything else.
-                                    let kiss_code = if overloaded { "RATE" } else { "INIT" };
-                                    if overloaded {
-                                        warn!(
-                                            "NTP KoD RATE to {}: LLM capacity exhausted",
-                                            peer_addr
-                                        );
-                                    }
-
-                                    let packet = crate::server::ntp::actions::build_kod_packet(
-                                        client_version,
-                                        client_transmit_ntp,
-                                        kiss_code,
-                                    );
-                                    let _ = socket_clone.send_to(&packet, peer_addr).await;
                                     let _ = status_clone.send(format!(
-                                        "→ NTP Kiss-o'-Death ({}) to {} ({} bytes)",
-                                        kiss_code,
-                                        peer_addr,
-                                        packet.len()
+                                        "✗ NTP LLM error: {} — sending static time response",
+                                        e
                                     ));
+                                    send_static_time_response(
+                                        &protocol,
+                                        socket_clone.as_ref(),
+                                        peer_addr,
+                                        &status_clone,
+                                    )
+                                    .await;
                                 }
                             }
                         });
@@ -287,5 +299,76 @@ impl NtpServer {
             .await;
 
         Ok(local_addr)
+    }
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for
+/// this server: either a non-empty server instruction was given, or an event handler is
+/// configured for `event_id`. When false the protocol answers with a correct static default
+/// and never consults the model — a normal NTP time response is fully determined by the
+/// request plus the server's clock.
+async fn operator_wants_dynamic(
+    state: &AppState,
+    server_id: crate::state::ServerId,
+    event_id: &str,
+) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
+}
+
+/// Build and send the mechanical NTP time response with no LLM involvement: stratum 2, LOCL
+/// reference clock, current-time timestamps. The per-request `protocol` echoes the client's
+/// transmit timestamp as the origin and answers in the client's own version.
+async fn send_static_time_response(
+    protocol: &NtpProtocol,
+    socket: &UdpSocket,
+    peer_addr: SocketAddr,
+    status: &mpsc::UnboundedSender<String>,
+) {
+    let action = serde_json::json!({
+        "type": "send_ntp_time_response",
+        "stratum": 2,
+        "reference_id": "LOCL",
+        "reference_timestamp": "current_time",
+        "receive_timestamp": "current_time",
+        "transmit_timestamp": "current_time"
+    });
+    match protocol.execute_action(action) {
+        Ok(ActionResult::Output(bytes)) => {
+            let _ = socket.send_to(&bytes, peer_addr).await;
+            debug!(
+                "NTP sent static time response ({} bytes) to {}",
+                bytes.len(),
+                peer_addr
+            );
+            let _ = status.send(format!(
+                "→ NTP static time response to {} ({} bytes)",
+                peer_addr,
+                bytes.len()
+            ));
+        }
+        Ok(_) => {
+            warn!(
+                "NTP static time response produced no output for {}",
+                peer_addr
+            );
+        }
+        Err(e) => {
+            error!(
+                "NTP failed to build static time response for {}: {}",
+                peer_addr, e
+            );
+            let _ = status.send(format!("✗ NTP static time response failed: {e}"));
+        }
     }
 }
