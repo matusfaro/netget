@@ -6,11 +6,11 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::TelnetProtocol;
 use crate::state::app_state::AppState;
@@ -50,8 +50,7 @@ impl TelnetServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("Telnet server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] Telnet server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("Telnet server listening on {}", local_addr));
 
         let protocol = Arc::new(TelnetProtocol::new());
 
@@ -95,6 +94,7 @@ impl TelnetServer {
                                 .add_connection_to_server(server_id, conn_state)
                                 .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
+                            let log = Log::new(Some(&status_clone));
 
                             // If the server was started with send_first, give the handler a
                             // chance to greet before the client says anything. Without this
@@ -122,11 +122,11 @@ impl TelnetServer {
                                                 let mut write = write_half_arc.lock().await;
                                                 let _ = write.write_all(&data).await;
                                                 let _ = write.flush().await;
-                                                debug!(
+                                                log.debug(format!(
                                                     "Telnet sent greeting ({} bytes) on connection {}",
                                                     data.len(),
                                                     connection_id
-                                                );
+                                                ));
                                             }
                                         }
                                     }
@@ -135,16 +135,13 @@ impl TelnetServer {
                                         // blank screen. Telnet has no error frame - it is a
                                         // byte stream with a human on the other end - so the
                                         // protocol-appropriate answer is a plain notice line.
-                                        error!(
+                                        // Non-fatal: a wire notice is still delivered
+                                        // (fallback), so this is WARN not ERROR.
+                                        log.warn(format!(
                                             "Telnet greeting handler failed on connection {}: {}",
                                             connection_id, e
-                                        );
-                                        let notice = telnet_failure_notice(&e);
-                                        let _ = status_clone.send(format!(
-                                            "[ERROR] Telnet connection {} notice: {}",
-                                            connection_id,
-                                            notice.trim_end()
                                         ));
+                                        let notice = telnet_failure_notice(&e);
                                         use tokio::io::AsyncWriteExt;
                                         let mut write = write_half_arc.lock().await;
                                         let _ = write.write_all(notice.as_bytes()).await;
@@ -166,12 +163,8 @@ impl TelnetServer {
                                     Err(e) => {
                                         // read_line fails on non-UTF-8 input; log it instead of
                                         // treating it as a clean disconnect.
-                                        debug!(
+                                        log.debug(format!(
                                             "Telnet read error on connection {}: {}",
-                                            connection_id, e
-                                        );
-                                        let _ = status_clone.send(format!(
-                                            "[DEBUG] Telnet read error on connection {}: {}",
                                             connection_id, e
                                         ));
                                         break;
@@ -181,25 +174,18 @@ impl TelnetServer {
                                     break;
                                 }
 
-                                // DEBUG: Log summary with text preview
+                                // Summary + full payload are FileOnly: the
+                                // telnet_message_received event template renders the
+                                // equivalent line to the TUI, so streaming it here too
+                                // would duplicate it and load the unbounded status channel.
                                 let line_preview = preview(&line, 100);
-                                debug!(
+                                log.debug(format!(
                                     "Telnet received {} bytes on connection {}: {}",
                                     n,
                                     connection_id,
                                     line_preview.trim()
-                                );
-                                let _ = status_clone.send(format!(
-                                    "[DEBUG] Telnet received {} bytes on connection {}: {}",
-                                    n,
-                                    connection_id,
-                                    line_preview.trim()
                                 ));
-
-                                // TRACE: Log full text payload
-                                trace!("Telnet data (text): {:?}", line.trim());
-                                let _ = status_clone
-                                    .send(format!("[TRACE] Telnet data (text): {:?}", line.trim()));
+                                log.trace(format!("Telnet data (text): {:?}", line.trim()));
 
                                 let event = Event::new(
                                     &TELNET_MESSAGE_RECEIVED_EVENT,
@@ -208,9 +194,8 @@ impl TelnetServer {
                                     }),
                                 );
 
-                                debug!("Telnet calling LLM for connection {}", connection_id);
-                                let _ = status_clone.send(format!(
-                                    "[DEBUG] Telnet calling LLM for connection {}",
+                                log.debug(format!(
+                                    "Telnet calling LLM for connection {}",
                                     connection_id
                                 ));
 
@@ -226,17 +211,11 @@ impl TelnetServer {
                                 {
                                     Ok(execution_result) => {
                                         for message in &execution_result.messages {
-                                            info!("{}", message);
-                                            let _ =
-                                                status_clone.send(format!("[INFO] {}", message));
+                                            log.info(message);
                                         }
 
-                                        debug!(
+                                        log.debug(format!(
                                             "Telnet got {} protocol results",
-                                            execution_result.protocol_results.len()
-                                        );
-                                        let _ = status_clone.send(format!(
-                                            "[DEBUG] Telnet got {} protocol results",
                                             execution_result.protocol_results.len()
                                         ));
 
@@ -256,23 +235,18 @@ impl TelnetServer {
 
                                                     let response = String::from_utf8_lossy(&data);
 
-                                                    // DEBUG: Log summary with text preview
+                                                    // Summary + full payload FileOnly: the
+                                                    // send_telnet_* action template already
+                                                    // reports the send to the TUI.
                                                     let response_preview = preview(&response, 100);
-                                                    debug!(
+                                                    log.debug(format!(
                                                         "Telnet sent {} bytes on connection {}: {}",
                                                         data.len(),
                                                         connection_id,
                                                         response_preview.trim()
-                                                    );
-                                                    let _ = status_clone.send(format!("[DEBUG] Telnet sent {} bytes on connection {}: {}", data.len(), connection_id, response_preview.trim()));
-
-                                                    // TRACE: Log full text payload
-                                                    trace!(
+                                                    ));
+                                                    log.trace(format!(
                                                         "Telnet sent (text): {:?}",
-                                                        response.trim()
-                                                    );
-                                                    let _ = status_clone.send(format!(
-                                                        "[TRACE] Telnet sent (text): {:?}",
                                                         response.trim()
                                                     ));
                                                 }
@@ -292,16 +266,13 @@ impl TelnetServer {
                                         // broken server from a slow one. A notice is not a
                                         // prompt and not a shell result, so nothing downstream
                                         // can read it as the command having run.
-                                        error!(
+                                        // Non-fatal: a wire notice is still delivered
+                                        // (fallback), so this is WARN not ERROR.
+                                        log.warn(format!(
                                             "Telnet LLM call failed on connection {}: {}",
                                             connection_id, e
-                                        );
-                                        let notice = telnet_failure_notice(&e);
-                                        let _ = status_clone.send(format!(
-                                            "[ERROR] Telnet connection {} notice: {}",
-                                            connection_id,
-                                            notice.trim_end()
                                         ));
+                                        let notice = telnet_failure_notice(&e);
                                         use tokio::io::AsyncWriteExt;
                                         let mut write = write_half_arc.lock().await;
                                         let _ = write.write_all(notice.as_bytes()).await;
@@ -311,12 +282,8 @@ impl TelnetServer {
                                 line.clear();
 
                                 if close_requested {
-                                    debug!(
-                                        "Telnet closing connection {} at handler request",
-                                        connection_id
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "✗ Telnet connection {} closed by handler",
+                                    log.info(format!(
+                                        "Telnet connection {} closed by handler",
                                         connection_id
                                     ));
                                     use tokio::io::AsyncWriteExt;
@@ -334,7 +301,8 @@ impl TelnetServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Telnet connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept Telnet connection: {}", e));
                         break;
                     }
                 }
