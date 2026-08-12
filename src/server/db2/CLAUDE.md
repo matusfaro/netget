@@ -1,0 +1,118 @@
+# IBM Db2 (DRDA) Protocol Implementation
+
+Db2 speaks **DRDA** (Distributed Relational Database Architecture), a binary wire
+protocol framing messages in DSS envelopes carrying DDM objects. There is no
+maintained Rust crate for the server side of DRDA, so the codec is **hand-rolled**
+against the public DRDA specification (`src/server/db2/drda.rs`) — the same code
+points Apache Derby's `org.apache.derby.impl.drda` and IBM's Db2 docs use.
+
+The LLM plays the database: it decides whether a login is accepted and what SQLCA
+a statement produces. **There is no storage** — no catalog, no tables, no rows.
+
+**State**: Experimental. **Port**: 50000 by default (unprivileged → `None`).
+**Stack**: `ETH>IP>TCP>DRDA>Db2`.
+
+> **Byte-literal evidence only — NOT real-client validated.** A real Db2 driver is
+> very unlikely to be available on macOS, so the handshake and reply bytes are
+> asserted against **spec-derived literals** (see `tests/server/db2/drda_test.rs`),
+> not interoperability with a genuine driver on a live connection. Treat this as
+> unverified against a real peer.
+
+## DRDA wire format (see `drda.rs` for the full comment)
+
+- **DSS** (6-byte header): `length(u16) | 0xD0 | format | correlator(u16)`.
+  `format` low nibble = DSS type (1 RQSDSS request, 2 RPYDSS reply, 3 OBJDSS
+  object); high nibble = chaining flags.
+- **DDM object** (4-byte header): `length(u16) | codepoint(u16) | data`. The data
+  region may hold nested code-pointed parameters.
+- Character fields (user id, RDB name, SQL text) are **IBM037 EBCDIC**; `drda.rs`
+  has a range-based CP037 codec both ways.
+
+## What is implemented
+
+**The connection handshake**, none of which needs the LLM except SECCHK:
+
+| Client command | Server reply | LLM? |
+|---|---|---|
+| `EXCSAT` (exchange server attributes) | `EXCSATRD` | no |
+| `ACCSEC` (access security) | `ACCSECRD` (echoes SECMEC) | no |
+| `SECCHK` (security check, carries USRID/PASSWORD/RDBNAM) | `SECCHKRM` | **yes** → `db2_connect` |
+| `ACCRDB` (access RDB) | `ACCRDBRM` (INFO if authenticated, else ERROR) | no |
+
+**The basic-query path**: `EXCSQLIMM` (execute immediate) with the SQL delivered
+as a `SQLSTT` object → `db2_query` event → the server replies with an `SQLCARD`
+carrying the model's SQLCA.
+
+### Events and actions
+
+Every event `.with_actions(...)`; both events are emitted.
+
+- `db2_connect` (after SECCHK): data `user_id`, `rdb_name`, `has_password`.
+  Actions: `db2_accept_connection` (SECCHKRM severity INFO, code SUCCESS) /
+  `db2_reject_connection` (SECCHKRM severity ERROR; `sec_check_code` selects
+  `password_invalid`/`userid_unknown`/`userid_missing`).
+- `db2_query` (on EXCSQLIMM): data `sql_text`, `statement_type`. Actions:
+  `db2_query_ok` (`sqlcode` default 0 → null SQLCA = success; positive → warning
+  SQLCA; negative → error) / `db2_query_error` (`sqlcode`, `sqlstate`, `message`).
+
+All action params are structured — no raw bytes/base64.
+
+## Fail-closed behaviour
+
+- **SECCHK LLM outage** → refusal: `SECCHKRM` at severity ERROR, never an accept.
+  Distinguishable from a model denial (the outage path logs at `error!` as a
+  backend error; the denial path is the model's `db2_reject_connection`).
+- **No login decision produced** → refusal.
+- **Statement before authentication** → SQLCARD error `-30082` / SQLSTATE `08001`.
+- **Query LLM outage / no answer** → SQLCARD error `-901` / SQLSTATE `58004`
+  (system error), never a success SQLCA.
+- **Unknown DRDA command** → `CMDNSPRM` at severity ERROR (a real reply, never a
+  hang).
+
+## SQLCARD encoding
+
+- **Success** (`sqlcode 0`): SQLCARD (0x2408) whose SQLCAGRP is the FDOCA NULL
+  indicator `0xFF` — the reply a real Db2 sends after a successful non-query
+  statement.
+- **Error**: SQLCAGRP present, then `SQLCODE(i32 BE) | SQLSTATE(5 EBCDIC) |
+  SQLERRPROC(8, "NETGET  ") | 0xFF`. The **extended diagnostic group
+  (SQLCAXGRP)** — SQLERRD counters, warning flags, message text — is sent NULL.
+
+## Architecture
+
+- `spawn_with_llm_actions` binds with `?` (bind failure → `ServerStatus::Error`)
+  and registers the accept-loop `JoinHandle` via `register_server_task()`.
+- One task per connection over `tokio::io::split()` (never clone the stream). The
+  read loop buffers until a full DSS is present (`dss_declared_len`), parses one
+  DSS, dispatches, and writes the reply. No lock is held across an `.await`.
+- Per-connection `authenticated` flag, set by an accepted SECCHK; ACCRDB and any
+  statement require it.
+
+## NOT implemented (be honest)
+
+- **SELECT result-set retrieval**: `OPNQRY` / `QRYDSC` (FDOCA descriptor) /
+  `QRYDTA` (row data) / `CNTQRY` / `CLSQRY`. Only the SQLCA (success/error
+  indicator) is returned, so a driver can run INSERT/UPDATE/DELETE/DDL and read
+  the SQLCODE, but **tabular rows are not delivered**.
+- Prepared statements with parameter markers (`PRPSQLSTT` + parameter marshalling).
+- The SQLCA extended diagnostic group (message text etc.).
+- TLS, Kerberos/GSSAPI/encrypted SECMEC, connection pooling nuances, DRDA
+  chaining beyond per-DSS request/reply.
+
+## Testing
+
+- `tests/server/db2/drda_test.rs` — byte-literal codec tests (DSS/DDM layout,
+  IBM037 EBCDIC, SQLCARD success/error) against spec-derived constants.
+- `tests/server/db2/e2e_test.rs` — a real TCP connection driving the full
+  handshake + an EXCSQLIMM statement against a running server with the LLM mocked,
+  asserting reply code points and severities.
+
+```bash
+./cargo-isolated.sh test --no-default-features --features db2 \
+    --test server -- db2:: --test-threads=100
+```
+
+## References
+
+- DRDA specification (The Open Group) — DSS/DDM framing and code points.
+- Apache Derby `org.apache.derby.impl.drda` — a readable reference server.

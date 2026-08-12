@@ -126,6 +126,8 @@ pub mod mssql;
 pub mod mysql;
 #[cfg(feature = "snowflake")]
 pub mod snowflake;
+#[cfg(feature = "db2")]
+pub mod db2;
 #[cfg(all(feature = "named_pipe", unix))]
 pub mod named_pipe;
 #[cfg(all(feature = "pty", unix))]
