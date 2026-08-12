@@ -752,7 +752,10 @@ impl Protocol for AmqpProtocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["amqp", "rabbitmq", "broker", "messaging", "queue"]
+        // NOTE: deliberately does NOT claim the bare word "queue" — it overlapped with
+        // SQS's keyword and made "queue" resolve nondeterministically (HashMap order)
+        // between AMQP and SQS. AMQP is selected by its own distinctive names.
+        vec!["amqp", "rabbitmq", "broker", "messaging"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

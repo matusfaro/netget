@@ -231,6 +231,97 @@ fn test_parse_sip_all_keywords() {
     );
 }
 
+/// Cloud services (S3, SQS, DynamoDB) are all HTTP/REST underneath. The model kept
+/// resolving "act as an S3 bucket" / "act as an SQS queue" to the generic `http` stack or
+/// to the wrong AWS service. Two root causes are covered here:
+///   1. "queue" was claimed by both AMQP and SQS, so it resolved by HashMap order.
+///   2. "dynamodb" never matched the bare "dynamo" keyword (the "db" broke the word
+///      boundary), so DynamoDB requests resolved to nothing.
+#[test]
+#[cfg(feature = "s3")]
+fn test_parse_s3_stack() {
+    assert_eq!(registry().parse_from_str("s3"), Some("S3".to_string()));
+    assert_eq!(
+        registry().parse_from_str("act as an S3 bucket"),
+        Some("S3".to_string())
+    );
+    assert_eq!(
+        registry().parse_from_str("emulate AWS S3 object storage"),
+        Some("S3".to_string())
+    );
+    assert_eq!(registry().parse_from_str("minio"), Some("S3".to_string()));
+}
+
+#[test]
+#[cfg(feature = "sqs")]
+fn test_parse_sqs_stack() {
+    assert_eq!(registry().parse_from_str("sqs"), Some("SQS".to_string()));
+    assert_eq!(
+        registry().parse_from_str("act as an SQS queue"),
+        Some("SQS".to_string())
+    );
+    assert_eq!(
+        registry().parse_from_str("stand up an AWS message queue"),
+        Some("SQS".to_string())
+    );
+}
+
+#[test]
+#[cfg(feature = "dynamo")]
+fn test_parse_dynamo_stack() {
+    assert_eq!(
+        registry().parse_from_str("dynamo"),
+        Some("DynamoDB".to_string())
+    );
+    // The regression: "dynamodb" in free text used to match nothing.
+    assert_eq!(
+        registry().parse_from_str("emulate a DynamoDB table"),
+        Some("DynamoDB".to_string())
+    );
+    assert_eq!(
+        registry().parse_from_str("aws dynamodb"),
+        Some("DynamoDB".to_string())
+    );
+}
+
+/// The AWS services must beat the generic HTTP stack even when the instruction also
+/// mentions HTTP, since they are all HTTP underneath.
+#[test]
+#[cfg(all(feature = "s3", feature = "http"))]
+fn test_s3_beats_http() {
+    assert_eq!(
+        registry().parse_from_str("an S3 bucket served over http"),
+        Some("S3".to_string())
+    );
+}
+
+/// AMQP must still resolve from its own names now that it no longer claims "queue".
+#[test]
+#[cfg(feature = "amqp")]
+fn test_parse_amqp_stack() {
+    assert_eq!(registry().parse_from_str("amqp"), Some("AMQP".to_string()));
+    assert_eq!(
+        registry().parse_from_str("a RabbitMQ broker"),
+        Some("AMQP".to_string())
+    );
+}
+
+/// "queue" was claimed by both AMQP and SQS. After the fix neither claims the bare word,
+/// so it must not appear in the overlap report.
+#[test]
+#[cfg(all(feature = "amqp", feature = "sqs"))]
+fn test_queue_keyword_no_longer_overlaps() {
+    let overlaps = registry().get_keyword_overlaps();
+    assert!(
+        !overlaps.iter().any(|(kw, _)| kw == "queue"),
+        "the bare keyword 'queue' should no longer be claimed by multiple protocols: {:?}",
+        overlaps
+            .iter()
+            .find(|(kw, _)| kw == "queue")
+            .map(|(_, p)| p)
+    );
+}
+
 #[test]
 fn test_no_keyword_overlaps() {
     // This test verifies that the registry initialization succeeds without panicking.

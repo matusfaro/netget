@@ -330,7 +330,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3Protocol {
     }
 
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["s3", "object storage", "minio"]
+        vec!["s3", "aws s3", "s3 bucket", "object storage", "minio"]
     }
 
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {

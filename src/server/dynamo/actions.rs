@@ -136,7 +136,10 @@ impl Protocol for DynamoProtocol {
         "ETH>IP>TCP>HTTP>DYNAMODB"
     }
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["dynamo"]
+        // Include the full "dynamodb" spelling: the bare "dynamo" keyword never matched
+        // "dynamodb" in free text because the trailing "db" broke the word boundary, so
+        // "emulate a DynamoDB table" resolved to nothing.
+        vec!["dynamo", "dynamodb", "dynamo db", "aws dynamodb"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};

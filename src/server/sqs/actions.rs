@@ -147,7 +147,9 @@ impl Protocol for SqsProtocol {
         "ETH>IP>TCP>HTTP>SQS"
     }
     fn keywords(&self) -> Vec<&'static str> {
-        vec!["sqs", "queue", "message queue"]
+        // "queue" alone is intentionally absent: it collided with AMQP. SQS is chosen by
+        // its AWS-specific names and the two-word "message queue" phrase.
+        vec!["sqs", "message queue", "sqs queue", "aws sqs"]
     }
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};

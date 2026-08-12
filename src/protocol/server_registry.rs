@@ -792,6 +792,20 @@ impl ServerRegistry {
             return Some(stack);
         }
 
+        // Priority 8: AWS cloud services before the generic loop and the HTTP fallback.
+        // S3, SQS and DynamoDB are all HTTP/REST underneath, so their distinctive names
+        // ("s3 bucket", "sqs queue", "dynamodb", …) must win over the plain "http" keyword
+        // and over each other deterministically — the general loop below iterates a
+        // HashMap and would otherwise let hash order decide "act as an S3 bucket over
+        // http" between S3 and HTTP. Each check is a no-op if the feature is not compiled.
+        for aws_service in ["S3", "SQS", "DynamoDB"] {
+            if let Some(stack) =
+                self.match_protocol_by_any_keyword_with_boundaries(&input_lower, aws_service)
+            {
+                return Some(stack);
+            }
+        }
+
         // For all other protocols, check ALL keywords from each protocol with word boundaries
         for (protocol_name, protocol) in &self.protocols {
             for keyword in protocol.keywords() {
