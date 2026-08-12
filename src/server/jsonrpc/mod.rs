@@ -18,16 +18,16 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::error;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::jsonrpc::actions::{JsonRpcProtocol, JSONRPC_METHOD_CALL_EVENT};
 use crate::state::app_state::AppState;
-use crate::{console_error, console_info};
 
 /// JSON-RPC 2.0 standard error codes
 const PARSE_ERROR: i32 = -32700;
@@ -50,7 +50,7 @@ impl JsonRpcServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "JSON-RPC server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("JSON-RPC server listening on {}", local_addr));
 
         let protocol = Arc::new(JsonRpcProtocol::new());
 
@@ -63,9 +63,10 @@ impl JsonRpcServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("JSON-RPC connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx
-                            .send(format!("[INFO] JSON-RPC connection from {}", remote_addr));
+                        Log::new(Some(&status_tx)).info(format!(
+                            "JSON-RPC connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -132,15 +133,14 @@ impl JsonRpcServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone.send(format!(
-                                "[INFO] JSON-RPC connection {} closed",
-                                connection_id
-                            ));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("JSON-RPC connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept JSON-RPC connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept JSON-RPC connection: {}", e));
                         break;
                     }
                 }
@@ -167,9 +167,9 @@ async fn handle_jsonrpc_request(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().clone();
     let uri = req.uri().clone();
+    let log = Log::new(Some(&status_tx));
 
-    debug!("JSON-RPC request: {} {}", method, uri.path());
-    let _ = status_tx.send(format!("[DEBUG] JSON-RPC {} {}", method, uri.path()));
+    log.debug(format!("JSON-RPC request: {} {}", method, uri.path()));
 
     // JSON-RPC requires POST method
     if method != Method::POST {
@@ -185,7 +185,8 @@ async fn handle_jsonrpc_request(
     let body_bytes = match req.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "Failed to read request body: {}", e);
+            // Non-fatal: the client gets an error response (wire fallback).
+            log.warn(format!("Failed to read request body: {}", e));
             return Ok(build_error_response(
                 INVALID_REQUEST,
                 "Failed to read request body",
@@ -199,17 +200,16 @@ async fn handle_jsonrpc_request(
     let request_value: Value = match serde_json::from_slice(&body_bytes) {
         Ok(json) => json,
         Err(e) => {
-            console_error!(status_tx, "Failed to parse JSON: {}", e);
+            // Non-fatal: the client gets a Parse error response (wire fallback).
+            log.warn(format!("Failed to parse JSON: {}", e));
             return Ok(build_error_response(PARSE_ERROR, "Parse error", None, None));
         }
     };
 
-    trace!(
+    // Full payload FileOnly: the jsonrpc_method_call event template renders the
+    // method to the TUI.
+    log.trace(format!(
         "JSON-RPC request body: {}",
-        serde_json::to_string_pretty(&request_value).unwrap_or_default()
-    );
-    let _ = status_tx.send(format!(
-        "[TRACE] JSON-RPC request: {}",
         serde_json::to_string_pretty(&request_value).unwrap_or_default()
     ));
 
@@ -217,12 +217,8 @@ async fn handle_jsonrpc_request(
     match request_value {
         Value::Array(requests) if !requests.is_empty() => {
             // Batch request
-            debug!(
+            log.debug(format!(
                 "Processing batch JSON-RPC request with {} items",
-                requests.len()
-            );
-            let _ = status_tx.send(format!(
-                "[DEBUG] Batch JSON-RPC request with {} items",
                 requests.len()
             ));
 
@@ -321,6 +317,7 @@ async fn process_single_request(
     protocol: &Arc<JsonRpcProtocol>,
     server_id: crate::state::ServerId,
 ) -> Option<Value> {
+    let log = Log::new(Some(status_tx));
     // A batch member that is not an object is not a request at all. Spec §6
     // requires an Invalid Request response for each such member, with a null id;
     // it used to be dropped silently, so `[1,2,3]` produced an empty array.
@@ -382,18 +379,14 @@ async fn process_single_request(
         }
     };
 
-    debug!(
+    log.debug(format!(
         "JSON-RPC method call: method={}, is_notification={}",
-        method, is_notification
-    );
-    let _ = status_tx.send(format!(
-        "[DEBUG] JSON-RPC method={}, notification={}",
         method, is_notification
     ));
 
     // Track method in connection state
     if let Err(e) = track_method_call(app_state, server_id, connection_id, method).await {
-        error!("Failed to track method call: {}", e);
+        log.warn(format!("Failed to track method call: {}", e));
     }
 
     // Call LLM with method details
@@ -412,7 +405,8 @@ async fn process_single_request(
     {
         Ok(result) => result,
         Err(e) => {
-            console_error!(status_tx, "LLM call failed: {}", e);
+            // Non-fatal: a non-notification gets an Internal error response.
+            log.warn(format!("LLM call failed: {}", e));
             if !is_notification {
                 return Some(json!({
                     "jsonrpc": "2.0",
@@ -432,7 +426,7 @@ async fn process_single_request(
     if !is_notification {
         Some(response_value)
     } else {
-        trace!("Notification processed, no response sent");
+        log.trace("Notification processed, no response sent");
         None
     }
 }
@@ -471,9 +465,9 @@ async fn call_llm_for_method(
     };
 
     let event = Event::new(&JSONRPC_METHOD_CALL_EVENT, event_data);
+    let log = Log::new(Some(status_tx));
 
-    debug!("Calling LLM for JSON-RPC method: {}", method);
-    let _ = status_tx.send(format!("[DEBUG] Calling LLM for method: {}", method));
+    log.debug(format!("Calling LLM for JSON-RPC method: {}", method));
 
     // Call LLM with event
     let llm_result = call_llm(
@@ -486,10 +480,10 @@ async fn call_llm_for_method(
     )
     .await?;
 
-    trace!(
+    log.trace(format!(
         "LLM actions for JSON-RPC: {:?}",
         llm_result.raw_actions.len()
-    );
+    ));
 
     // Pick the response out of everything the handler produced.
     //

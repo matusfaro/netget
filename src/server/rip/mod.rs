@@ -7,14 +7,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::RipProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
 use actions::RIP_REQUEST_EVENT;
 
 /// RIP server that forwards routing requests to LLM
@@ -31,8 +30,7 @@ impl RipServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("RIP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] RIP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("RIP server listening on {}", local_addr));
 
         let protocol = Arc::new(RipProtocol::new());
 
@@ -40,6 +38,7 @@ impl RipServer {
         let accept_handle = tokio::spawn(async move {
             // Maximum RIP packet size: 4-byte header + up to 25 route entries (20 bytes each) = 504 bytes
             let mut buffer = vec![0u8; 512];
+            let log = Log::new(Some(&status_tx));
 
             loop {
                 match socket.recv_from(&mut buffer).await {
@@ -74,12 +73,10 @@ impl RipServer {
 
                         // Parse RIP packet to determine message type
                         if n < 4 {
-                            console_debug!(
-                                status_tx,
+                            log.debug(format!(
                                 "RIP received invalid packet (too short: {} bytes) from {}",
-                                n,
-                                peer_addr
-                            );
+                                n, peer_addr
+                            ));
                             continue;
                         }
 
@@ -87,19 +84,13 @@ impl RipServer {
                         let version = data[1];
                         let num_entries = (n - 4) / 20;
 
-                        // DEBUG: Log summary
-                        debug!(
+                        // Summary + full payload FileOnly: the rip_request event template
+                        // renders the equivalent line to the TUI.
+                        log.debug(format!(
                             "RIP received {} bytes from {} (cmd={}, ver={}, entries={})",
                             n, peer_addr, command, version, num_entries
-                        );
-                        let _ = status_tx.send(format!(
-                            "[DEBUG] RIP received {} bytes from {} (cmd={}, ver={}, entries={})",
-                            n, peer_addr, command, version, num_entries
                         ));
-
-                        // TRACE: Log full payload (hex)
-                        let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "RIP data (hex): {}", hex_str);
+                        log.trace(format!("RIP data (hex): {}", hex::encode(&data)));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -108,6 +99,7 @@ impl RipServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
+                            let log = Log::new(Some(&status_clone));
                             // Parse RIP message type
                             let message_type = match command {
                                 1 => "request",
@@ -190,20 +182,15 @@ impl RipServer {
                             )
                             .await
                             {
-                                debug!(
-                                    "RIP ignoring {} from {}: no operator routing policy configured (no instruction or handler), so nothing to advertise and no LLM call",
-                                    message_type, peer_addr
-                                );
-                                let _ = status_clone.send(format!(
+                                log.info(format!(
                                     "RIP {} from {} ignored: no routing policy configured (static default, no LLM)",
                                     message_type, peer_addr
                                 ));
                                 return;
                             }
 
-                            debug!("RIP calling LLM for {} from {}", message_type, peer_addr);
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] RIP calling LLM for {} from {}",
+                            log.debug(format!(
+                                "RIP calling LLM for {} from {}",
                                 message_type, peer_addr
                             ));
 
@@ -220,26 +207,17 @@ impl RipServer {
                                 Ok(execution_result) => {
                                     // Display messages from LLM
                                     for message in &execution_result.messages {
-                                        info!("{}", message);
-                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                        log.info(message);
                                     }
 
-                                    debug!(
+                                    log.debug(format!(
                                         "RIP parsed {} actions",
-                                        execution_result.raw_actions.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] RIP parsed {} actions",
                                         execution_result.raw_actions.len()
                                     ));
 
                                     // Process protocol results
-                                    debug!(
+                                    log.debug(format!(
                                         "RIP got {} protocol results",
-                                        execution_result.protocol_results.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] RIP got {} protocol results",
                                         execution_result.protocol_results.len()
                                     ));
 
@@ -250,50 +228,33 @@ impl RipServer {
                                             let _ =
                                                 socket_clone.send_to(output_data, peer_addr).await;
 
-                                            // DEBUG: Log summary
-                                            debug!(
+                                            // Summary + full payload FileOnly: the
+                                            // send_rip_* action template already reports the
+                                            // send to the TUI.
+                                            log.debug(format!(
                                                 "RIP sent {} bytes to {}",
                                                 output_data.len(),
                                                 peer_addr
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] RIP sent {} bytes to {}",
-                                                output_data.len(),
-                                                peer_addr
                                             ));
-
-                                            // TRACE: Log full payload (hex)
-                                            let hex_str = hex::encode(output_data);
-                                            trace!("RIP sent (hex): {}", hex_str);
-                                            let _ = status_clone.send(format!(
-                                                "[TRACE] RIP sent (hex): {}",
-                                                hex_str
-                                            ));
-
-                                            let _ = status_clone.send(format!(
-                                                "→ RIP response to {} ({} bytes)",
-                                                peer_addr,
-                                                output_data.len()
+                                            log.trace(format!(
+                                                "RIP sent (hex): {}",
+                                                hex::encode(output_data)
                                             ));
                                         } else {
-                                            debug!("RIP protocol result has no output data");
-                                            let _ = status_clone.send(
-                                                "[DEBUG] RIP protocol result has no output data"
-                                                    .to_string(),
-                                            );
+                                            log.debug("RIP protocol result has no output data");
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("RIP LLM call failed: {}", e);
-                                    let _ = status_clone.send(format!("✗ RIP LLM error: {}", e));
+                                    // Non-fatal: RIP's spec-safe answer to a failure is to
+                                    // stay silent, so this is WARN not ERROR.
+                                    log.warn(format!("RIP LLM call failed: {}", e));
                                 }
                             }
                         });
                     }
                     Err(e) => {
-                        error!("RIP receive error: {}", e);
-                        let _ = status_tx.send(format!("✗ RIP receive error: {}", e));
+                        log.error(format!("RIP receive error: {}", e));
                         break;
                     }
                 }

@@ -7,14 +7,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::SipProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_error, console_trace};
 use actions::{
     SIP_ACK_EVENT, SIP_BYE_EVENT, SIP_CANCEL_EVENT, SIP_INVITE_EVENT, SIP_OPTIONS_EVENT,
     SIP_REGISTER_EVENT,
@@ -34,14 +33,14 @@ impl SipServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("SIP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] SIP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("SIP server listening on {}", local_addr));
 
         let protocol = Arc::new(SipProtocol::new());
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535]; // Max UDP packet size
+            let log = Log::new(Some(&status_tx));
 
             loop {
                 match socket.recv_from(&mut buffer).await {
@@ -74,17 +73,12 @@ impl SipServer {
                             .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                        // DEBUG: Log summary
-                        debug!("SIP received {} bytes from {}", n, peer_addr);
-                        let _ = status_tx.send(format!(
-                            "[DEBUG] SIP received {} bytes from {}",
-                            n, peer_addr
-                        ));
-
-                        // TRACE: Log first 200 chars of message (SIP is text-based)
+                        // Summary + full payload FileOnly: the sip_* event templates
+                        // render the equivalent line to the TUI.
+                        log.debug(format!("SIP received {} bytes from {}", n, peer_addr));
                         if let Ok(text) = String::from_utf8(data.clone()) {
                             let preview = crate::utils::truncate_for_log(&text, 200);
-                            console_trace!(status_tx, "SIP message: {}", preview);
+                            log.trace(format!("SIP message: {}", preview));
                         }
 
                         let llm_clone = llm_client.clone();
@@ -94,25 +88,23 @@ impl SipServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
+                            let log = Log::new(Some(&status_clone));
                             // Parse SIP message
                             let sip_message = match Self::parse_sip_message(&data) {
                                 Ok(msg) => msg,
                                 Err(e) => {
-                                    warn!("SIP failed to parse message from {}: {}", peer_addr, e);
-                                    let _ = status_clone.send(format!(
-                                        "[WARN] SIP failed to parse message from {}: {}",
+                                    log.warn(format!(
+                                        "SIP failed to parse message from {}: {}",
                                         peer_addr, e
                                     ));
                                     return;
                                 }
                             };
 
-                            debug!(
+                            // Request summary FileOnly: the sip_* event template renders
+                            // the equivalent line to the TUI.
+                            log.debug(format!(
                                 "SIP {} request from {} (Call-ID: {})",
-                                sip_message.method, peer_addr, sip_message.call_id
-                            );
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] SIP {} request from {} (Call-ID: {})",
                                 sip_message.method, peer_addr, sip_message.call_id
                             ));
 
@@ -145,19 +137,16 @@ impl SipServer {
                                         // Send SIP response
                                         match socket_clone.send_to(&response, peer_addr).await {
                                             Ok(sent) => {
-                                                debug!(
+                                                // Summary FileOnly: the send action template
+                                                // already reports the send to the TUI.
+                                                log.debug(format!(
                                                     "SIP sent {} byte response to {}",
-                                                    sent, peer_addr
-                                                );
-                                                let _ = status_clone.send(format!(
-                                                    "[DEBUG] SIP sent {} byte response to {}",
                                                     sent, peer_addr
                                                 ));
                                             }
                                             Err(e) => {
-                                                error!("SIP failed to send response: {}", e);
-                                                let _ = status_clone.send(format!(
-                                                    "[ERROR] SIP failed to send response: {}",
+                                                log.error(format!(
+                                                    "SIP failed to send response: {}",
                                                     e
                                                 ));
                                             }
@@ -188,28 +177,25 @@ impl SipServer {
                                             }
                                         }
                                     } else {
-                                        debug!(
+                                        log.debug(format!(
                                             "SIP no action taken for {} request",
                                             sip_message.method
-                                        );
+                                        ));
                                     }
                                 }
                                 Err(e) => {
-                                    error!(
+                                    // Non-fatal: a 503 (wire fallback) is built and sent
+                                    // below for everything except ACK, so this is WARN.
+                                    log.warn(format!(
                                         "SIP LLM error for {} from {} (Call-ID {}): {}",
                                         sip_message.method, peer_addr, sip_message.call_id, e
-                                    );
-                                    let _ =
-                                        status_clone.send(format!("[ERROR] SIP LLM error: {}", e));
+                                    ));
 
                                     // ACK is the one method that must never be answered
                                     // (RFC 3261 §17: ACK is not a transaction that takes a
                                     // response), so silence is correct there and only there.
                                     if sip_message.method == "ACK" {
-                                        let _ = status_clone.send(
-                                            "[DEBUG] SIP ACK needs no response; nothing sent"
-                                                .to_string(),
-                                        );
+                                        log.debug("SIP ACK needs no response; nothing sent");
                                         return;
                                     }
 
@@ -219,10 +205,10 @@ impl SipServer {
                                     // silent, the UAC retransmits on timers A/E and only gives
                                     // up after Timer B/F (32s).
                                     if crate::llm::is_overload_error(&e) {
-                                        warn!(
+                                        log.warn(format!(
                                             "SIP 503 to {} (Call-ID {}): LLM capacity exhausted",
                                             peer_addr, sip_message.call_id
-                                        );
+                                        ));
                                     }
                                     let response = Self::build_sip_response(
                                         &sip_message,
@@ -234,19 +220,15 @@ impl SipServer {
                                     );
                                     match socket_clone.send_to(&response, peer_addr).await {
                                         Ok(sent) => {
-                                            let _ = status_clone.send(format!(
-                                                "→ SIP 503 Service Unavailable to {} ({} bytes)",
+                                            log.debug(format!(
+                                                "SIP 503 Service Unavailable to {} ({} bytes)",
                                                 peer_addr, sent
                                             ));
                                         }
                                         Err(send_err) => {
-                                            error!(
+                                            log.error(format!(
                                                 "SIP failed to send 503 to {}: {}",
                                                 peer_addr, send_err
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[ERROR] SIP failed to send 503: {}",
-                                                send_err
                                             ));
                                         }
                                     }
@@ -255,7 +237,7 @@ impl SipServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "SIP recv error: {}", e);
+                        log.error(format!("SIP recv error: {}", e));
                     }
                 }
             }
@@ -541,9 +523,8 @@ impl SipServer {
         use crate::server::rtp::media::{self, AudioCodec, RtpPacketizer};
 
         let Some((ip, port)) = caller_sdp.and_then(parse_sdp_audio_target) else {
-            let _ = status_tx.send(
-                "[WARN] SIP INVITE had rtp_audio but no parseable m=audio target in the caller's SDP"
-                    .to_string(),
+            Log::new(Some(&status_tx)).warn(
+                "SIP INVITE had rtp_audio but no parseable m=audio target in the caller's SDP",
             );
             return;
         };
@@ -563,21 +544,21 @@ impl SipServer {
             .unwrap_or(2000);
 
         tokio::spawn(async move {
+            let log = Log::new(Some(&status_tx));
             let socket =
                 match tokio::net::UdpSocket::bind(std::net::SocketAddr::from(([0u8, 0, 0, 0], 0)))
                     .await
                 {
                     Ok(s) => s,
                     Err(e) => {
-                        let _ =
-                            status_tx.send(format!("[ERROR] SIP RTP socket bind failed: {}", e));
+                        log.error(format!("SIP RTP socket bind failed: {}", e));
                         return;
                     }
                 };
             let payload = match media::synthesize(codec, &content, duration_ms) {
                 Ok(p) => p,
                 Err(e) => {
-                    let _ = status_tx.send(format!("[WARN] SIP RTP synthesis: {}", e));
+                    log.warn(format!("SIP RTP synthesis: {}", e));
                     return;
                 }
             };
@@ -592,8 +573,8 @@ impl SipServer {
                 sent += 1;
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
-            let _ = status_tx.send(format!(
-                "→ SIP call media: {} RTP {} packet(s) to {}",
+            log.info(format!(
+                "SIP call media: {} RTP {} packet(s) to {}",
                 sent,
                 codec.rtpmap_name(),
                 target

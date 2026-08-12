@@ -14,16 +14,15 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::MavenProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info};
 use actions::MAVEN_ARTIFACT_REQUEST_EVENT;
 
 /// Maven repository server that delegates artifact requests to LLM
@@ -41,11 +40,10 @@ impl MavenServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!(
             "Maven repository server listening on {}",
             local_addr
-        );
+        ));
 
         let protocol = Arc::new(MavenProtocol::new());
 
@@ -58,12 +56,8 @@ impl MavenServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!(
-                            "Accepted Maven connection {} from {}",
-                            connection_id, remote_addr
-                        );
-                        let _ = status_tx.send(format!(
-                            "[INFO] Maven connection {} from {}",
+                        Log::new(Some(&status_tx)).info(format!(
+                            "Maven connection {} from {}",
                             connection_id, remote_addr
                         ));
 
@@ -125,22 +119,23 @@ impl MavenServer {
                             if let Err(err) =
                                 http1::Builder::new().serve_connection(io, service).await
                             {
-                                error!("Error serving Maven connection: {:?}", err);
-                                let _ = status_tx_clone
-                                    .send(format!("[ERROR] Maven connection error: {:?}", err));
+                                // Non-fatal: this connection ends; the server continues.
+                                Log::new(Some(&status_tx_clone))
+                                    .warn(format!("Error serving Maven connection: {:?}", err));
                             }
 
                             // Mark connection as closed
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("✗ Maven connection {} closed", connection_id));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("Maven connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept Maven connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept Maven connection: {}", e));
                         break;
                     }
                 }
@@ -321,6 +316,7 @@ async fn handle_maven_request_with_llm(
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     let method = req.method().to_string();
     let uri = req.uri().to_string();
+    let log = Log::new(Some(&status_tx));
 
     // Extract headers
     let mut headers = HashMap::new();
@@ -334,26 +330,24 @@ async fn handle_maven_request_with_llm(
     let _body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "Failed to read request body: {}", e);
+            // Non-fatal: Maven GETs have no body; proceed with an empty one.
+            log.warn(format!("Failed to read request body: {}", e));
             Bytes::new()
         }
     };
 
-    debug!("Maven request: {} {} from {:?}", method, uri, connection_id);
-    let _ = status_tx.send(format!("[DEBUG] Maven request: {} {}", method, uri));
+    // Summary + full payload FileOnly: the maven_artifact_request event template
+    // renders the equivalent line to the TUI.
+    log.debug(format!(
+        "Maven request: {} {} from {:?}",
+        method, uri, connection_id
+    ));
 
     // Parse Maven artifact from URI
     let artifact = MavenArtifact::parse(&uri);
 
     if let Some(ref art) = artifact {
-        trace!("Parsed Maven artifact: {:?}", art);
-        let _ = status_tx.send(format!(
-            "[TRACE] Maven artifact: {}:{}:{} ({})",
-            art.group_id,
-            art.artifact_id,
-            art.version.as_deref().unwrap_or("metadata"),
-            art.extension
-        ));
+        log.trace(format!("Parsed Maven artifact: {:?}", art));
     }
 
     // Create Maven artifact request event
@@ -373,7 +367,7 @@ async fn handle_maven_request_with_llm(
         })
     } else {
         // Invalid Maven path format
-        console_debug!(status_tx, "Invalid Maven artifact path: {}", uri);
+        log.debug(format!("Invalid Maven artifact path: {}", uri));
 
         return Ok(Response::builder()
             .status(404)
@@ -395,7 +389,7 @@ async fn handle_maven_request_with_llm(
     .await
     {
         Ok(execution_result) => {
-            debug!("LLM Maven response received");
+            log.debug("LLM Maven response received");
 
             // Display messages
             for msg in execution_result.messages {
@@ -437,11 +431,11 @@ async fn handle_maven_request_with_llm(
                             match base64::engine::general_purpose::STANDARD.decode(encoded) {
                                 Ok(decoded) => response_body = decoded,
                                 Err(e) => {
-                                    console_error!(
-                                        status_tx,
+                                    // Non-fatal: bad model/handler output; body stays empty.
+                                    log.warn(format!(
                                         "Maven response body_base64 is not valid base64: {}",
                                         e
-                                    );
+                                    ));
                                 }
                             }
                         } else if let Some(body_str) =
@@ -453,8 +447,10 @@ async fn handle_maven_request_with_llm(
                 }
             }
 
-            let _ = status_tx.send(format!(
-                "→ Maven {} {} → {} ({} bytes)",
+            // Response summary FileOnly: the send_maven_* action template already
+            // reports the send to the TUI.
+            log.debug(format!(
+                "Maven {} {} -> {} ({} bytes)",
                 method,
                 uri,
                 status_code,
@@ -473,14 +469,15 @@ async fn handle_maven_request_with_llm(
             match response.body(Full::new(Bytes::from(response_body))) {
                 Ok(resp) => Ok(resp),
                 Err(e) => {
-                    console_error!(status_tx, "Invalid Maven response ({}), sending 502", e);
+                    // Non-fatal: invalid model/handler output; the client gets a 502.
+                    log.warn(format!("Invalid Maven response ({}), sending 502", e));
                     Ok(bad_gateway())
                 }
             }
         }
         Err(e) => {
-            error!("LLM error generating Maven response: {}", e);
-            let _ = status_tx.send(format!("✗ LLM error for {} {}: {}", method, uri, e));
+            // Non-fatal: the client gets a 500 (wire fallback).
+            log.warn(format!("LLM error for {} {}: {}", method, uri, e));
 
             Ok(Response::builder()
                 .status(500)
