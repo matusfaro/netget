@@ -724,21 +724,42 @@ impl BgpSession {
                 "error_subcode_name": wire::error_subcode_name(code, subcode),
             }),
         };
-        // RFC 4271: a NOTIFICATION is never answered with another message, so anything the
-        // model returns here is informational only and is not written to the socket.
-        let _ = call_llm(
-            &self.llm_client,
-            &self.app_state,
-            self.server_id,
-            Some(self.connection_id),
-            &event,
-            &*self.protocol,
-        )
-        .await;
+        // RFC 4271: a NOTIFICATION is never answered with another message, so anything the model
+        // returns here is informational only and is not written to the socket. That makes the
+        // call pure observation, so skip it entirely unless the operator opted into LLM handling
+        // (a server instruction or a per-event handler) — otherwise it is a wasted round-trip
+        // that can change nothing.
+        if operator_wants_dynamic(&self.app_state, self.server_id, &event.event_type.id).await {
+            let _ = call_llm(
+                &self.llm_client,
+                &self.app_state,
+                self.server_id,
+                Some(self.connection_id),
+                &event,
+                &*self.protocol,
+            )
+            .await;
+        }
     }
 
     /// Run the handler for `event` and write whatever BGP messages it produced.
     async fn call_llm_and_send(&mut self, event: &Event) -> SendOutcome {
+        // The BGP OPEN handshake is mechanical: given the configured ASN/router-id/hold-time and
+        // a peer that passed validation, the OPEN we send is fully determined — which is exactly
+        // why the SendOutcome::Nothing path below already answers a silent handler with the
+        // configured OPEN. Advertising routes (established/update) is by contrast a policy
+        // decision. So with no operator policy — no server instruction and no per-event handler —
+        // we return Nothing WITHOUT an LLM round-trip: bgp_open falls through to the configured
+        // OPEN (the correct static handshake), and established/update advertise nothing (correct,
+        // there is no policy to apply). The model is consulted only when the operator opts in.
+        if !operator_wants_dynamic(&self.app_state, self.server_id, &event.event_type.id).await {
+            debug!(
+                "BGP {} handled statically (no operator policy configured): no LLM call",
+                event.event_type.id
+            );
+            return SendOutcome::Nothing;
+        }
+
         let result = match call_llm(
             &self.llm_client,
             &self.app_state,
@@ -867,6 +888,30 @@ impl Shutdown {
     fn is_set(&self) -> bool {
         self.flag.load(Ordering::SeqCst)
     }
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for this
+/// server: either a non-empty server instruction was given, or an event handler is configured
+/// for `event_id`. When false the session applies its static default and never consults the
+/// model — for BGP that means the configured OPEN on the handshake and no route advertisement.
+#[cfg(feature = "bgp")]
+async fn operator_wants_dynamic(
+    state: &AppState,
+    server_id: crate::state::ServerId,
+    event_id: &str,
+) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
 }
 
 /// RFC 4271 section 4.2: the session runs on the smaller of the two proposed hold times, and a

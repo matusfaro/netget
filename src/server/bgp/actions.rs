@@ -590,15 +590,20 @@ impl Protocol for BgpProtocol {
             .implementation(
                 "RFC 4271 session over netgauze-bgp-pkt codec; four-octet AS (RFC 6793)",
             )
-            .llm_control("Whether to peer, and which routes to announce or withdraw")
+            .llm_control("Optional: the OPEN handshake is mechanical (configured OPEN, no LLM); whether to advertise routes is policy (LLM). With no policy configured the session handshakes on the configured OPEN and advertises nothing, all with no LLM call")
             .e2e_testing("Two-way wire conformance against netgauze, plus mocked session E2E")
             .notes(
                 "Session is complete: OPEN validation, capability and hold-time negotiation, \
-                 KEEPALIVE cadence, hold-timer expiry, NOTIFICATION on error. No RIB by design - \
-                 routes are whatever a handler advertises with send_bgp_update, nothing is \
-                 stored or re-advertised, and there is no best-path selection or propagation \
-                 between peers. IPv4 unicast only on the send path. Never peered against a \
-                 live BGP daemon.",
+                 KEEPALIVE cadence, hold-timer expiry, NOTIFICATION on error. The OPEN handshake \
+                 is mechanical (fully determined by the configured ASN/router-id/hold-time and a \
+                 validated peer), so with no operator policy (no instruction, no handler) it \
+                 completes on the configured OPEN with NO LLM round-trip; established/update then \
+                 advertise nothing, which is correct with no routing policy. KEEPALIVE cadence \
+                 never consulted the LLM. The model is consulted only when the operator opts in. \
+                 No RIB by design - routes are whatever a handler advertises with send_bgp_update, \
+                 nothing is stored or re-advertised, and there is no best-path selection or \
+                 propagation between peers. IPv4 unicast only on the send path. Never peered \
+                 against a live BGP daemon.",
             )
             .build()
     }
