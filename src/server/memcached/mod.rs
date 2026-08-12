@@ -13,6 +13,7 @@ pub use actions::MemcachedProtocol;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::{Event, SpawnContext};
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -23,7 +24,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, warn};
 
 use actions::{
     MEMCACHED_ARITHMETIC_EVENT, MEMCACHED_DELETE_EVENT, MEMCACHED_FLUSH_ALL_EVENT,
@@ -59,11 +60,7 @@ impl MemcachedServer {
             .with_context(|| format!("Memcached failed to bind {}", listen_addr))?;
         let actual_addr = listener.local_addr()?;
 
-        info!("Memcached server listening on {}", actual_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] Memcached server listening on {}",
-            actual_addr
-        ));
+        Log::new(Some(&status_tx)).info(format!("Memcached server listening on {}", actual_addr));
 
         let task_registrar = state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -71,8 +68,7 @@ impl MemcachedServer {
                 let (stream, peer_addr) = match listener.accept().await {
                     Ok(pair) => pair,
                     Err(e) => {
-                        error!("Memcached accept error: {}", e);
-                        let _ = status_tx.send(format!("✗ Memcached accept error: {}", e));
+                        Log::new(Some(&status_tx)).error(format!("Memcached accept error: {}", e));
                         continue;
                     }
                 };
@@ -82,8 +78,10 @@ impl MemcachedServer {
                 Self::track_connection(&state, server_id, connection_id, peer_addr, local_addr)
                     .await;
 
-                debug!("Memcached connection {} from {}", connection_id, peer_addr);
-                let _ = status_tx.send(format!("[DEBUG] Memcached connection from {}", peer_addr));
+                Log::new(Some(&status_tx)).info(format!(
+                    "Memcached connection {} from {}",
+                    connection_id, peer_addr
+                ));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
 
                 let llm = llm_client.clone();
@@ -166,6 +164,7 @@ impl MemcachedServer {
         // Split, never clone — the project rule for TcpStream.
         let (mut reader, mut writer) = tokio::io::split(stream);
         let handler = actions::MemcachedProtocol::new();
+        let log = Log::new(Some(&status_tx));
 
         let mut buffer: Vec<u8> = Vec::with_capacity(4096);
         let mut chunk = vec![0u8; 8192];
@@ -211,8 +210,7 @@ impl MemcachedServer {
                         let (reply, close) = match outcome {
                             Ok(execution) => {
                                 for message in &execution.messages {
-                                    info!("{}", message);
-                                    let _ = status_tx.send(format!("[INFO] {}", message));
+                                    log.info(message);
                                 }
                                 let mut bytes = Vec::new();
                                 let mut close = false;
@@ -249,10 +247,6 @@ impl MemcachedServer {
                                 // the text would end the reply early and the rest would be
                                 // parsed as the next one.
                                 let overloaded = crate::llm::is_overload_error(&e);
-                                error!(
-                                    "Memcached LLM call failed for {} (overload={}): {}",
-                                    peer_addr, overloaded, e
-                                );
                                 let reason = crate::utils::truncate_for_log(&e.to_string(), 200)
                                     .replace(['\r', '\n'], " ");
                                 let reply = if overloaded {
@@ -262,8 +256,13 @@ impl MemcachedServer {
                                 } else {
                                     format!("SERVER_ERROR netget: {reason}\r\n")
                                 };
-                                let _ = status_tx
-                                    .send(format!("[ERROR] Memcached replying: {}", reply.trim()));
+                                log.warn(format!(
+                                    "Memcached LLM call failed for {} (overload={}); replying {}: {}",
+                                    peer_addr,
+                                    overloaded,
+                                    reply.trim(),
+                                    e
+                                ));
                                 (reply.into_bytes(), false)
                             }
                         };
@@ -272,11 +271,11 @@ impl MemcachedServer {
                         // commands, per protocol.txt. The LLM call still happened; only the
                         // write is skipped.
                         if !suppress && !reply.is_empty() {
-                            trace!(
+                            log.trace(format!(
                                 "Memcached -> {}: {}",
                                 peer_addr,
                                 String::from_utf8_lossy(&reply)
-                            );
+                            ));
                             writer.write_all(&reply).await?;
                             writer.flush().await?;
                             Self::count_sent(&state, server_id, connection_id, reply.len()).await;

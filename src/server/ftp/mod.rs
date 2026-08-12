@@ -9,16 +9,15 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
 
-#[cfg(feature = "ftp")]
-use crate::console_debug;
 #[cfg(feature = "ftp")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "ftp")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "ftp")]
 use crate::llm::ActionResult;
+#[cfg(feature = "ftp")]
+use crate::logging::emit::Log;
 #[cfg(feature = "ftp")]
 use crate::protocol::Event;
 #[cfg(feature = "ftp")]
@@ -45,8 +44,7 @@ impl FtpServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("FTP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] FTP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("FTP server listening on {}", local_addr));
 
         let protocol = Arc::new(FtpProtocol::new());
 
@@ -58,12 +56,10 @@ impl FtpServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await,
                         );
-                        console_debug!(
-                            status_tx,
+                        Log::new(Some(&status_tx)).info(format!(
                             "FTP connection {} from {}",
-                            connection_id,
-                            remote_addr
-                        );
+                            connection_id, remote_addr
+                        ));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -108,9 +104,8 @@ impl FtpServer {
                             )
                             .await
                             {
-                                error!("FTP session error: {}", e);
-                                let _ =
-                                    status_clone.send(format!("[ERROR] FTP session error: {}", e));
+                                Log::new(Some(&status_clone))
+                                    .error(format!("FTP session error: {}", e));
                             }
 
                             state_clone
@@ -120,7 +115,8 @@ impl FtpServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept FTP connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept FTP connection: {}", e));
                         break;
                     }
                 }
@@ -224,11 +220,10 @@ impl FtpSession {
                 // a command until it has read one. RFC 959 defines 421 as the greeting a
                 // server sends when it is declining the session, and it closes afterwards -
                 // which is the same shape SMTP uses, for the same reason.
-                error!("FTP greeting handler failed on connection {connection_id}: {e}");
                 let reason =
                     crate::utils::truncate_for_log(&e.to_string(), 200).replace(['\r', '\n'], " ");
-                let _ = status_tx.send(format!(
-                    "[ERROR] FTP connection {connection_id} refused with 421: {reason}"
+                Log::new(Some(status_tx)).warn(format!(
+                    "FTP greeting handler failed on connection {connection_id}, refused with 421: {reason}"
                 ));
                 let reply = format!(
                     "421 Service not available, closing control connection (netget: {reason})\r\n"
@@ -260,6 +255,7 @@ impl FtpSession {
         let (read_half, mut write_half) = tokio::io::split(&mut stream);
         let mut reader = BufReader::new(read_half);
         let mut line = String::new();
+        let log = Log::new(Some(&status_tx));
 
         loop {
             line.clear();
@@ -269,8 +265,8 @@ impl FtpSession {
             }
 
             let command = line.trim();
-            debug!("FTP received: {}", command);
-            console_debug!(status_tx, "FTP received: {}", command);
+            // FileOnly: the ftp_command event template surfaces the command on the TUI.
+            log.debug(format!("FTP received: {}", command));
 
             // Create FTP command event
             let event = Event::new(
@@ -299,8 +295,7 @@ impl FtpSession {
                                 write_half.flush().await?;
 
                                 let response = String::from_utf8_lossy(&data);
-                                debug!("FTP sent: {}", response.trim());
-                                console_debug!(status_tx, "FTP sent: {}", response.trim());
+                                log.debug(format!("FTP sent: {}", response.trim()));
                             }
                             ActionResult::CloseConnection => {
                                 return Ok(());
@@ -312,8 +307,7 @@ impl FtpSession {
                 Err(e) => {
                     // Do not leave the client hanging with no diagnostic: RFC 959 421 tells it
                     // the service is unavailable and the control connection is closing.
-                    error!("FTP handler failed for command {command:?}: {e}");
-                    let _ = status_tx.send(format!("[ERROR] FTP handler failed: {e}"));
+                    log.warn(format!("FTP handler failed for command {command:?}: {e}"));
                     let _ = write_half
                         .write_all(b"421 Service not available, closing control connection\r\n")
                         .await;
