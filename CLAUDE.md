@@ -22,9 +22,16 @@ netget --mcp   # then call list_protocols / get_protocol_docs
 
 Maturity lives in each protocol's `metadata()` (`ProtocolMetadataV2`, `src/protocol/metadata.rs`):
 
-- **Stable** — real spec compliance, good LLM prompting, scripting support. Currently **only
-  `wireguard`**. `tor_relay` and `openvpn` were rated Stable and neither had ever been
-  validated against a real client; both were demoted on inspection.
+- **Stable** — real spec compliance, good LLM prompting, scripting support, validated against a
+  real client. **Currently none.** Three protocols have held this rating and all three lost it on
+  inspection for the same reason — never actually validated against a real client. `tor_relay`
+  and `openvpn` went first. `wireguard` was the last, demoted August 2026: NetGet implements none
+  of the WireGuard protocol itself (it orchestrates `defguard_wireguard_rs`, which needs root and,
+  on macOS, an external `wireguard-go` binary), so it cannot be started or handshaked in this
+  environment at all, and its Stable rating rested on a test that mocked a `wireguard_packet_received`
+  event and a `log_packet` action **that do not exist**, all `#[ignore]`d behind root so the
+  mismatch never surfaced. The bar for Stable is a test that a real independent peer completed a
+  real exchange — treat any Stable claim without one as this same bug.
 - **Beta** — human-reviewed, works against real clients (12 protocols).
 - **Experimental** — LLM-authored or newly implemented, not fully reviewed. The overwhelming
   majority (~99).

@@ -99,12 +99,17 @@ entries below are kept only as archive.
 7. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
 8. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
 9. `src/server/usb/{msc,serial,fido2}/CLAUDE.md` describe pre-fix behaviour and are stale.
-10. **The sole `Stable` rating is unearned.** `wireguard` is the only Stable protocol and its
-    E2E test (`tests/server/wireguard/e2e_test.rs:245`) forges a handshake with fake keys
-    (`0xAA`/`0xBB`) and asserts only that the server *logged* "WireGuard"; it is root-gated and has
-    never run end to end. This is exactly the defect that demoted `tor_relay` and `openvpn` last
-    session. *(Being resolved: earn it with a real `boringtun` peer interop test, or demote to
-    Beta.)*
+10. **WireGuard's authorization model is backwards, and it is now the reason zero protocols are
+    Stable.** Demoted to Beta (commit `4ebdd5d9`) — NetGet implements none of the protocol (it
+    orchestrates `defguard_wireguard_rs`, needing root and, on macOS, `wireguard-go`), so it could
+    never be validated here and its Stable test was fictional. The real bug the demotion exposed:
+    a WireGuard responder decrypts the initiator's static key and drops the handshake if that key
+    is not already a configured peer — but NetGet only learns of a peer by polling
+    `read_interface_data()` *after* it appears and offers no action to pre-add one
+    (`get_async_actions()` is empty), so `wireguard_peer_connected` can effectively never fire for
+    a genuinely new peer and the whole LLM authorize/reject flow is unreachable except for
+    out-of-band-configured peers. Fixing it needs a running backend to validate, which this
+    environment cannot provide.
 11. **The remaining protocol risk is all "too much LLM", never "too little".** No protocol answers
     statically where it should reason; several reason where a static default would do — `stun`
     (per binding request, 100% mechanical: reflect mapped addr, echo txid), `ntp` (every field
