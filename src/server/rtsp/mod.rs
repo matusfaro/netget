@@ -1,0 +1,615 @@
+//! RTSP server (RFC 2326).
+//!
+//! The control front door to NetGet's RTP media. A client (ffprobe, ffplay, VLC) runs
+//! OPTIONS → DESCRIBE → SETUP → PLAY → TEARDOWN; NetGet owns the RTSP framing (CSeq, Transport,
+//! Session, RTP-Info) deterministically, while the model shapes the DESCRIBE SDP, decides status
+//! codes, and — via PLAY — decides what the RTP stream carries. The media itself is synthesized
+//! by the shared `crate::server::rtp::media` engine, so an RTSP PLAY results in real RTP arriving.
+
+pub mod actions;
+
+use anyhow::Result;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpStream, UdpSocket};
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+use tracing::{debug, error, info};
+
+use crate::llm::action_helper::call_llm;
+use crate::llm::ollama_client::OllamaClient;
+use crate::protocol::Event;
+use crate::server::connection::ConnectionId;
+use crate::server::rtp::media::{self, AudioCodec, RtpPacketizer};
+use crate::server::RtspProtocol;
+use crate::state::app_state::AppState;
+use crate::{console_error, console_trace};
+use actions::{
+    RTSP_DESCRIBE_EVENT, RTSP_OPTIONS_EVENT, RTSP_OTHER_EVENT, RTSP_PLAY_EVENT, RTSP_SETUP_EVENT,
+    RTSP_TEARDOWN_EVENT,
+};
+
+/// Parsed RTSP request.
+#[derive(Debug, Clone)]
+struct RtspRequest {
+    method: String,
+    uri: String,
+    cseq: String,
+    headers: HashMap<String, String>,
+}
+
+/// Per-connection RTSP session state.
+#[derive(Default)]
+struct Session {
+    id: Option<String>,
+    rtp_socket: Option<Arc<UdpSocket>>,
+    client_rtp_addr: Option<SocketAddr>,
+    server_rtp_port: Option<u16>,
+    play_task: Option<JoinHandle<()>>,
+}
+
+pub struct RtspServer;
+
+impl RtspServer {
+    /// Spawn the RTSP server. Awaits the TCP bind so failure is reported as `Err`, and registers
+    /// the accept loop so `stop_server` can abort it.
+    pub async fn spawn_with_llm_actions(
+        listen_addr: SocketAddr,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        server_id: crate::state::ServerId,
+    ) -> Result<SocketAddr> {
+        let listener =
+            crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
+        let local_addr = listener.local_addr()?;
+        info!("RTSP server listening on {}", local_addr);
+        let _ = status_tx.send(format!("[INFO] RTSP server listening on {}", local_addr));
+
+        let protocol = Arc::new(RtspProtocol::new());
+        let task_registrar = app_state.clone();
+
+        let accept_handle = tokio::spawn(async move {
+            loop {
+                match listener.accept().await {
+                    Ok((stream, remote_addr)) => {
+                        let connection_id =
+                            ConnectionId::new(app_state.get_next_unified_id().await);
+                        let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
+
+                        use crate::state::server::{
+                            ConnectionState as ServerConnectionState, ConnectionStatus,
+                            ProtocolConnectionInfo,
+                        };
+                        let now = std::time::Instant::now();
+                        let conn_state = ServerConnectionState {
+                            id: connection_id,
+                            remote_addr,
+                            local_addr: local_addr_conn,
+                            bytes_sent: 0,
+                            bytes_received: 0,
+                            packets_sent: 0,
+                            packets_received: 0,
+                            last_activity: now,
+                            status: ConnectionStatus::Active,
+                            status_changed_at: now,
+                            protocol_info: ProtocolConnectionInfo::empty(),
+                        };
+                        app_state
+                            .add_connection_to_server(server_id, conn_state)
+                            .await;
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+                        let llm = llm_client.clone();
+                        let state = app_state.clone();
+                        let stx = status_tx.clone();
+                        let proto = protocol.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = Self::handle_connection(
+                                stream,
+                                remote_addr,
+                                connection_id,
+                                server_id,
+                                llm,
+                                state,
+                                stx.clone(),
+                                proto,
+                            )
+                            .await
+                            {
+                                let _ = stx.send(format!("[DEBUG] RTSP connection closed: {}", e));
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        console_error!(status_tx, "RTSP accept error: {}", e);
+                    }
+                }
+            }
+        });
+
+        task_registrar
+            .register_server_task(server_id, accept_handle)
+            .await;
+        Ok(local_addr)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_connection(
+        stream: TcpStream,
+        remote_addr: SocketAddr,
+        connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
+        llm: OllamaClient,
+        state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<RtspProtocol>,
+    ) -> Result<()> {
+        let (mut read_half, mut write_half) = tokio::io::split(stream);
+        let mut buffer: Vec<u8> = Vec::new();
+        let mut session = Session::default();
+        let mut chunk = [0u8; 8192];
+
+        loop {
+            // Extract as many complete requests as the buffer holds before reading more.
+            while let Some((req, consumed)) = parse_rtsp_request(&buffer) {
+                buffer.drain(..consumed);
+                console_trace!(status_tx, "RTSP {} {}", req.method, req.uri);
+                let response = Self::process_request(
+                    &req,
+                    remote_addr,
+                    connection_id,
+                    server_id,
+                    &llm,
+                    &state,
+                    &status_tx,
+                    &mut session,
+                    protocol.as_ref(),
+                )
+                .await;
+                write_half.write_all(response.as_bytes()).await?;
+                write_half.flush().await?;
+            }
+
+            let n = read_half.read(&mut chunk).await?;
+            if n == 0 {
+                // Peer closed. Tear down any running stream.
+                if let Some(task) = session.play_task.take() {
+                    task.abort();
+                }
+                return Ok(());
+            }
+            buffer.extend_from_slice(&chunk[..n]);
+            if buffer.len() > 1_048_576 {
+                anyhow::bail!("RTSP request exceeded 1 MiB");
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn process_request(
+        req: &RtspRequest,
+        remote_addr: SocketAddr,
+        connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
+        llm: &OllamaClient,
+        state: &AppState,
+        status_tx: &mpsc::UnboundedSender<String>,
+        session: &mut Session,
+        protocol: &RtspProtocol,
+    ) -> String {
+        let base = serde_json::json!({
+            "peer_addr": remote_addr.to_string(),
+            "connection_id": connection_id.to_string(),
+            "uri": req.uri,
+            "cseq": req.cseq,
+            "method": req.method,
+        });
+
+        let event = match req.method.as_str() {
+            "OPTIONS" => Event {
+                event_type: &RTSP_OPTIONS_EVENT,
+                data: base,
+            },
+            "DESCRIBE" => Event {
+                event_type: &RTSP_DESCRIBE_EVENT,
+                data: base,
+            },
+            "SETUP" => {
+                let mut d = base;
+                d["transport"] =
+                    serde_json::json!(req.headers.get("transport").cloned().unwrap_or_default());
+                Event {
+                    event_type: &RTSP_SETUP_EVENT,
+                    data: d,
+                }
+            }
+            "PLAY" => Event {
+                event_type: &RTSP_PLAY_EVENT,
+                data: base,
+            },
+            "TEARDOWN" => Event {
+                event_type: &RTSP_TEARDOWN_EVENT,
+                data: base,
+            },
+            _ => Event {
+                event_type: &RTSP_OTHER_EVENT,
+                data: base,
+            },
+        };
+
+        let action =
+            match call_llm(llm, state, server_id, Some(connection_id), &event, protocol).await {
+                Ok(result) => result.raw_actions.into_iter().next(),
+                Err(e) => {
+                    // Fail closed: answer 503 so the client's request completes deterministically
+                    // rather than hanging, and never fabricate a stream.
+                    error!("RTSP LLM error ({} {}): {}", req.method, req.uri, e);
+                    let _ = status_tx.send(format!(
+                        "[ERROR] RTSP 503 for {} (LLM failure, fail-closed): {}",
+                        req.method, e
+                    ));
+                    return build_response(503, "Service Unavailable", &req.cseq, &[], None, None);
+                }
+            };
+
+        match req.method.as_str() {
+            "OPTIONS" => {
+                let methods = action
+                    .as_ref()
+                    .and_then(|a| a.get("public_methods"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    })
+                    .unwrap_or_else(|| "OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN".to_string());
+                build_response(
+                    status_of(&action, 200),
+                    "OK",
+                    &req.cseq,
+                    &[("Public".into(), methods)],
+                    None,
+                    None,
+                )
+            }
+            "DESCRIBE" => {
+                let sdp = action
+                    .as_ref()
+                    .and_then(|a| a.get("sdp"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| default_sdp(&req.uri));
+                build_response(
+                    status_of(&action, 200),
+                    "OK",
+                    &req.cseq,
+                    &[("Content-Type".into(), "application/sdp".into())],
+                    Some(sdp),
+                    None,
+                )
+            }
+            "SETUP" => Self::handle_setup(req, remote_addr, &action, status_tx, session).await,
+            "PLAY" => Self::handle_play(req, &action, server_id, state, status_tx, session).await,
+            "TEARDOWN" => {
+                if let Some(task) = session.play_task.take() {
+                    task.abort();
+                }
+                session.rtp_socket = None;
+                session.client_rtp_addr = None;
+                let extra = session
+                    .id
+                    .as_ref()
+                    .map(|id| vec![("Session".to_string(), id.clone())])
+                    .unwrap_or_default();
+                build_response(status_of(&action, 200), "OK", &req.cseq, &extra, None, None)
+            }
+            _ => build_response(
+                status_of(&action, 501),
+                "Not Implemented",
+                &req.cseq,
+                &[],
+                None,
+                None,
+            ),
+        }
+    }
+
+    /// SETUP: allocate a server-side RTP UDP socket, remember the client's RTP port, and return a
+    /// well-formed Transport + Session. The framing is owned by Rust; the model only gates the
+    /// status code.
+    async fn handle_setup(
+        req: &RtspRequest,
+        remote_addr: SocketAddr,
+        action: &Option<serde_json::Value>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        session: &mut Session,
+    ) -> String {
+        let transport = req.headers.get("transport").cloned().unwrap_or_default();
+        let client_rtp_port = parse_client_rtp_port(&transport);
+
+        // Bind a UDP socket for outbound RTP on the loopback interface.
+        let rtp_socket = match UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                let _ = status_tx.send(format!(
+                    "[ERROR] RTSP SETUP could not bind RTP socket: {}",
+                    e
+                ));
+                return build_response(500, "Internal Server Error", &req.cseq, &[], None, None);
+            }
+        };
+        let server_rtp_port = rtp_socket.local_addr().map(|a| a.port()).unwrap_or(0);
+
+        let session_id = session
+            .id
+            .clone()
+            .unwrap_or_else(|| format!("{:08X}", rand::random::<u32>()));
+
+        if let Some(port) = client_rtp_port {
+            session.client_rtp_addr = Some(SocketAddr::new(remote_addr.ip(), port));
+        }
+        session.rtp_socket = Some(rtp_socket);
+        session.server_rtp_port = Some(server_rtp_port);
+        session.id = Some(session_id.clone());
+
+        let transport_resp = format!(
+            "RTP/AVP;unicast;client_port={}-{};server_port={}-{}",
+            client_rtp_port.unwrap_or(0),
+            client_rtp_port.map(|p| p + 1).unwrap_or(0),
+            server_rtp_port,
+            server_rtp_port + 1
+        );
+        let _ = status_tx.send(format!(
+            "RTSP SETUP session={} client_rtp={:?} server_rtp={}",
+            session_id, client_rtp_port, server_rtp_port
+        ));
+        build_response(
+            status_of(action, 200),
+            "OK",
+            &req.cseq,
+            &[
+                ("Transport".into(), transport_resp),
+                ("Session".into(), session_id),
+            ],
+            None,
+            None,
+        )
+    }
+
+    /// PLAY: start streaming synthesized RTP to the client's RTP port. Content is decided by the
+    /// model's play action (tone/dtmf/silence); framing by the shared media engine.
+    async fn handle_play(
+        req: &RtspRequest,
+        action: &Option<serde_json::Value>,
+        server_id: crate::state::ServerId,
+        state: &AppState,
+        status_tx: &mpsc::UnboundedSender<String>,
+        session: &mut Session,
+    ) -> String {
+        let (socket, client_addr, session_id) = match (
+            session.rtp_socket.clone(),
+            session.client_rtp_addr,
+            session.id.clone(),
+        ) {
+            (Some(s), Some(c), Some(id)) => (s, c, id),
+            _ => {
+                let _ = status_tx
+                    .send("[WARN] RTSP PLAY before a completed SETUP; refusing".to_string());
+                return build_response(
+                    455,
+                    "Method Not Valid In This State",
+                    &req.cseq,
+                    &[],
+                    None,
+                    None,
+                );
+            }
+        };
+
+        // Media description from the play action (VNC-style: structured, not bytes).
+        let codec = action
+            .as_ref()
+            .and_then(|a| a.get("payload_type"))
+            .and_then(|v| v.as_str())
+            .map(AudioCodec::parse)
+            .unwrap_or(Ok(AudioCodec::Pcmu))
+            .unwrap_or(AudioCodec::Pcmu);
+        let content = action
+            .as_ref()
+            .and_then(|a| media::parse_audio_content(a).ok())
+            .unwrap_or(media::AudioContent::Tone { hz: 440.0 });
+        let duration_ms = action
+            .as_ref()
+            .and_then(|a| a.get("duration_ms"))
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5000);
+
+        let ssrc: u32 = action
+            .as_ref()
+            .and_then(|a| a.get("ssrc"))
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
+            .unwrap_or_else(rand::random);
+
+        // Abort any previous stream on this session.
+        if let Some(task) = session.play_task.take() {
+            task.abort();
+        }
+
+        let stx = status_tx.clone();
+        let state_clone = state.clone();
+        let task = tokio::spawn(async move {
+            let payload = match media::synthesize(codec, &content, duration_ms) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = stx.send(format!("[WARN] RTSP PLAY synthesis: {}", e));
+                    return;
+                }
+            };
+            let mut packetizer = RtpPacketizer::new(ssrc, codec.payload_type(), None, None);
+            let packets = packetizer.packetize(&payload, media::G711_SAMPLES_PER_FRAME);
+            let mut sent = 0u64;
+            let mut bytes = 0u64;
+            for pkt in &packets {
+                if socket.send_to(pkt, client_addr).await.is_err() {
+                    break;
+                }
+                sent += 1;
+                bytes += pkt.len() as u64;
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            state_clone
+                .with_server_mut(server_id, |s| {
+                    if let Some(c) = s.connections.values_mut().next() {
+                        c.bytes_sent += bytes;
+                        c.packets_sent += sent;
+                    }
+                })
+                .await;
+            let _ = stx.send(format!(
+                "→ RTSP PLAY streamed {} RTP packet(s) to {} ({} bytes)",
+                sent, client_addr, bytes
+            ));
+        });
+        session.play_task = Some(task);
+
+        debug!("RTSP PLAY session={} → {}", session_id, client_addr);
+        let rtp_info = format!("url={};seq={};rtptime={}", req.uri, 0, 0);
+        build_response(
+            status_of(action, 200),
+            "OK",
+            &req.cseq,
+            &[
+                ("Session".into(), session_id),
+                ("RTP-Info".into(), rtp_info),
+            ],
+            None,
+            None,
+        )
+    }
+}
+
+/// Status code override: the model may set `status_code`; otherwise use the method default.
+fn status_of(action: &Option<serde_json::Value>, default: u16) -> u16 {
+    action
+        .as_ref()
+        .and_then(|a| a.get("status_code"))
+        .and_then(|v| v.as_u64())
+        .map(|v| v as u16)
+        .unwrap_or(default)
+}
+
+/// Build an RTSP/1.0 response with CSeq echoed and an optional SDP/body.
+fn build_response(
+    status_code: u16,
+    default_reason: &str,
+    cseq: &str,
+    extra_headers: &[(String, String)],
+    body: Option<String>,
+    reason_override: Option<&str>,
+) -> String {
+    let reason = reason_override.unwrap_or_else(|| reason_phrase(status_code, default_reason));
+    let mut resp = format!("RTSP/1.0 {} {}\r\n", status_code, reason);
+    resp.push_str(&format!("CSeq: {}\r\n", cseq));
+    resp.push_str("Server: NetGet-RTSP\r\n");
+    for (k, v) in extra_headers {
+        resp.push_str(&format!("{}: {}\r\n", k, v));
+    }
+    if let Some(b) = &body {
+        resp.push_str(&format!("Content-Length: {}\r\n", b.len()));
+        resp.push_str("\r\n");
+        resp.push_str(b);
+    } else {
+        resp.push_str("Content-Length: 0\r\n\r\n");
+    }
+    resp
+}
+
+fn reason_phrase(code: u16, default: &str) -> &'static str {
+    match code {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        455 => "Method Not Valid In This State",
+        457 => "Invalid Range",
+        461 => "Unsupported Transport",
+        500 => "Internal Server Error",
+        501 => "Not Implemented",
+        503 => "Service Unavailable",
+        _ => {
+            // default is a caller-supplied &str; leak-free path: fall back to a generic phrase.
+            let _ = default;
+            "OK"
+        }
+    }
+}
+
+/// Default SDP when the model does not shape one: a single PCMU audio stream.
+fn default_sdp(uri: &str) -> String {
+    format!(
+        "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=NetGet Stream\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\n\
+         m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=control:{}\r\n",
+        uri
+    )
+}
+
+/// Extract the first client RTP port from a Transport header (`client_port=A-B`).
+fn parse_client_rtp_port(transport: &str) -> Option<u16> {
+    for part in transport.split(';') {
+        let part = part.trim();
+        if let Some(rest) = part.strip_prefix("client_port=") {
+            let first = rest.split('-').next()?;
+            return first.trim().parse().ok();
+        }
+    }
+    None
+}
+
+/// Parse one complete RTSP request from `buf`. Returns the request and how many bytes it
+/// consumed, or None if the buffer does not yet hold a full message.
+fn parse_rtsp_request(buf: &[u8]) -> Option<(RtspRequest, usize)> {
+    let text = std::str::from_utf8(buf).ok()?;
+    let header_end = text.find("\r\n\r\n")?;
+    let header_block = &text[..header_end];
+    let mut lines = header_block.split("\r\n");
+
+    let request_line = lines.next()?;
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next()?.to_string();
+    let uri = parts.next()?.to_string();
+    let _version = parts.next()?; // RTSP/1.0
+
+    let mut headers = HashMap::new();
+    for line in lines {
+        if let Some(idx) = line.find(':') {
+            let name = line[..idx].trim().to_ascii_lowercase();
+            let value = line[idx + 1..].trim().to_string();
+            headers.insert(name, value);
+        }
+    }
+
+    let content_length: usize = headers
+        .get("content-length")
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let total = header_end + 4 + content_length;
+    if buf.len() < total {
+        return None; // body not fully arrived yet
+    }
+
+    let cseq = headers.get("cseq").cloned().unwrap_or_default();
+    Some((
+        RtspRequest {
+            method,
+            uri,
+            cseq,
+            headers,
+        },
+        total,
+    ))
+}
