@@ -714,6 +714,25 @@ async fn call_llm_for_event(
 ) -> Option<ExecutionResult> {
     let event = Event::new(event_type, event_data);
 
+    // Whether to grant an Allocate/Refresh/CreatePermission/ChannelBind, and to which peers, is
+    // a policy decision, not something the request determines (the ack packet framing is
+    // mechanical, but the grant is not). With no operator policy — no server instruction and no
+    // per-event handler — TURN's own fail-closed default applies: grant nothing. So return None
+    // WITHOUT an LLM round-trip; the caller drops the reserved relay socket exactly as it does
+    // for a refusal or an LLM failure. The model is consulted only when the operator opts in
+    // with the grant policy it should apply.
+    if !operator_wants_dynamic(&ctx.state, ctx.server_id, &event_type.id).await {
+        debug!(
+            "TURN {} not granted: no operator policy configured (no instruction or handler), fail-closed with no LLM call",
+            event_type.id
+        );
+        let _ = ctx.status_tx.send(format!(
+            "TURN {} ignored: no grant policy configured (static default, no LLM)",
+            event_type.id
+        ));
+        return None;
+    }
+
     match call_llm(
         &ctx.llm_client,
         &ctx.state,
@@ -1395,4 +1414,25 @@ fn spawn_relay_task(
             }
         }
     })
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for this
+/// server: either a non-empty server instruction was given, or an event handler is configured
+/// for `event_id`. When false the protocol applies its static default and never consults the
+/// model — for TURN that default is to grant nothing (fail closed), because whether to grant an
+/// allocation/permission and to which peers is a policy decision with no configured policy to
+/// apply.
+async fn operator_wants_dynamic(state: &AppState, server_id: ServerId, event_id: &str) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
 }
