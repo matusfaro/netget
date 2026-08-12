@@ -5,6 +5,7 @@ mod banner;
 pub mod client_startup;
 pub mod easy_startup;
 pub mod input_state;
+pub mod management;
 mod non_interactive;
 mod rolling_tui;
 pub mod server_startup;

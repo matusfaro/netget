@@ -89,6 +89,12 @@ pub enum UserCommand {
     ListSimple,
     /// Start a simple protocol server (slash command: /simple <protocol>)
     StartSimple { protocol: String },
+    /// List running servers and clients and show the create/update command shape
+    /// (slash command: /manage)
+    Manage,
+    /// Update a running server or client's instruction by unified id
+    /// (slash command: /update <id> <instruction text>)
+    Update { id: u32, instruction: String },
     /// Quit the application (slash command: /quit)
     Quit,
     /// Unknown slash command (error case)
@@ -346,6 +352,29 @@ impl UserCommand {
             // Start specific simple protocol
             return UserCommand::StartSimple {
                 protocol: rest.to_string(),
+            };
+        }
+
+        // /manage command - list servers/clients and show create/update shapes
+        if input_lower == "/manage" {
+            return UserCommand::Manage;
+        }
+
+        // /update command - update a running server/client's instruction by id
+        if input_lower.starts_with("/update") {
+            let rest = trimmed[7..].trim();
+            // Expect: <id> <instruction text...>
+            let mut parts = rest.splitn(2, char::is_whitespace);
+            let id_part = parts.next().unwrap_or("").trim();
+            let instruction = parts.next().unwrap_or("").trim().to_string();
+            if let Ok(id) = id_part.parse::<u32>() {
+                if !instruction.is_empty() {
+                    return UserCommand::Update { id, instruction };
+                }
+            }
+            // Malformed - show usage as an unknown command
+            return UserCommand::UnknownSlashCommand {
+                command: trimmed.to_string(),
             };
         }
 

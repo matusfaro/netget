@@ -358,6 +358,8 @@ impl ActionDefinition {
                 | "close_all_clients"
                 | "reconnect_client"
                 | "update_client_instruction"
+                | "update_client"
+                | "update_server"
                 | "close_connection_by_id"
                 | "update_instruction"
                 | "set_memory"

@@ -129,6 +129,12 @@ fn summarize_common_action(action: &CommonAction) -> String {
         CommonAction::ReconnectClient { client_id } => {
             format!("reconnect_client: #{}", client_id)
         }
+        CommonAction::UpdateServer { server_id, .. } => {
+            format!("update_server: #{}", server_id)
+        }
+        CommonAction::UpdateClient { client_id, .. } => {
+            format!("update_client: #{}", client_id)
+        }
         CommonAction::UpdateClientInstruction {
             client_id,
             instruction,

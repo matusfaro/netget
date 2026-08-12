@@ -264,6 +264,63 @@ pub enum CommonAction {
         instruction: String,
     },
 
+    /// Update a running server in place, by id. Only the fields supplied are
+    /// changed. Binding fields (port/host/interface/mac_address) or a
+    /// startup_params change trigger a clean stop+start; every other field is
+    /// applied without dropping connections. Fixes the "spawn a second server
+    /// instead of updating" problem by making update a first-class operation.
+    UpdateServer {
+        #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
+        server_id: u32,
+        #[serde(
+            default,
+            deserialize_with = "flexible_deserializers::deserialize_option_u16_flexible"
+        )]
+        port: Option<u16>,
+        #[serde(default)]
+        host: Option<String>,
+        #[serde(default)]
+        interface: Option<String>,
+        #[serde(default)]
+        mac_address: Option<String>,
+        #[serde(default)]
+        send_first: bool,
+        #[serde(default)]
+        instruction: Option<String>,
+        #[serde(default, alias = "memory")]
+        initial_memory: Option<String>,
+        #[serde(default)]
+        startup_params: Option<serde_json::Value>,
+        #[serde(default)]
+        event_handlers: Option<Vec<serde_json::Value>>,
+        #[serde(default)]
+        scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
+        #[serde(default)]
+        feedback_instructions: Option<String>,
+    },
+
+    /// Update a running client in place, by id. Mirror of `update_server`: a
+    /// remote_addr or startup_params change reconnects, everything else applies
+    /// in place.
+    UpdateClient {
+        #[serde(deserialize_with = "flexible_deserializers::deserialize_u32_flexible")]
+        client_id: u32,
+        #[serde(default)]
+        remote_addr: Option<String>,
+        #[serde(default)]
+        instruction: Option<String>,
+        #[serde(default, alias = "memory")]
+        initial_memory: Option<String>,
+        #[serde(default)]
+        startup_params: Option<serde_json::Value>,
+        #[serde(default)]
+        event_handlers: Option<Vec<serde_json::Value>>,
+        #[serde(default)]
+        scheduled_tasks: Option<Vec<ServerTaskDefinition>>,
+        #[serde(default)]
+        feedback_instructions: Option<String>,
+    },
+
     /// Update the server instruction (combines with existing)
     UpdateInstruction { instruction: String },
 
@@ -923,6 +980,107 @@ pub fn update_client_instruction_action() -> ActionDefinition {
     }
 }
 
+/// Get action definition for update_server
+pub fn update_server_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "update_server".to_string(),
+        description: "Update a RUNNING server in place, by its id, instead of opening a second \
+            one. Supply only the fields you want to change. Changing the instruction, memory, \
+            event_handlers, feedback_instructions or scheduled_tasks is applied WITHOUT dropping \
+            connections. Changing the port, host, interface, mac_address or startup_params \
+            requires a clean stop+start (connections are dropped and the server gets a new id). \
+            Prefer this over open_server when a server for the protocol already exists."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "server_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "Id of the server to update (from the running servers list)."
+                    .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "instruction".to_string(),
+                type_hint: "string".to_string(),
+                description: "New LLM instruction (hot-applied).".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "event_handlers".to_string(),
+                type_hint: "array".to_string(),
+                description: "Replacement deterministic event handlers (hot-applied). Same shape \
+                    as open_server's."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "startup_params".to_string(),
+                type_hint: "object".to_string(),
+                description: "Startup parameters to merge in. Validated against the protocol \
+                    schema; triggers a restart."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "port".to_string(),
+                type_hint: "number".to_string(),
+                description: "New port to bind. Triggers a restart.".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "update_server",
+            "server_id": 1,
+            "instruction": "Return 503 for every request now."
+        }),
+        log_template: None,
+    }
+}
+
+/// Get action definition for update_client
+pub fn update_client_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "update_client".to_string(),
+        description: "Update a RUNNING client in place, by its id, instead of opening a second \
+            one. Supply only the fields you want to change. Changing the instruction, memory, \
+            event_handlers, feedback_instructions or scheduled_tasks is applied in place. \
+            Changing the remote_addr or startup_params reconnects (new id)."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "client_id".to_string(),
+                type_hint: "number".to_string(),
+                description: "Id of the client to update.".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "instruction".to_string(),
+                type_hint: "string".to_string(),
+                description: "New LLM instruction (hot-applied).".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "event_handlers".to_string(),
+                type_hint: "array".to_string(),
+                description: "Replacement deterministic event handlers (hot-applied).".to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "remote_addr".to_string(),
+                type_hint: "string".to_string(),
+                description: "New remote address 'host:port'. Triggers a reconnect.".to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "update_client",
+            "client_id": 1,
+            "instruction": "Log every response you receive."
+        }),
+        log_template: None,
+    }
+}
+
 /// Get action definition for update_instruction
 pub fn update_instruction_action() -> ActionDefinition {
     ActionDefinition {
@@ -1323,8 +1481,10 @@ pub fn get_all_common_actions(
     // === Client Configuration ===
     actions.push(reconnect_client_action());
     actions.push(update_client_instruction_action());
+    actions.push(update_client_action());
 
     // === Server Configuration ===
+    actions.push(update_server_action());
     actions.push(update_instruction_action());
     actions.push(set_memory_action());
     actions.push(append_memory_action());

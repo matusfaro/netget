@@ -1866,6 +1866,18 @@ async fn handle_key_event(
                         update_ui_from_state(app, state, footer).await;
                         footer.render(&mut stdout())?;
                     }
+                    UserCommand::Manage => {
+                        // List running servers/clients and show create/update shapes
+                        handle_manage(state, footer, &palette).await?;
+                        footer.render(&mut stdout())?;
+                    }
+                    UserCommand::Update { id, instruction } => {
+                        // Update a running server/client instruction by unified id
+                        let llm = event_handler.get_llm_client();
+                        handle_update(id, instruction, state, &llm, footer, &palette).await?;
+                        update_ui_from_state(app, state, footer).await;
+                        footer.render(&mut stdout())?;
+                    }
                 }
             }
 
@@ -2495,6 +2507,142 @@ async fn handle_status_command(
         }
         _ => {}
     }
+    Ok(())
+}
+
+/// `/manage` — list running servers and clients with their ids, and print the
+/// create/update command shape.
+///
+/// This is the management view's list-and-shape surface. A full interactive
+/// create/update form (prefilled from declared startup params) is a documented
+/// follow-up; the data model (`cli::management::ServerForm`/`ClientForm`) and the
+/// update executors it would drive are already in place, and are reachable today
+/// via `/update`, the `update_server`/`update_client` actions, and the MCP tools.
+async fn handle_manage(
+    state: &AppState,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    print_output_line("=== Manage: running instances ===", footer, palette)?;
+
+    let servers = state.get_all_servers().await;
+    if servers.is_empty() {
+        print_output_line("Servers: (none)", footer, palette)?;
+    } else {
+        print_output_line("Servers:", footer, palette)?;
+        for s in &servers {
+            print_output_line(
+                &format!(
+                    "  #{}  {}  port {}  [{}]",
+                    s.id.as_u32(),
+                    s.protocol_name,
+                    s.port,
+                    s.status
+                ),
+                footer,
+                palette,
+            )?;
+        }
+    }
+
+    let clients = state.get_all_clients().await;
+    if clients.is_empty() {
+        print_output_line("Clients: (none)", footer, palette)?;
+    } else {
+        print_output_line("Clients:", footer, palette)?;
+        for c in &clients {
+            print_output_line(
+                &format!(
+                    "  #{}  {}  -> {}  [{}]",
+                    c.id.as_u32(),
+                    c.protocol_name,
+                    c.remote_addr,
+                    c.status
+                ),
+                footer,
+                palette,
+            )?;
+        }
+    }
+
+    print_output_line("", footer, palette)?;
+    print_output_line(
+        "Create:  describe it in plain language, or /simple <protocol>, or",
+        footer,
+        palette,
+    )?;
+    print_output_line(
+        "         /load <file> with an {\"actions\":[{\"type\":\"open_server\",...}]} form.",
+        footer,
+        palette,
+    )?;
+    print_output_line(
+        "Update:  /update <id> <new instruction>   (hot-applies, keeps connections)",
+        footer,
+        palette,
+    )?;
+    print_output_line(
+        "         or the update_server / update_client action & MCP tool for full-form",
+        footer,
+        palette,
+    )?;
+    print_output_line(
+        "         changes (event_handlers, startup_params, port, memory, tasks).",
+        footer,
+        palette,
+    )?;
+
+    Ok(())
+}
+
+/// `/update <id> <instruction>` — update a running server or client's instruction
+/// in place, by unified id (server first, then client), via the shared management
+/// update executor. Keeps live connections.
+async fn handle_update(
+    id: u32,
+    instruction: String,
+    state: &AppState,
+    llm: &OllamaClient,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    use crate::cli::management::{self, ClientForm, ServerForm};
+    use crate::state::{ClientId, ServerId};
+
+    let (status_tx, _status_rx) = mpsc::unbounded_channel::<String>();
+
+    // Server takes precedence when the id resolves to one.
+    if state.get_server(ServerId::new(id)).await.is_some() {
+        let form = ServerForm {
+            instruction: Some(instruction),
+            ..Default::default()
+        };
+        match management::update_server(state, ServerId::new(id), form, status_tx).await {
+            Ok(outcome) => print_output_line(&outcome.summary, footer, palette)?,
+            Err(e) => print_output_line(&format!("[ERROR] {}", e), footer, palette)?,
+        }
+        return Ok(());
+    }
+
+    if state.get_client(ClientId::new(id)).await.is_some() {
+        let form = ClientForm {
+            instruction: Some(instruction),
+            ..Default::default()
+        };
+        match management::update_client(state, ClientId::new(id), form, llm.clone(), status_tx)
+            .await
+        {
+            Ok(outcome) => print_output_line(&outcome.summary, footer, palette)?,
+            Err(e) => print_output_line(&format!("[ERROR] {}", e), footer, palette)?,
+        }
+        return Ok(());
+    }
+
+    print_output_line(
+        &format!("No server or client found with ID #{}", id),
+        footer,
+        palette,
+    )?;
     Ok(())
 }
 

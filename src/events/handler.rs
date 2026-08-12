@@ -552,6 +552,14 @@ impl EventHandler {
                 );
                 Ok(false)
             }
+            UserCommand::Manage | UserCommand::Update { .. } => {
+                // These commands are only supported in rolling TUI mode
+                ui.add_llm_message(
+                    "The /manage and /update commands are only supported in rolling TUI mode"
+                        .to_string(),
+                );
+                Ok(false)
+            }
         }
     }
 
@@ -711,6 +719,8 @@ impl EventHandler {
                                     | CommonAction::CloseClient { .. }
                                     | CommonAction::CloseAllClients
                                     | CommonAction::CloseConnectionById { .. }
+                                    | CommonAction::UpdateServer { .. }
+                                    | CommonAction::UpdateClient { .. }
                             );
 
                             match self
@@ -1626,6 +1636,91 @@ impl EventHandler {
                 ));
                 let _ = status_tx.send(format!("[CLIENT] New instruction: {}", instruction));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
+            }
+            CommonAction::UpdateServer {
+                server_id,
+                port,
+                host,
+                interface,
+                mac_address,
+                send_first,
+                instruction,
+                initial_memory,
+                startup_params,
+                event_handlers,
+                scheduled_tasks,
+                feedback_instructions,
+            } => {
+                use crate::cli::management::{self, ServerForm};
+                let form = ServerForm {
+                    protocol: String::new(), // immutable; empty means "unchanged"
+                    port,
+                    host,
+                    interface,
+                    mac_address,
+                    send_first,
+                    instruction,
+                    initial_memory,
+                    startup_params,
+                    event_handlers,
+                    scheduled_tasks,
+                    feedback_instructions,
+                };
+                match management::update_server(
+                    &self.state,
+                    crate::state::ServerId::new(server_id),
+                    form,
+                    status_tx.clone(),
+                )
+                .await
+                {
+                    Ok(outcome) => {
+                        let _ = status_tx.send(format!("[INFO] {}", outcome.summary));
+                    }
+                    Err(e) => {
+                        let _ = status_tx.send(format!("[ERROR] Failed to update server: {}", e));
+                        return Err(crate::events::ActionExecutionError::Fatal(e));
+                    }
+                }
+            }
+            CommonAction::UpdateClient {
+                client_id,
+                remote_addr,
+                instruction,
+                initial_memory,
+                startup_params,
+                event_handlers,
+                scheduled_tasks,
+                feedback_instructions,
+            } => {
+                use crate::cli::management::{self, ClientForm};
+                let form = ClientForm {
+                    protocol: String::new(), // immutable; empty means "unchanged"
+                    remote_addr,
+                    instruction,
+                    initial_memory,
+                    startup_params,
+                    event_handlers,
+                    scheduled_tasks,
+                    feedback_instructions,
+                };
+                match management::update_client(
+                    &self.state,
+                    crate::state::ClientId::new(client_id),
+                    form,
+                    self.llm.clone(),
+                    status_tx.clone(),
+                )
+                .await
+                {
+                    Ok(outcome) => {
+                        let _ = status_tx.send(format!("[INFO] {}", outcome.summary));
+                    }
+                    Err(e) => {
+                        let _ = status_tx.send(format!("[ERROR] Failed to update client: {}", e));
+                        return Err(crate::events::ActionExecutionError::Fatal(e));
+                    }
+                }
             }
 
             #[cfg(feature = "sqlite")]

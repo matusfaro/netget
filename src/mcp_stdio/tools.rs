@@ -317,6 +317,66 @@ pub struct UpdateServerInstructionParams {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateServerParams {
+    /// Server ID to update (from list_servers)
+    #[serde(deserialize_with = "deserialize_u32_flexible")]
+    pub server_id: u32,
+    /// New natural-language LLM instruction (hot-applied, connections preserved).
+    #[serde(default)]
+    pub instruction: Option<String>,
+    /// Replacement event handlers (hot-applied). Same shape as start_server's.
+    #[serde(default)]
+    pub event_handlers: Option<Vec<serde_json::Value>>,
+    /// Seed/replace the server's LLM memory (hot-applied).
+    #[serde(default)]
+    pub initial_memory: Option<String>,
+    /// Startup parameters to merge in. Validated against the protocol schema;
+    /// applying them triggers a clean stop+start (connections dropped, new id).
+    #[serde(default)]
+    pub startup_params: Option<serde_json::Value>,
+    /// New port to bind. Triggers a restart.
+    #[serde(default, deserialize_with = "deserialize_option_u16_flexible")]
+    pub port: Option<u16>,
+    /// New host/IP to bind. Triggers a restart.
+    #[serde(default)]
+    pub host: Option<String>,
+    /// New feedback-loop instructions (hot-applied).
+    #[serde(default)]
+    pub feedback_instructions: Option<String>,
+    /// Scheduled tasks to add (hot-applied). Same shape as start_server's.
+    #[serde(default)]
+    pub scheduled_tasks: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct UpdateClientParams {
+    /// Client ID to update
+    #[serde(deserialize_with = "deserialize_u32_flexible")]
+    pub client_id: u32,
+    /// New natural-language LLM instruction (hot-applied).
+    #[serde(default)]
+    pub instruction: Option<String>,
+    /// Replacement event handlers (hot-applied).
+    #[serde(default)]
+    pub event_handlers: Option<Vec<serde_json::Value>>,
+    /// Seed/replace the client's LLM memory (hot-applied).
+    #[serde(default)]
+    pub initial_memory: Option<String>,
+    /// Startup parameters to merge in. Validated; triggers a reconnect (new id).
+    #[serde(default)]
+    pub startup_params: Option<serde_json::Value>,
+    /// New remote address "host:port". Triggers a reconnect.
+    #[serde(default)]
+    pub remote_addr: Option<String>,
+    /// New feedback-loop instructions (hot-applied).
+    #[serde(default)]
+    pub feedback_instructions: Option<String>,
+    /// Scheduled tasks to add (hot-applied).
+    #[serde(default)]
+    pub scheduled_tasks: Option<Vec<serde_json::Value>>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct GetNextLlmRequestParams {
     /// Seconds to long-poll for a request when none is immediately pending
     /// (0 = return right away). Capped at 120 to stay under the client's tool-call timeout.
@@ -940,6 +1000,110 @@ impl NetGetMcpService {
                 "Server #{} not found",
                 params.server_id
             ))])),
+        }
+    }
+
+    #[tool(
+        description = "Update a RUNNING server in place, by its id, instead of starting a second one. Supply only the fields to change. instruction / event_handlers / initial_memory / feedback_instructions / scheduled_tasks are hot-applied WITHOUT dropping connections; port / host / startup_params require a clean stop+start (connections dropped, server gets a NEW id). Unknown id and invalid startup_params error cleanly and leave the running server untouched. Prefer this over start_server when a server already exists."
+    )]
+    async fn update_server(
+        &self,
+        Parameters(params): Parameters<UpdateServerParams>,
+    ) -> Result<CallToolResult, McpError> {
+        // Keep AppState's LLM client in sync in case the update restarts the server.
+        self.state
+            .app_state
+            .set_llm_client(self.state.llm_client.clone())
+            .await;
+
+        let scheduled_tasks = match parse_scheduled_tasks(params.scheduled_tasks) {
+            Ok(t) => t,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid scheduled_tasks: {}",
+                    e
+                ))]))
+            }
+        };
+
+        let form = crate::cli::management::ServerForm {
+            protocol: String::new(),
+            port: params.port,
+            host: params.host,
+            interface: None,
+            mac_address: None,
+            send_first: false,
+            instruction: params.instruction,
+            initial_memory: params.initial_memory,
+            startup_params: params.startup_params,
+            event_handlers: params.event_handlers,
+            scheduled_tasks,
+            feedback_instructions: params.feedback_instructions,
+        };
+
+        let (status_tx, _status_rx) = mpsc::unbounded_channel();
+        match crate::cli::management::update_server(
+            &self.state.app_state,
+            crate::state::ServerId::new(params.server_id),
+            form,
+            status_tx,
+        )
+        .await
+        {
+            Ok(outcome) => Ok(CallToolResult::success(vec![Content::text(
+                outcome.summary,
+            )])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
+        }
+    }
+
+    #[tool(
+        description = "Update a RUNNING client in place, by its id, instead of connecting a second one. Supply only the fields to change. instruction / event_handlers / initial_memory / feedback_instructions / scheduled_tasks are hot-applied; remote_addr / startup_params trigger a reconnect (new id). Unknown id and invalid startup_params error cleanly and leave the running client untouched."
+    )]
+    async fn update_client(
+        &self,
+        Parameters(params): Parameters<UpdateClientParams>,
+    ) -> Result<CallToolResult, McpError> {
+        self.state
+            .app_state
+            .set_llm_client(self.state.llm_client.clone())
+            .await;
+
+        let scheduled_tasks = match parse_scheduled_tasks(params.scheduled_tasks) {
+            Ok(t) => t,
+            Err(e) => {
+                return Ok(CallToolResult::error(vec![Content::text(format!(
+                    "Invalid scheduled_tasks: {}",
+                    e
+                ))]))
+            }
+        };
+
+        let form = crate::cli::management::ClientForm {
+            protocol: String::new(),
+            remote_addr: params.remote_addr,
+            instruction: params.instruction,
+            initial_memory: params.initial_memory,
+            startup_params: params.startup_params,
+            event_handlers: params.event_handlers,
+            scheduled_tasks,
+            feedback_instructions: params.feedback_instructions,
+        };
+
+        let (status_tx, _status_rx) = mpsc::unbounded_channel();
+        match crate::cli::management::update_client(
+            &self.state.app_state,
+            crate::state::ClientId::new(params.client_id),
+            form,
+            self.state.llm_client.clone(),
+            status_tx,
+        )
+        .await
+        {
+            Ok(outcome) => Ok(CallToolResult::success(vec![Content::text(
+                outcome.summary,
+            )])),
+            Err(e) => Ok(CallToolResult::error(vec![Content::text(e.to_string())])),
         }
     }
 

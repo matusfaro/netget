@@ -467,6 +467,12 @@ async fn execute_common_action(
             // Client and connection management handled by event handler, not executor
         }
 
+        CommonAction::UpdateServer { .. } | CommonAction::UpdateClient { .. } => {
+            // Update handled by the event handler (execute_server_management_action),
+            // not the executor - it needs to spawn/restart instances.
+            warn!("update_server/update_client action must be handled by caller");
+        }
+
         CommonAction::ProvideFeedback { feedback } => {
             // Accumulate feedback for later processing (debounced + LLM invocation)
             if let Some(sid) = server_id {

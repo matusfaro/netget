@@ -343,6 +343,8 @@ impl App {
             "/backend [ollama|openai <url>] - Show/switch LLM backend",
             "/docs [<protocol>] - Show protocol documentation",
             "/stability - List protocols grouped by development state",
+            "/manage - List running servers/clients and show create/update shapes",
+            "/update <id> <instruction> - Update a running server/client in place",
         ];
 
         // Filter commands based on current input
