@@ -176,6 +176,12 @@ pub mod saml_idp;
 pub mod saml_sp;
 #[cfg(feature = "sip")]
 pub mod sip;
+#[cfg(feature = "rtp")]
+pub mod rtp;
+#[cfg(feature = "rtsp")]
+pub mod rtsp;
+#[cfg(feature = "hls")]
+pub mod hls;
 #[cfg(feature = "smb")]
 pub mod smb;
 #[cfg(feature = "smtp")]
@@ -192,6 +198,8 @@ pub mod sqs;
 pub mod ssh;
 #[cfg(all(feature = "ssh-agent", unix))]
 pub mod ssh_agent;
+#[cfg(all(feature = "stdio", unix))]
+pub mod stdio;
 #[cfg(feature = "stun")]
 pub mod stun;
 #[cfg(feature = "svn")]
@@ -240,6 +248,10 @@ pub mod usb_serial;
 pub mod usb_smartcard;
 #[cfg(feature = "vnc")]
 pub mod vnc;
+#[cfg(feature = "reverse-shell")]
+pub mod reverse_shell;
+#[cfg(feature = "rdp")]
+pub mod rdp;
 #[cfg(feature = "webdav")]
 pub mod webdav;
 #[cfg(feature = "webrtc")]

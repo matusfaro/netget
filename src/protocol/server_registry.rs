@@ -42,6 +42,8 @@ impl ServerRegistry {
         #[cfg(any(
             feature = "mysql",
             feature = "mssql",
+            feature = "snowflake",
+            feature = "db2",
             feature = "postgresql",
             feature = "redis",
             feature = "cassandra",
@@ -60,6 +62,9 @@ impl ServerRegistry {
 
         #[cfg(all(feature = "pty", unix))]
         self.register(Arc::new(crate::server::PtyProtocol::new()));
+
+        #[cfg(all(feature = "stdio", unix))]
+        self.register(Arc::new(crate::server::StdioProtocol::new()));
 
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::server::HttpProtocol::new()));
@@ -178,6 +183,30 @@ impl ServerRegistry {
             use tokio::sync::mpsc;
             let (tx, _rx) = mpsc::unbounded_channel();
             self.register(Arc::new(crate::server::MysqlProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
+        }
+
+        #[cfg(feature = "snowflake")]
+        {
+            use crate::server::connection::ConnectionId;
+            use tokio::sync::mpsc;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            self.register(Arc::new(crate::server::SnowflakeProtocol::new(
+                ConnectionId::new(0), // Placeholder for protocol registry
+                dummy_state.clone(),
+                tx,
+            )));
+        }
+
+        #[cfg(feature = "db2")]
+        {
+            use crate::server::connection::ConnectionId;
+            use tokio::sync::mpsc;
+            let (tx, _rx) = mpsc::unbounded_channel();
+            self.register(Arc::new(crate::server::Db2Protocol::new(
                 ConnectionId::new(0), // Placeholder for protocol registry
                 dummy_state.clone(),
                 tx,
@@ -325,6 +354,15 @@ impl ServerRegistry {
         #[cfg(feature = "sip")]
         self.register(Arc::new(crate::server::SipProtocol::new()));
 
+        #[cfg(feature = "rtp")]
+        self.register(Arc::new(crate::server::RtpProtocol::new()));
+
+        #[cfg(feature = "rtsp")]
+        self.register(Arc::new(crate::server::RtspProtocol::new()));
+
+        #[cfg(feature = "hls")]
+        self.register(Arc::new(crate::server::HlsProtocol::new()));
+
         #[cfg(feature = "bgp")]
         self.register(Arc::new(crate::server::BgpProtocol::new()));
 
@@ -372,6 +410,12 @@ impl ServerRegistry {
 
         #[cfg(feature = "vnc")]
         self.register(Arc::new(crate::server::VncProtocol::new()));
+
+        #[cfg(feature = "reverse-shell")]
+        self.register(Arc::new(crate::server::ReverseShellProtocol::new()));
+
+        #[cfg(feature = "rdp")]
+        self.register(Arc::new(crate::server::RdpProtocol::new()));
 
         #[cfg(feature = "openapi")]
         self.register(Arc::new(crate::server::OpenApiProtocol::new()));
@@ -959,6 +1003,8 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("LDAP", "ldap"),
     ("MySQL", "mysql"),
     ("MSSQL", "mssql"),
+    ("Snowflake", "snowflake"),
+    ("Db2", "db2"),
     ("PostgreSQL", "postgresql"),
     ("Memcached", "memcached"),
     ("RADIUS", "radius"),
@@ -987,6 +1033,9 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("WebRTC Signaling", "webrtc"),
     ("WebSocket", "websocket"),
     ("SIP", "sip"),
+    ("RTP", "rtp"),
+    ("RTSP", "rtsp"),
+    ("HLS", "hls"),
     ("ISIS", "isis"),
     ("RIP", "rip"),
     ("Bitcoin P2P", "bitcoin"),
@@ -1001,6 +1050,8 @@ const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("ZooKeeper", "zookeeper"),
     ("Tor Relay", "tor"),
     ("VNC", "vnc"),
+    ("Reverse Shell", "reverse-shell"),
+    ("RDP", "rdp"),
     ("OpenAPI", "openapi"),
     ("OpenID", "openid"),
     ("KAFKA", "kafka"),

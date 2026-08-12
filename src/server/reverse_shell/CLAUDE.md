@@ -1,0 +1,130 @@
+# Reverse-Shell Listener (emulation)
+
+**Status**: `DevelopmentState::Experimental` — newly implemented, not yet human-reviewed against
+a wide range of operator tooling, but every declared event fires, every declared action is
+reachable, and the E2E suite asserts model-supplied output on the wire from a raw TCP client.
+
+Default port is arbitrary (commonly 4444/1337 in labs); unprivileged, so `privilege_requirement`
+is `None`.
+
+## What this is, and what it is not
+
+This protocol **emulates the operator side of a reverse shell** for authorized red-team
+engagements, CTF challenges and teaching labs. NetGet is the listener an operator connects *back*
+to (the classic `nc -lvnp 4444` catcher), and the LLM role-plays the shell on the compromised
+host — deciding the banner, the prompt, and the output of each command the operator types.
+
+It is an *emulation*, in exactly the same sense as every other NetGet protocol: NetGet
+impersonates a service without being one. Concretely:
+
+- **NetGet never executes the operator's commands on this host.** There is no `std::process`,
+  no `sh -c`, no filesystem access anywhere in `mod.rs` or `actions.rs`. The output the operator
+  sees is fictional text the model produced. Grep proves it:
+
+  ```bash
+  grep -rn "Command::new\|process::\|std::fs\|sh -c" src/server/reverse_shell/   # → no matches
+  ```
+
+- The capability to run real commands already exists, separately, through the **scripting
+  layer** (`src/scripting/`, see the top-level `CLAUDE.md`). That layer is **opt-in and
+  unsandboxed** — a script handler runs in-process with NetGet's privileges. This protocol does
+  not invoke it and does not add a "really execute" mode. If an operator wires a script handler
+  onto `reverse_shell_command` that shells out, that is the pre-existing, documented,
+  unsandboxed escape hatch, not something this protocol grants.
+
+The maintainer's framing was: "allow the LLM to call any command line — you can already do so
+with scripting. Add prompting on how a reverse shell should be set up." This protocol is that
+first-class, honestly-documented surface: a listener where the model plays the shell, rather
+than a scripting trick.
+
+### Why this is a legitimate feature
+
+A reverse-shell *listener* is a standard pentest/CTF construct, and impersonating network
+services is NetGet's entire purpose. Emulating the victim end is useful for training operators,
+building CTF challenges, and studying tooling behaviour without a real compromised host. Because
+the model supplies fictional output and nothing is executed, the emulation is also the safe
+default.
+
+## Wire model
+
+There is no protocol framing — an operator connects with a plain TCP client (`nc`, `ncat`,
+`socat`) and types. The server:
+
+1. Raises `reverse_shell_session_opened` once on connect. The model may greet with a prompt.
+2. Buffers raw bytes into newline-terminated lines. Each line (CR stripped) raises
+   `reverse_shell_command` with `{command, first_command, empty}`.
+
+One connection is handled **strictly sequentially**: the model call for one line completes
+before the next line is read. RFB-style buffering — the kernel holds input that arrives during a
+call. This is the same discipline the per-connection state machine enforces (no concurrent LLM
+call on one connection); a raw line-oriented shell does not need the Idle/Processing/Accumulating
+machine because reads are already serialized by the loop.
+
+Bytes are split with `tokio::io::split()`; the write half is an `Arc<Mutex<WriteHalf>>`. The
+accept-loop `JoinHandle` is registered with `AppState::register_server_task()` so `stop_server`
+releases the socket. A connection is removed from the server view on every exit path.
+
+## Events — both fire
+
+| Event | Raised when | Actions offered |
+|---|---|---|
+| `reverse_shell_session_opened` | operator connects | send_shell_prompt, send_shell_output, end_shell_session |
+| `reverse_shell_command` | a newline-terminated line arrives | send_shell_output, send_shell_prompt, no_shell_output, end_shell_session |
+
+## Actions
+
+| Action | Effect |
+|---|---|
+| `send_shell_output` | write fictional command output (`output`); optional `append_prompt`/`prompt` re-prints the prompt |
+| `send_shell_prompt` | write just the prompt (`prompt`, default `"$ "`) |
+| `no_shell_output` | print nothing for this command; session stays open |
+| `end_shell_session` | close the connection (emit a farewell with send_shell_output first) |
+
+There are **no async (user-triggered) actions**: the server keeps no addressable connection
+registry, so one would have nothing to talk to.
+
+## Structured parameters, no raw bytes
+
+Everything is plain text. `output` and `prompt` are UTF-8 strings sent verbatim; the model
+includes its own `\n`. There is no base64 or hex field anywhere — models cannot reliably produce
+or parse those, and a shell transcript is text by nature.
+
+## Fail-closed behaviour
+
+The three outcomes are kept structurally distinct (`Outcome` in `mod.rs`):
+
+- **output / close** — the model decided what to print and whether to end the session.
+- **`no_shell_output`** — the model explicitly decided to print nothing; the session stays open.
+- **no usable answer** — an LLM error, or a batch where every action failed / returned nothing.
+  The socket is **shut down** (FIN), with a WARN on the log and status stream.
+
+Equating "no answer" with "empty output but keep going" would be the fail-open shape that bit
+OAuth2: an LLM outage would look like a working, silent shell. Instead an outage drops the
+session, which is honest.
+
+## Attacker/operator-controlled input
+
+- The line accumulator is capped at `MAX_LINE_LEN` (64 KiB); a peer that never sends a newline
+  cannot grow it without bound. A longer line closes the connection.
+- Operator bytes are decoded with `String::from_utf8_lossy`, which cannot fail, so malformed
+  input cannot abort the task.
+
+## Limitations
+
+- No PTY semantics: no terminal echo, no line editing, no job control, no ANSI handling beyond
+  whatever text the model emits. Operators using a cooked-mode client (`nc`) see their own input
+  echoed locally by their terminal, not by the server.
+- Two events per keystroke is not a concern here (input is line-buffered, one event per line),
+  but a chatty prompt still costs one model round-trip per command. Prefer a script or static
+  handler for deterministic CTF challenges.
+- No authentication and no allow-listing of who may connect — bind to localhost or a controlled
+  lab network.
+
+## Manual verification
+
+```bash
+./cargo-isolated.sh run --no-default-features --features reverse-shell,tcp --release
+# prompt: "reverse-shell listener on port 4444 emulating a compromised ubuntu box"
+nc 127.0.0.1 4444
+# then type: whoami   ->  model prints e.g. "www-data"
+```

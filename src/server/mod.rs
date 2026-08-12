@@ -83,6 +83,13 @@ pub use pty::actions::PtyProtocol;
 #[cfg(all(feature = "pty", unix))]
 pub use pty::PtyServer;
 
+#[cfg(all(feature = "stdio", unix))]
+pub mod stdio;
+#[cfg(all(feature = "stdio", unix))]
+pub use stdio::actions::StdioProtocol;
+#[cfg(all(feature = "stdio", unix))]
+pub use stdio::StdioServer;
+
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]
@@ -295,6 +302,20 @@ pub use mysql::actions::MysqlProtocol;
 #[cfg(feature = "mysql")]
 pub use mysql::MysqlServer;
 
+#[cfg(feature = "snowflake")]
+pub mod snowflake;
+#[cfg(feature = "snowflake")]
+pub use snowflake::actions::SnowflakeProtocol;
+#[cfg(feature = "snowflake")]
+pub use snowflake::SnowflakeServer;
+
+#[cfg(feature = "db2")]
+pub mod db2;
+#[cfg(feature = "db2")]
+pub use db2::actions::Db2Protocol;
+#[cfg(feature = "db2")]
+pub use db2::Db2Server;
+
 #[cfg(feature = "mongodb-server")]
 pub mod mongodb;
 #[cfg(feature = "mongodb-server")]
@@ -449,6 +470,27 @@ pub mod sip;
 pub use sip::actions::SipProtocol;
 #[cfg(feature = "sip")]
 pub use sip::SipServer;
+
+#[cfg(feature = "rtp")]
+pub mod rtp;
+#[cfg(feature = "rtp")]
+pub use rtp::actions::RtpProtocol;
+#[cfg(feature = "rtp")]
+pub use rtp::RtpServer;
+
+#[cfg(feature = "rtsp")]
+pub mod rtsp;
+#[cfg(feature = "rtsp")]
+pub use rtsp::actions::RtspProtocol;
+#[cfg(feature = "rtsp")]
+pub use rtsp::RtspServer;
+
+#[cfg(feature = "hls")]
+pub mod hls;
+#[cfg(feature = "hls")]
+pub use hls::actions::HlsProtocol;
+#[cfg(feature = "hls")]
+pub use hls::HlsServer;
 
 #[cfg(feature = "ldap")]
 pub mod ldap;
@@ -696,6 +738,20 @@ pub mod vnc;
 pub use vnc::actions::VncProtocol;
 #[cfg(feature = "vnc")]
 pub use vnc::VncServer;
+
+#[cfg(feature = "reverse-shell")]
+pub mod reverse_shell;
+#[cfg(feature = "reverse-shell")]
+pub use reverse_shell::actions::ReverseShellProtocol;
+#[cfg(feature = "reverse-shell")]
+pub use reverse_shell::ReverseShellServer;
+
+#[cfg(feature = "rdp")]
+pub mod rdp;
+#[cfg(feature = "rdp")]
+pub use rdp::actions::RdpProtocol;
+#[cfg(feature = "rdp")]
+pub use rdp::RdpServer;
 
 #[cfg(feature = "openapi")]
 pub mod openapi;

@@ -54,6 +54,8 @@ portable-base = [
     "mdns",
     "mysql",
     "mssql",
+    "snowflake",
+    "db2",
     "ipp",
     "postgresql",
     "mongodb-server",
@@ -70,6 +72,9 @@ portable-base = [
     # STUN/TURN excluded (use old nix-0.8.1 crate incompatible with modern Rust)
     "webrtc",
     "sip",
+    "rtp",
+    "rtsp",
+    "hls",
     "ldap",
     "imap",
     "pop3",
@@ -102,6 +107,8 @@ portable-base = [
     "xmlrpc",
     "tor",
     "vnc",
+    "reverse-shell",
+    "rdp",
     "openapi",
     "openid",
     "git",
@@ -127,6 +134,7 @@ tcp = []
 socket_file = []  # Unix domain socket server & client for IPC (Unix/Linux/macOS only, gated with #[cfg(unix)]), no extra deps
 named_pipe = []  # POSIX named pipe (mkfifo FIFO) server, impersonates an OS-level IPC endpoint (Unix only, #[cfg(unix)]), no extra deps
 pty = []  # Pseudo-terminal (openpty) server, LLM role-plays a program on a terminal (Unix only, #[cfg(unix)]); libc only, no extra deps
+stdio = []  # NetGet as a stdin/stdout/stderr pipe filter, LLM drives the streams (Unix only, #[cfg(unix)]); refuses under TUI/--mcp; no extra deps
 http = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen", "urlencoding"]
 http2 = ["dep:h2", "dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:rcgen"]
 pypi = ["http", "urlencoding"]  # PyPI (Python Package Index) uses HTTP and URL encoding for search (PEP 503 Simple Repository API)
@@ -178,6 +186,8 @@ ftp = []  # FTP (File Transfer Protocol) server and client - manual implementati
 mdns = ["mdns-sd"]
 mysql = ["dep:opensrv-mysql", "dep:mysql_async"]
 mssql = ["dep:tiberius"]
+snowflake = []  # Snowflake data-warehouse server (REST/JSON login + query protocol; hand-rolled over hyper, no extra deps)
+db2 = []  # IBM Db2 DRDA wire-protocol server (hand-rolled DRDA/DDM handshake + basic query, no extra deps)
 ipp = ["dep:ipp"]
 postgresql = ["dep:pgwire", "dep:tokio-postgres"]
 mongodb-server = ["dep:bson"]  # MongoDB server with LLM-controlled database operations
@@ -202,6 +212,9 @@ webrtc = ["dep:webrtc", "dep:tokio-tungstenite"]  # WebRTC client + server for p
 # No system library, hence present in dist / dist-windows (and dist-darwin via dist).
 websocket = ["dep:tokio-tungstenite"]
 sip = []  # SIP uses only UDP, no extra deps (manual protocol implementation)
+rtp = []  # RTP (RFC 3550) media server; G.711 synthesis + packetizer, no system library
+rtsp = ["rtp"]  # RTSP (RFC 2326) control server; reuses the rtp media engine for PLAY
+hls = []  # HLS (RFC 8216) over minimal HTTP/1.1; no system library
 ldap = ["dep:ldap3_proto", "rasn", "dep:ldap3"]
 imap = ["imap-codec", "dep:async-imap", "dep:async-native-tls"]  # IMAP uses imap-codec for protocol parsing
 pop3 = ["dep:rustls", "dep:tokio-rustls", "dep:rustls-pemfile", "dep:webpki-roots", "dep:rcgen"]  # POP3 email retrieval (manual implementation with TLS support)
@@ -241,6 +254,8 @@ zookeeper = ["dep:zookeeper-async"]  # ZooKeeper distributed coordination server
 xmlrpc = ["quick-xml", "dep:xmlrpc"]  # XML-RPC server and client with LLM-controlled method execution
 tor = ["dep:tor-netdoc", "dep:tor-cert", "dep:tor-cell", "dep:rustls", "dep:tokio-rustls", "dep:rcgen", "dep:ed25519-dalek", "dep:x25519-dalek", "dep:sha2", "dep:aes", "dep:ctr", "dep:hmac", "dep:hkdf", "dep:arti-client", "dep:tor-rtcompat", "dep:tor-dirmgr", "dep:tor-netdir"]  # Tor directory mirror and OR protocol relay (Guard/Middle/Exit) with cell handling + client with directory queries
 vnc = []  # VNC server and client with custom RFB protocol implementation
+reverse-shell = []  # Reverse-shell listener EMULATION (red-team/CTF); model role-plays the shell, nothing is executed
+rdp = []  # RDP server: TPKT/X.224 connection-negotiation slice of [MS-RDPBCGR] (hand-rolled, no crate)
 openapi = ["http", "dep:openapi-rs", "dep:matchit"]  # OpenAPI 3.1 server with runtime request validation and route matching
 openid = ["urlencoding"]  # OpenID Connect authentication provider with LLM-controlled token generation
 usb-common = ["dep:usbip"]  # Common USB/IP functionality for USB device protocols
@@ -313,6 +328,7 @@ dist = [
     # Unix-only OS-IPC endpoint impersonation; #[cfg(unix)], safe on all dist (Linux) targets
     "named_pipe",
     "pty",
+    "stdio",
 ]
 # macOS ships CoreBluetooth, PC/SC, and libpcap with the OS, so these are safe to bundle.
 dist-darwin = [
@@ -376,6 +392,8 @@ dist-windows = [
     "mdns",
     "mysql",
     "mssql",
+    "snowflake",
+    "db2",
     "ipp",
     "postgresql",
     "mongodb-server",
@@ -389,6 +407,9 @@ dist-windows = [
     "smb",
     "webrtc",
     "sip",
+    "rtp",
+    "rtsp",
+    "hls",
     "ldap",
     "imap",
     "pop3",
@@ -418,6 +439,8 @@ dist-windows = [
     "grpc",
     "xmlrpc",
     "vnc",
+    "reverse-shell",
+    "rdp",
     "openapi",
     "openid",
     "openidconnect",
@@ -442,6 +465,7 @@ all-protocols = [
     "socket_file",
     "named_pipe",
     "pty",
+    "stdio",
     "http",
     "http2",
     "quic",
@@ -476,6 +500,8 @@ all-protocols = [
     "mdns",
     "mysql",
     "mssql",
+    "snowflake",
+    "db2",
     "ipp",
     "postgresql",
     "mongodb-server",
@@ -494,6 +520,9 @@ all-protocols = [
     "webrtc",
     "websocket",
     "sip",
+    "rtp",
+    "rtsp",
+    "hls",
     "ldap",
     "imap",
     "pop3",
@@ -527,6 +556,8 @@ all-protocols = [
     "xmlrpc",
     "tor",
     "vnc",
+    "reverse-shell",
+    "rdp",
     "openapi",
     "openid",
     "git",
