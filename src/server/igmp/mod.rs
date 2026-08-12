@@ -10,13 +10,13 @@ use std::net::{Ipv4Addr, SocketAddr};
 use std::os::fd::FromRawFd;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace};
+use tracing::{debug, info};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
 use actions::{IGMP_LEAVE_RECEIVED_EVENT, IGMP_QUERY_RECEIVED_EVENT, IGMP_REPORT_RECEIVED_EVENT};
 
 /// IGMP message types (RFC 2236)
@@ -135,11 +135,8 @@ impl IgmpServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        info!("IGMP server starting with raw IP sockets (requires root privileges)");
-        let _ = status_tx.send(
-            "[INFO] IGMP server starting with raw IP sockets (requires root privileges)"
-                .to_string(),
-        );
+        Log::new(Some(&status_tx))
+            .info("IGMP server starting with raw IP sockets (requires root privileges)");
 
         // Create raw socket for IGMP (protocol 2).
         // AF_INET/SOCK_RAW/IPPROTO_IGMP are POSIX constants available on Linux, macOS and the
@@ -157,8 +154,7 @@ impl IgmpServer {
                 listen_addr.ip(),
                 os_err
             );
-            error!("{}", msg);
-            let _ = status_tx.send(format!("[ERROR] {}", msg));
+            Log::new(Some(&status_tx)).error(&msg);
             return Err(anyhow::anyhow!(msg));
         }
         // SAFETY: `raw_fd` was just returned by `socket(2)`, is >= 0, is open, and nothing else
@@ -190,8 +186,7 @@ impl IgmpServer {
         })();
         if let Err(e) = setup {
             let msg = format!("IGMP raw socket setup failed: {:#}", e);
-            error!("{}", msg);
-            let _ = status_tx.send(format!("[ERROR] {}", msg));
+            Log::new(Some(&status_tx)).error(&msg);
             return Err(e);
         }
 
@@ -215,9 +210,10 @@ impl IgmpServer {
         let socket = Arc::new(
             tokio::net::UdpSocket::from_std(std_socket)
                 .inspect_err(|e| {
-                    let msg = format!("IGMP failed to register raw socket with tokio: {}", e);
-                    error!("{}", msg);
-                    let _ = status_tx.send(format!("[ERROR] {}", msg));
+                    Log::new(Some(&status_tx)).error(format!(
+                        "IGMP failed to register raw socket with tokio: {}",
+                        e
+                    ));
                 })
                 .context("failed to register IGMP raw socket with the tokio reactor")?,
         );
@@ -225,6 +221,7 @@ impl IgmpServer {
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 65535];
+            let log = Log::new(Some(&status_tx));
 
             loop {
                 match socket.recv_from(&mut buffer).await {
@@ -291,27 +288,23 @@ impl IgmpServer {
                         let igmp_msg = match IgmpMessage::parse(&data) {
                             Ok(msg) => msg,
                             Err(e) => {
-                                console_debug!(
-                                    status_tx,
+                                log.debug(format!(
                                     "IGMP received non-IGMP packet ({} bytes): {}",
                                     data.len(),
                                     e
-                                );
+                                ));
                                 continue;
                             }
                         };
 
-                        // DEBUG: Log summary
-                        console_debug!(
-                            status_tx,
+                        // Summary + full payload FileOnly: the igmp_* event templates
+                        // render the equivalent line to the TUI.
+                        log.debug(format!(
                             "IGMP received from {}: {}",
                             peer_addr,
                             igmp_msg.description()
-                        );
-
-                        // TRACE: Log full payload
-                        let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "IGMP data (hex): {}", hex_str);
+                        ));
+                        log.trace(format!("IGMP data (hex): {}", hex::encode(&data)));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -321,6 +314,7 @@ impl IgmpServer {
                         let server_state_clone = server_state.clone();
 
                         tokio::spawn(async move {
+                            let log = Log::new(Some(&status_clone));
                             // Determine event type and build event data
                             let (event, _event_type_ref) = match igmp_msg.msg_type {
                                 IgmpMessageType::MembershipQuery => {
@@ -380,12 +374,7 @@ impl IgmpServer {
                             )
                             .await
                             {
-                                debug!(
-                                    "IGMP ignoring {} from {}: no operator membership policy configured (no instruction or handler), no report to send and no LLM call",
-                                    igmp_msg.msg_type.as_str(),
-                                    peer_addr
-                                );
-                                let _ = status_clone.send(format!(
+                                log.info(format!(
                                     "IGMP {} from {} ignored: no membership policy configured (static default, no LLM)",
                                     igmp_msg.msg_type.as_str(),
                                     peer_addr
@@ -393,13 +382,8 @@ impl IgmpServer {
                                 return;
                             }
 
-                            debug!(
+                            log.debug(format!(
                                 "IGMP calling LLM for {} from {}",
-                                igmp_msg.msg_type.as_str(),
-                                peer_addr
-                            );
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] IGMP calling LLM for {} from {}",
                                 igmp_msg.msg_type.as_str(),
                                 peer_addr
                             ));
@@ -416,16 +400,11 @@ impl IgmpServer {
                             {
                                 Ok(execution_result) => {
                                     for message in &execution_result.messages {
-                                        info!("{}", message);
-                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                        log.info(message);
                                     }
 
-                                    debug!(
+                                    log.debug(format!(
                                         "IGMP got {} protocol results",
-                                        execution_result.protocol_results.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] IGMP got {} protocol results",
                                         execution_result.protocol_results.len()
                                     ));
 
@@ -473,35 +452,22 @@ impl IgmpServer {
                                             if let Err(e) =
                                                 socket_clone.send_to(output_data, dest_addr).await
                                             {
-                                                error!("Failed to send IGMP response: {}", e);
-                                                let _ = status_clone.send(format!(
-                                                    "✗ Failed to send IGMP response: {}",
+                                                log.error(format!(
+                                                    "Failed to send IGMP response: {}",
                                                     e
                                                 ));
                                             } else {
-                                                debug!(
+                                                // Summary + full payload FileOnly: the
+                                                // send action template already reports the
+                                                // send to the TUI.
+                                                log.debug(format!(
                                                     "IGMP sent {} bytes to {}",
                                                     output_data.len(),
                                                     dest_addr
-                                                );
-                                                let _ = status_clone.send(format!(
-                                                    "[DEBUG] IGMP sent {} bytes to {}",
-                                                    output_data.len(),
-                                                    dest_addr
                                                 ));
-
-                                                // TRACE: Log full payload
-                                                let hex_str = hex::encode(output_data);
-                                                trace!("IGMP sent (hex): {}", hex_str);
-                                                let _ = status_clone.send(format!(
-                                                    "[TRACE] IGMP sent (hex): {}",
-                                                    hex_str
-                                                ));
-
-                                                let _ = status_clone.send(format!(
-                                                    "→ IGMP response to {} ({} bytes)",
-                                                    dest_addr,
-                                                    output_data.len()
+                                                log.trace(format!(
+                                                    "IGMP sent (hex): {}",
+                                                    hex::encode(output_data)
                                                 ));
                                             }
                                         }
@@ -534,12 +500,10 @@ impl IgmpServer {
                                                                     state
                                                                         .joined_groups
                                                                         .insert(group_addr);
-                                                                    info!("IGMP joined multicast group {}", group_addr);
-                                                                    let _ = status_clone.send(format!("[INFO] IGMP joined multicast group {}", group_addr));
+                                                                    log.info(format!("IGMP joined multicast group {}", group_addr));
                                                                 }
                                                                 Err(e) => {
-                                                                    error!("Failed to join multicast group {}: {}", group_addr, e);
-                                                                    let _ = status_clone.send(format!("✗ Failed to join multicast group {}: {}", group_addr, e));
+                                                                    log.error(format!("Failed to join multicast group {}: {}", group_addr, e));
                                                                 }
                                                             }
                                                         }
@@ -566,12 +530,10 @@ impl IgmpServer {
                                                                     state
                                                                         .joined_groups
                                                                         .remove(&group_addr);
-                                                                    info!("IGMP left multicast group {}", group_addr);
-                                                                    let _ = status_clone.send(format!("[INFO] IGMP left multicast group {}", group_addr));
+                                                                    log.info(format!("IGMP left multicast group {}", group_addr));
                                                                 }
                                                                 Err(e) => {
-                                                                    error!("Failed to leave multicast group {}: {}", group_addr, e);
-                                                                    let _ = status_clone.send(format!("✗ Failed to leave multicast group {}: {}", group_addr, e));
+                                                                    log.error(format!("Failed to leave multicast group {}: {}", group_addr, e));
                                                                 }
                                                             }
                                                         }
@@ -583,8 +545,9 @@ impl IgmpServer {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("IGMP LLM call failed: {}", e);
-                                    let _ = status_clone.send(format!("✗ IGMP LLM error: {}", e));
+                                    // Non-fatal: IGMP's spec-safe answer to a failure is to
+                                    // stay silent, so this is WARN not ERROR.
+                                    log.warn(format!("IGMP LLM call failed: {}", e));
                                 }
                             }
                         });
@@ -592,11 +555,7 @@ impl IgmpServer {
                     Err(e) => {
                         // A raw socket that keeps erroring would otherwise spin this loop at
                         // 100% CPU forever, so stop the capture loop and say so loudly.
-                        error!("IGMP receive error, stopping capture loop: {}", e);
-                        let _ = status_tx.send(format!(
-                            "[ERROR] IGMP receive error, stopping capture loop: {}",
-                            e
-                        ));
+                        log.error(format!("IGMP receive error, stopping capture loop: {}", e));
                         break;
                     }
                 }

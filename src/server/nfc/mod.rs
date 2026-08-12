@@ -36,13 +36,13 @@ pub mod apdu;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::nfc::actions::*;
 use crate::server::nfc::apdu::{ApduCommand, ApduResponse, SW_WRONG_LENGTH};
 use crate::state::app_state::AppState;
 use crate::state::server::ServerId;
-use crate::{console_debug, console_error, console_trace};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -50,7 +50,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, WriteHalf};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, trace};
 
 // Re-export protocol
 pub use actions::NfcServerProtocol;
@@ -125,12 +125,8 @@ impl NfcServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(bind_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!(
-            "Virtual NFC tag listening on {} (type={}, UID={})",
-            local_addr, tag_type, uid
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] NFC virtual tag listening on {} (type={}, UID={})",
+        Log::new(Some(&status_tx)).info(format!(
+            "NFC virtual tag listening on {} (type={}, UID={})",
             local_addr, tag_type, uid
         ));
 
@@ -178,18 +174,17 @@ impl NfcServer {
                         Self::apply_startup_action(tag_state.clone(), action_result, &status_tx)
                             .await
                     {
-                        console_error!(status_tx, "NFC startup action failed: {}", e);
+                        // Non-fatal: the tag stays up with its defaults.
+                        Log::new(Some(&status_tx))
+                            .warn(format!("NFC startup action failed: {}", e));
                     }
                 }
             }
             Err(e) => {
-                error!(
-                    "NFC startup configuration failed ({}); the tag is listening on {} with its \
-                     built-in defaults (type={}, UID={}) and no model-supplied NDEF records",
-                    e, local_addr, tag_type, uid
-                );
-                let _ = status_tx.send(format!(
-                    "[ERROR] NFC startup configuration failed: {e}. The tag is up with its \
+                // Non-fatal: the tag is up with its built-in defaults (wire fallback),
+                // so this is WARN not ERROR.
+                Log::new(Some(&status_tx)).warn(format!(
+                    "NFC startup configuration failed: {e}. The tag is up with its \
                      built-in defaults and carries no model-supplied NDEF records."
                 ));
             }
@@ -210,20 +205,15 @@ impl NfcServer {
                 let (stream, remote_addr) = match listener.accept().await {
                     Ok(accepted) => accepted,
                     Err(e) => {
-                        error!("NFC accept error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] NFC accept error: {e}"));
+                        Log::new(Some(&status_tx)).error(format!("NFC accept error: {e}"));
                         break;
                     }
                 };
 
                 let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
                 let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                info!(
-                    "NFC reader {} connected from {}",
-                    connection_id, remote_addr
-                );
-                let _ = status_tx.send(format!(
-                    "[INFO] NFC reader {connection_id} connected from {remote_addr}"
+                Log::new(Some(&status_tx)).info(format!(
+                    "NFC reader {connection_id} connected from {remote_addr}"
                 ));
 
                 {
@@ -270,12 +260,14 @@ impl NfcServer {
                     )
                     .await
                     {
-                        console_error!(status_tx, "NFC reader {} error: {}", connection_id, e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("NFC reader {} error: {}", connection_id, e));
                     }
                     conn_state
                         .close_connection_on_server(server_id, connection_id)
                         .await;
-                    let _ = status_tx.send(format!("✗ NFC reader {connection_id} disconnected"));
+                    Log::new(Some(&status_tx))
+                        .info(format!("NFC reader {connection_id} disconnected"));
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                 });
             }
@@ -307,6 +299,7 @@ impl NfcServer {
     ) -> Result<()> {
         let (mut read_half, mut write_half) = tokio::io::split(stream);
         let mut buffer = vec![0u8; MAX_FRAME_LEN];
+        let log = Log::new(Some(&status_tx));
 
         loop {
             let frame_len = match read_half.read_u16().await {
@@ -322,22 +315,19 @@ impl NfcServer {
             };
 
             if frame_len == 0 {
-                console_debug!(
-                    status_tx,
+                log.debug(format!(
                     "NFC reader {} sent an empty frame; ignoring",
                     connection_id
-                );
+                ));
                 continue;
             }
             if frame_len > MAX_FRAME_LEN {
-                // Attacker-controlled length: refuse rather than allocate.
-                console_error!(
-                    status_tx,
+                // Attacker-controlled length: refuse rather than allocate. Handled
+                // defensively (connection closed), so WARN not ERROR.
+                log.warn(format!(
                     "NFC reader {} announced a {}-byte frame (max {}); closing",
-                    connection_id,
-                    frame_len,
-                    MAX_FRAME_LEN
-                );
+                    connection_id, frame_len, MAX_FRAME_LEN
+                ));
                 return Ok(());
             }
 
@@ -346,13 +336,12 @@ impl NfcServer {
                 return Ok(());
             }
             let frame = buffer[..frame_len].to_vec();
-            console_trace!(
-                status_tx,
+            log.trace(format!(
                 "NFC <- {} ({} bytes) from {}",
                 hex::encode_upper(&frame),
                 frame_len,
                 connection_id
-            );
+            ));
 
             if frame_len == 1 {
                 Self::handle_control(
@@ -369,12 +358,11 @@ impl NfcServer {
             let command = match ApduCommand::parse(&frame) {
                 Ok(command) => command,
                 Err(e) => {
-                    console_error!(
-                        status_tx,
+                    // Non-fatal: answered 6700 locally (wire fallback), so WARN.
+                    log.warn(format!(
                         "NFC reader {} sent a malformed APDU: {}",
-                        connection_id,
-                        e
-                    );
+                        connection_id, e
+                    ));
                     Self::write_response(
                         &mut write_half,
                         ApduResponse::new(Vec::new(), SW_WRONG_LENGTH.0, SW_WRONG_LENGTH.1),
@@ -413,32 +401,25 @@ impl NfcServer {
         match code {
             VPCD_CTRL_ATR => {
                 let atr = tag_state.lock().await.atr.clone();
-                console_debug!(
-                    status_tx,
+                Log::new(Some(status_tx)).debug(format!(
                     "NFC reader {} requested ATR ({} bytes)",
                     connection_id,
                     atr.len()
-                );
+                ));
                 Self::write_frame(write_half, &atr, connection_id, status_tx).await
             }
             VPCD_CTRL_ON | VPCD_CTRL_OFF | VPCD_CTRL_RESET => {
                 // Power on/off/reset are acknowledged by silence in the vpcd
                 // protocol; the reader follows them with an ATR request.
-                console_debug!(
-                    status_tx,
+                Log::new(Some(status_tx)).debug(format!(
                     "NFC reader {} sent power control 0x{:02X}",
-                    connection_id,
-                    code
-                );
+                    connection_id, code
+                ));
                 Ok(())
             }
             other => {
-                warn!(
-                    "NFC reader {} sent unknown control code 0x{:02X}",
-                    connection_id, other
-                );
-                let _ = status_tx.send(format!(
-                    "[WARN] NFC reader {connection_id} sent unknown control code 0x{other:02X}"
+                Log::new(Some(status_tx)).warn(format!(
+                    "NFC reader {connection_id} sent unknown control code 0x{other:02X}"
                 ));
                 Ok(())
             }
@@ -462,6 +443,7 @@ impl NfcServer {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: &NfcServerProtocol,
     ) -> ApduResponse {
+        let log = Log::new(Some(status_tx));
         let mut event_data = {
             let tag = tag_state.lock().await;
             json!({
@@ -502,15 +484,15 @@ impl NfcServer {
             Event::new(&NFC_APDU_RECEIVED_EVENT, event_data)
         };
 
-        console_debug!(
-            status_tx,
+        // FileOnly: the nfc_* event template renders the equivalent line to the TUI.
+        log.debug(format!(
             "NFC {} {} on {} (Lc={}, Le={:?})",
             event.id(),
             command.ins_name(),
             connection_id,
             command.data.len(),
             command.le
-        );
+        ));
 
         let execution = match call_llm(
             llm_client,
@@ -524,13 +506,13 @@ impl NfcServer {
         {
             Ok(execution) => execution,
             Err(e) => {
-                console_error!(
-                    status_tx,
+                // Non-fatal: the tag answers 6F00 (wire fallback), so WARN.
+                log.warn(format!(
                     "NFC handler failed for {} on {}: {}; answering 6F00",
                     event.id(),
                     connection_id,
                     e
-                );
+                ));
                 return ApduResponse::card_error();
             }
         };
@@ -552,21 +534,18 @@ impl NfcServer {
                         if response.is_none() {
                             response = Some(decoded);
                         } else {
-                            console_error!(
-                                status_tx,
+                            log.warn(format!(
                                 "NFC handler returned more than one respond_to_apdu for {}; \
                                  ignoring the extra one",
                                 connection_id
-                            );
+                            ));
                         }
                     }
                     Err(e) => {
-                        console_error!(
-                            status_tx,
+                        log.warn(format!(
                             "NFC respond_to_apdu could not be decoded on {}: {}",
-                            connection_id,
-                            e
-                        );
+                            connection_id, e
+                        ));
                     }
                 }
             }
@@ -575,12 +554,12 @@ impl NfcServer {
         match response {
             Some(response) => response,
             None => {
-                console_error!(
-                    status_tx,
+                // Fail closed: the tag answers 6F00 (wire fallback), so WARN.
+                log.warn(format!(
                     "NFC handler produced no respond_to_apdu for {} on {}; answering 6F00",
                     event.id(),
                     connection_id
-                );
+                ));
                 ApduResponse::card_error()
             }
         }
@@ -608,8 +587,7 @@ impl NfcServer {
                         ));
                     }
                     tag_state.lock().await.atr = atr;
-                    debug!("Virtual NFC tag ATR set to {}", atr_hex);
-                    let _ = status_tx.send(format!("[INFO] NFC set ATR: {atr_hex}"));
+                    Log::new(Some(status_tx)).info(format!("NFC set ATR: {atr_hex}"));
                     Ok(())
                 }
                 "set_ndef_message" => {
@@ -617,11 +595,8 @@ impl NfcServer {
                         .as_array()
                         .ok_or_else(|| anyhow!("Missing records"))?;
                     tag_state.lock().await.ndef_records = records.clone();
-                    debug!("Virtual NFC tag NDEF set: {} record(s)", records.len());
-                    let _ = status_tx.send(format!(
-                        "[INFO] NFC set NDEF message: {} record(s)",
-                        records.len()
-                    ));
+                    Log::new(Some(status_tx))
+                        .info(format!("NFC set NDEF message: {} record(s)", records.len()));
                     Ok(())
                 }
                 "respond_to_apdu" => Err(anyhow!(
@@ -644,8 +619,10 @@ impl NfcServer {
     ) -> Result<()> {
         let status_word = response.status_word();
         let bytes = response.into_bytes();
-        let _ = status_tx.send(format!(
-            "→ NFC response SW={} ({} data byte(s)) to {}",
+        // FileOnly: the respond_to_apdu action template already reports the response
+        // to the TUI.
+        Log::new(Some(status_tx)).debug(format!(
+            "NFC response SW={} ({} data byte(s)) to {}",
             status_word,
             bytes.len().saturating_sub(2),
             connection_id
@@ -661,13 +638,13 @@ impl NfcServer {
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         if payload.len() > u16::MAX as usize {
-            // Cannot be framed; answer the card error instead of truncating.
-            console_error!(
-                status_tx,
+            // Cannot be framed; answer the card error instead of truncating (wire
+            // fallback), so WARN not ERROR.
+            Log::new(Some(status_tx)).warn(format!(
                 "NFC response for {} is {} bytes, too large to frame; sending 6F00",
                 connection_id,
                 payload.len()
-            );
+            ));
             let fallback = ApduResponse::card_error().into_bytes();
             write_half.write_u16(fallback.len() as u16).await?;
             write_half.write_all(&fallback).await?;
@@ -675,13 +652,12 @@ impl NfcServer {
             return Ok(());
         }
 
-        console_trace!(
-            status_tx,
+        Log::new(Some(status_tx)).trace(format!(
             "NFC -> {} ({} bytes) to {}",
             hex::encode_upper(payload),
             payload.len(),
             connection_id
-        );
+        ));
         write_half.write_u16(payload.len() as u16).await?;
         write_half.write_all(payload).await?;
         write_half.flush().await?;
