@@ -4,6 +4,7 @@
 //! size-based rotating file writer (see [`RotatingFileWriter`]) that bounds
 //! total on-disk log usage.
 
+pub mod emit;
 pub mod patterns;
 
 use std::ffi::OsString;
