@@ -10,6 +10,7 @@ use crate::llm::actions::{execute_tool, ActionDefinition, ActionResponse, ToolAc
 use crate::llm::conversation_state::ConversationState;
 use crate::llm::ollama_client::{ChatRequest, ChatResponse, Message, OllamaClient};
 use crate::llm::{RateLimiter, RequestSource};
+use crate::logging::emit::Log;
 use crate::state::app_state::{AppState, ConversationSource, WebApprovalRequest, WebSearchMode};
 use anyhow::{Context, Result};
 use std::sync::{Arc, Mutex};
@@ -193,6 +194,16 @@ impl ConversationHandler {
         self
     }
 
+    /// Dual-sink log facade bound to this conversation's status channel.
+    ///
+    /// The conversation layer owns the *semantic* narration of a round-trip — which
+    /// attempt, that a response arrived, the outcome — and is the only layer that
+    /// narrates it to the TUI. Wire facts (sizes, tokens) belong to the transport
+    /// (`OllamaClient`) and stay file-only. Full payloads are TRACE/file-only.
+    fn log(&self) -> Log<'_> {
+        Log::new(self.status_tx.as_ref())
+    }
+
     /// Total characters of everything but the system message.
     fn history_chars(&self) -> usize {
         self.messages.iter().skip(1).map(|m| m.content.len()).sum()
@@ -260,7 +271,8 @@ impl ConversationHandler {
             dropped_chars += removed.content.len();
         }
 
-        debug!(
+        // Trimming is a DEBUG summary — file-only, off the TUI stream.
+        self.log().debug(format!(
             "Trimmed conversation history: dropped {} message(s) / {} chars, {} message(s) and \
              {} chars remain (caps: {} messages, {} chars)",
             dropped_messages,
@@ -269,13 +281,7 @@ impl ConversationHandler {
             self.history_chars(),
             self.max_history_messages,
             self.max_history_chars
-        );
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[DEBUG] Trimmed conversation history: dropped {} message(s) / {} chars",
-                dropped_messages, dropped_chars
-            ));
-        }
+        ));
     }
 
     /// Generate a unique conversation ID
@@ -1423,53 +1429,40 @@ impl ConversationHandler {
         for attempt in 1..=self.max_retries + 1 {
             // Bound what is actually sent before building the request.
             self.trim_history();
-            info!("LLM request (attempt {}/{})", attempt, self.max_retries + 1);
-            debug!("Message count: {}", self.messages.len());
 
-            // Send status update
-            if let Some(ref tx) = self.status_tx {
-                if attempt == 1 {
-                    let _ = tx.send("[TRACE] Sending request to LLM...".to_string());
-                } else {
-                    let _ = tx.send(format!(
-                        "[TRACE] Retrying LLM request (attempt {})...",
-                        attempt
-                    ));
-                }
-            }
+            // ONE semantic line per request attempt, to BOTH channels. The transport
+            // (OllamaClient) separately logs the wire facts (model, sizes) file-only, so
+            // the round-trip is no longer announced twice per layer to each channel.
+            self.log().info(format!(
+                "LLM request (attempt {}/{})",
+                attempt,
+                self.max_retries + 1
+            ));
 
-            // Log summary of message count
+            // Message-count summary and the per-message payload dump are DEBUG/TRACE:
+            // file-only, never streamed to the unbounded TUI channel.
             let new_message_count = self.messages.len().saturating_sub(self.last_logged_index);
-            debug!(
+            self.log().debug(format!(
                 "Conversation state: {} messages, {} new since last call",
                 self.messages.len(),
                 new_message_count
-            );
+            ));
 
-            // Log only new messages at TRACE level
             if new_message_count > 0 {
-                trace!("New messages:");
+                let log = self.log();
+                log.trace("New messages:");
                 for (idx, msg) in self
                     .messages
                     .iter()
                     .enumerate()
                     .skip(self.last_logged_index)
                 {
-                    trace!(
+                    log.trace(format!(
                         "  Message {}: [{}] {}",
                         idx + 1,
                         msg.role,
                         crate::utils::truncate_for_log(&msg.content, 200)
-                    );
-                    if let Some(ref tx) = self.status_tx {
-                        let preview = crate::utils::truncate_for_log(&msg.content, 200);
-                        // Send header line
-                        let _ = tx.send(format!("[TRACE] ·  Message {}: [{}]", idx + 1, msg.role,));
-                        // Send content indented and dimmed using the shared formatting function
-                        for line in crate::llm::format_indented_dimmed_lines(&preview, 8) {
-                            let _ = tx.send(format!("[TRACE] {}", line));
-                        }
-                    }
+                    ));
                 }
             }
 
@@ -1565,24 +1558,23 @@ impl ConversationHandler {
                 generate_response.text
             };
 
-            info!(
+            // ONE semantic line that a response arrived, to BOTH channels (the result
+            // half of the round-trip). The transport already logged response size/tokens
+            // file-only, and the full body goes to the file at TRACE below — it is never
+            // streamed to the TUI.
+            self.log().info(format!(
                 "LLM response received (attempt {}): {} chars",
                 attempt,
                 response_text.len(),
-            );
+            ));
 
             // Extract reasoning if present (before normalization to preserve formatting)
             let (reasoning, cleaned_response) = extract_reasoning(&response_text);
 
-            // Log reasoning at TRACE level if present
+            // Reasoning is a full payload: TRACE, file-only.
             if let Some(ref reasoning_text) = reasoning {
-                trace!("LLM Reasoning: {}", reasoning_text);
-                if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send("[TRACE] Reasoning:".to_string());
-                    for line in crate::llm::format_indented_dimmed_lines(reasoning_text, 8) {
-                        let _ = tx.send(format!("[TRACE] {}", line));
-                    }
-                }
+                self.log()
+                    .trace(format!("LLM Reasoning: {}", reasoning_text));
             }
 
             // Normalize the cleaned response: collapse whitespace and remove extra newlines
@@ -1593,18 +1585,19 @@ impl ConversationHandler {
                 .collect::<Vec<_>>()
                 .join("");
 
-            debug!(
+            // Normalized-response preview is a DEBUG summary and the full body a TRACE
+            // payload — both file-only. The full normalized body used to be pushed to the
+            // TUI here, duplicating the transport's own body dump; that is removed.
+            let log = self.log();
+            log.debug(format!(
                 "Response (normalized): {}",
                 crate::utils::truncate_for_log(&normalized_response, 200)
+            ));
+            log.payload(
+                "LLM response (normalized)",
+                &normalized_response,
+                usize::MAX,
             );
-
-            if let Some(ref tx) = self.status_tx {
-                // Don't truncate for DEBUG level - show full response (but normalized)
-                let _ = tx.send(format!("[DEBUG] LLM response (attempt {}):", attempt));
-                for line in crate::llm::format_indented_dimmed_lines(&normalized_response, 8) {
-                    let _ = tx.send(format!("[DEBUG] {}", line));
-                }
-            }
 
             // Try to parse as ActionResponse (use normalized version for better compatibility)
             match ActionResponse::from_str(&normalized_response) {

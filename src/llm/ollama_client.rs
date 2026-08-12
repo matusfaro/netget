@@ -2,10 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::llm::actions::{
-    execute_tool, summarize_actions, ActionResponse, ToolAction, ToolResult,
-};
+use crate::llm::actions::ActionResponse;
 use crate::llm::circuit_breaker::{is_transport_failure, BreakerStatus, CircuitBreaker};
+use crate::logging::emit::Log;
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use ollama_rs::generation::completion::request::GenerationRequest;
@@ -528,6 +527,26 @@ impl OllamaClient {
         self
     }
 
+    /// The TUI status channel this client narrates to, if any.
+    ///
+    /// Exposed so the event-logging path (`action_helper::call_llm`) can route
+    /// templated event lifecycle lines to the same TUI stream the transport
+    /// uses, instead of always passing `None` to the template renderer.
+    pub fn status_tx(&self) -> Option<&mpsc::UnboundedSender<String>> {
+        self.status_tx.as_ref()
+    }
+
+    /// Dual-sink log facade bound to this client's status channel.
+    ///
+    /// The transport layer owns **wire facts** (model, sizes, tokens) which are
+    /// `DEBUG`/`TRACE` and therefore file-only through the facade's defaults; it
+    /// narrates to the TUI only for `WARN`/`ERROR`. The conversation layer is the
+    /// one that narrates the round-trip to the TUI. This split is what removes the
+    /// request/response double-logging.
+    fn log(&self) -> Log<'_> {
+        Log::new(self.status_tx.as_ref())
+    }
+
     /// Set the mock configuration file path (for testing)
     pub fn with_mock_config_file(mut self, path: Option<std::path::PathBuf>) -> Self {
         self.mock_config_file = path;
@@ -588,9 +607,7 @@ impl OllamaClient {
             Ok(()) => Ok(()),
             Err(open) => {
                 debug!("Short-circuiting LLM request: {}", open);
-                if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send(format!("[WARN] {}", self.breaker.status().summary()));
-                }
+                self.log().warn(self.breaker.status().summary());
                 Err(anyhow::Error::new(open))
             }
         }
@@ -607,11 +624,7 @@ impl OllamaClient {
             Err(e) if is_transport_failure(e) => {
                 let summary = format!("{:#}", e);
                 if self.breaker.record_failure(&summary) {
-                    let status = self.breaker.status();
-                    error!("{}", status.summary());
-                    if let Some(ref tx) = self.status_tx {
-                        let _ = tx.send(format!("[ERROR] {}", status.summary()));
-                    }
+                    self.log().error(self.breaker.status().summary());
                 } else {
                     warn!(
                         "LLM transport failure {}/{} before the circuit breaker opens: {}",
@@ -665,43 +678,21 @@ impl OllamaClient {
         prompt: &str,
         format: Option<serde_json::Value>,
     ) -> Result<GenerateResponse> {
-        // DEBUG: Summary
-        debug!(
+        // Transport owns wire facts: DEBUG summary + TRACE payload, both file-only.
+        // The conversation layer is the one that narrates the round-trip to the TUI.
+        let log = self.log();
+        log.debug(format!(
             "LLM request: model={}, prompt_len={} chars, format={}",
             model,
             prompt.len(),
             if format.is_some() { "JSON" } else { "text" }
-        );
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[DEBUG] LLM request: model={}, prompt_len={} chars",
-                model,
-                prompt.len()
-            ));
-        }
-
-        // TRACE: Full payload
-        trace!("Full LLM prompt:\n{}", prompt);
-        // Disable prompt logging, it's too much
-        // if let Some(ref tx) = self.status_tx {
-        //     let _ = tx.send("[TRACE] LLM prompt:".to_string());
-        //     for line in crate::llm::format_indented_dimmed_lines(prompt, 8) {
-        //         let _ = tx.send(format!("[TRACE] {}", line));
-        //     }
-        // }
+        ));
+        log.payload("Full LLM prompt", prompt, usize::MAX);
         if let Some(ref schema) = format {
-            trace!(
+            log.trace(format!(
                 "JSON schema:\n{}",
                 serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string())
-            );
-            if let Some(ref tx) = self.status_tx {
-                let schema_str =
-                    serde_json::to_string_pretty(schema).unwrap_or_else(|_| "invalid".to_string());
-                let _ = tx.send("[TRACE] JSON schema:".to_string());
-                for line in crate::llm::format_indented_dimmed_lines(&schema_str, 8) {
-                    let _ = tx.send(format!("[TRACE] {}", line));
-                }
-            }
+            ));
         }
 
         // Dispatch to the appropriate backend
@@ -860,55 +851,33 @@ impl OllamaClient {
                 .await;
         }
 
-        // DEBUG: Summary with token info
-        debug!(
+        // Wire fact: response size + tokens. DEBUG, file-only.
+        log.debug(format!(
             "LLM response: response_len={} chars, tokens={}i/{}o/{}t",
             response_text.len(),
             token_usage.prompt_tokens,
             token_usage.completion_tokens,
             token_usage.total_tokens
-        );
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[DEBUG] LLM response: response_len={} chars, tokens={} prompt + {} completion = {} total",
-                response_text.len(),
-                token_usage.prompt_tokens,
-                token_usage.completion_tokens,
-                token_usage.total_tokens
-            ));
-        }
+        ));
 
-        // Check for empty response (model may be incompatible with JSON format)
+        // Check for empty response (model may be incompatible with JSON format).
+        // This is a real failure the peer will feel, so it reaches the TUI (ERROR).
         if response_text.is_empty() || response_text.trim().is_empty() {
             let error_msg = format!(
                 "Model '{}' returned empty response (used {} completion tokens).",
                 model, token_usage.completion_tokens
             );
-            error!("{}", error_msg);
-            if let Some(ref tx) = self.status_tx {
-                let _ = tx.send(format!("[ERROR] {}", error_msg));
-            }
+            log.error(&error_msg);
             return Err(anyhow::anyhow!(error_msg));
         }
 
-        // TRACE: Full payload with pretty-printed JSON if possible
+        // TRACE: full payload, file-only (pretty-printed JSON when possible).
         if let Ok(json) = serde_json::from_str::<serde_json::Value>(&response_text) {
-            let pretty = serde_json::to_string_pretty(&json).unwrap_or(response_text.clone());
-            trace!("Full LLM response (JSON):\n{}", pretty);
-            if let Some(ref tx) = self.status_tx {
-                let _ = tx.send("[TRACE] LLM response (JSON):".to_string());
-                for line in crate::llm::format_indented_dimmed_lines(&pretty, 8) {
-                    let _ = tx.send(format!("[TRACE] {}", line));
-                }
-            }
+            let pretty =
+                serde_json::to_string_pretty(&json).unwrap_or_else(|_| response_text.clone());
+            log.payload("Full LLM response (JSON)", &pretty, usize::MAX);
         } else {
-            trace!("Full LLM response (text):\n{}", response_text);
-            if let Some(ref tx) = self.status_tx {
-                let _ = tx.send("[TRACE] LLM response (text):".to_string());
-                for line in crate::llm::format_indented_dimmed_lines(&response_text, 8) {
-                    let _ = tx.send(format!("[TRACE] {}", line));
-                }
-            }
+            log.payload("Full LLM response (text)", &response_text, usize::MAX);
         }
 
         Ok(GenerateResponse {
@@ -939,22 +908,16 @@ impl OllamaClient {
     }
 
     async fn chat_with_tools_inner(&self, request: &ChatRequest) -> Result<ChatResponse> {
-        debug!(
+        // Transport wire facts: file-only through the facade defaults.
+        let log = self.log();
+        log.debug(format!(
             "Chat request: model={}, messages={}, tools={}",
             request.model,
             request.messages.len(),
             request.tools.len()
-        );
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[DEBUG] Chat request: model={}, messages={}, tools={}",
-                request.model,
-                request.messages.len(),
-                request.tools.len()
-            ));
-        }
+        ));
 
-        trace!(
+        log.trace(format!(
             "Chat messages: {:?}",
             request
                 .messages
@@ -967,7 +930,7 @@ impl OllamaClient {
                     )
                 })
                 .collect::<Vec<_>>()
-        );
+        ));
 
         let chat_response = match &self.backend {
             LlmBackend::Ollama(ollama) => self.chat_with_tools_ollama(ollama, request).await?,
@@ -995,24 +958,14 @@ impl OllamaClient {
                 .await;
         }
 
-        debug!(
-            "Chat response: content={}, tool_calls={}, tokens={}i/{}o/{}t",
+        log.debug(format!(
+            "Chat response: content_len={}, tool_calls={}, tokens={}i/{}o/{}t",
             chat_response.content.as_ref().map(|c| c.len()).unwrap_or(0),
             chat_response.tool_calls.len(),
             chat_response.token_usage.prompt_tokens,
             chat_response.token_usage.completion_tokens,
             chat_response.token_usage.total_tokens
-        );
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[DEBUG] Chat response: content_len={}, tool_calls={}, tokens={}i/{}o/{}t",
-                chat_response.content.as_ref().map(|c| c.len()).unwrap_or(0),
-                chat_response.tool_calls.len(),
-                chat_response.token_usage.prompt_tokens,
-                chat_response.token_usage.completion_tokens,
-                chat_response.token_usage.total_tokens
-            ));
-        }
+        ));
 
         Ok(chat_response)
     }
@@ -1032,18 +985,12 @@ impl OllamaClient {
             request.messages.clone(),
             request.tools.clone(),
         );
-        debug!(
+        self.log().debug(format!(
             "agent-queue: enqueued LLM request #{} ({} tools), awaiting agent answer (timeout {:?})",
             id,
             request.tools.len(),
             timeout
-        );
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[DEBUG] agent-queue: request #{} awaiting agent answer",
-                id
-            ));
-        }
+        ));
 
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(actions)) => {
@@ -1406,206 +1353,6 @@ impl OllamaClient {
         }
 
         unreachable!("Loop should always return or error")
-    }
-
-    pub async fn generate_with_tools<F, Fut>(
-        &self,
-        model: &str,
-        initial_prompt_builder: F,
-        max_iterations: usize,
-        approval_tx: Option<
-            tokio::sync::mpsc::UnboundedSender<crate::state::app_state::WebApprovalRequest>,
-        >,
-        web_search_mode: crate::state::app_state::WebSearchMode,
-    ) -> Result<Vec<serde_json::Value>>
-    where
-        F: Fn() -> Fut,
-        Fut: std::future::Future<Output = String>,
-    {
-        let mut all_actions = Vec::new();
-        let mut conversation_history = String::new();
-        let mut last_logged_position = 0; // Track where we last logged
-
-        // Build initial prompt (system + user message)
-        let initial_prompt = initial_prompt_builder().await;
-        conversation_history.push_str(&initial_prompt);
-
-        trace!(
-            "Initial conversation setup: {} chars",
-            conversation_history.len()
-        );
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[TRACE] Initial conversation: {} chars",
-                conversation_history.len()
-            ));
-        }
-
-        // Log initial messages
-        trace!(
-            "New messages:\n{}",
-            &conversation_history[last_logged_position..]
-        );
-        last_logged_position = conversation_history.len();
-
-        for turn in 1..=max_iterations {
-            // Generate response with full conversation history
-            debug!("Conversation turn {}/{}", turn, max_iterations);
-
-            let generate_response = self
-                .generate_with_format(model, &conversation_history, None)
-                .await?;
-
-            let response_text = &generate_response.text;
-
-            // Parse as action response
-            let action_response = ActionResponse::from_str(response_text)
-                .context("Failed to parse action response")?;
-
-            // Log action summary
-            let summary = summarize_actions(&action_response.actions);
-            info!("LLM response (turn {}): {}", turn, summary);
-            if let Some(ref tx) = self.status_tx {
-                let _ = tx.send(format!("[INFO] LLM response (turn {}): {}", turn, summary));
-            }
-
-            // Separate tool calls from regular actions
-            let (tools, regular): (Vec<_>, Vec<_>) = action_response
-                .actions
-                .into_iter()
-                .partition(ToolAction::is_tool_action);
-
-            // Collect regular actions
-            all_actions.extend(regular);
-
-            // If no tool calls, we're done
-            if tools.is_empty() {
-                debug!("No tool calls in response, conversation complete");
-                break;
-            }
-
-            // If this is the last iteration, warn about unused tool calls
-            if turn == max_iterations {
-                warn!(
-                    "Maximum iterations reached with {} pending tool calls",
-                    tools.len()
-                );
-                if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send(format!(
-                        "[WARN] Maximum iterations reached with {} pending tool calls",
-                        tools.len()
-                    ));
-                }
-                break;
-            }
-
-            // Append assistant's tool call actions to conversation
-            conversation_history.push_str("\n\n--- Assistant Response ---\n");
-            conversation_history.push_str(response_text);
-
-            // Execute tool calls and append results to conversation
-            conversation_history.push_str("\n\n--- Tool Results ---\n");
-
-            for tool_json in tools {
-                match ToolAction::from_json(&tool_json) {
-                    Ok(tool_action) => {
-                        info!("→ Executing tool: {}", tool_action.describe());
-                        if let Some(ref tx) = self.status_tx {
-                            let _ = tx.send(format!(
-                                "[INFO] → Executing tool: {}",
-                                tool_action.describe()
-                            ));
-                        }
-                        let result =
-                            execute_tool(&tool_action, approval_tx.as_ref(), web_search_mode, None)
-                                .await;
-                        info!("  Result: {}", result.summary());
-                        if let Some(ref tx) = self.status_tx {
-                            let _ = tx.send(format!("[INFO]   Result: {}", result.summary()));
-                        }
-
-                        // Append tool result to conversation
-                        conversation_history.push_str(&format!("\n{}\n", result.to_prompt_text()));
-                    }
-                    Err(e) => {
-                        error!("Failed to parse tool action: {}", e);
-                        if let Some(ref tx) = self.status_tx {
-                            let _ = tx.send(format!("[ERROR] Failed to parse tool action: {}", e));
-                        }
-
-                        let error_result = ToolResult::error(
-                            "unknown",
-                            "parse_error",
-                            format!("Failed to parse tool action: {}", e),
-                        );
-                        conversation_history
-                            .push_str(&format!("\n{}\n", error_result.to_prompt_text()));
-                    }
-                }
-            }
-
-            // Add reminder to complete the original request using the tool results
-            conversation_history.push_str("\nNow that you have the tool results, use the information to COMPLETE the original request.\n");
-            conversation_history.push_str("If the user asked you to extract information, use show_message to report what you found.\n");
-            conversation_history.push_str("If the user asked you to perform a task, execute the appropriate actions to finish it.\n");
-            conversation_history.push_str("\nIMPORTANT: Return ONLY valid JSON with no extra text or characters before or after.\n");
-            conversation_history.push_str("RESPONSE FORMAT: {{\"actions\": [...]}}\n");
-
-            let conv_size = conversation_history.len();
-
-            // Log only new messages since last checkpoint
-            trace!(
-                "New messages:\n{}",
-                &conversation_history[last_logged_position..]
-            );
-            if let Some(ref tx) = self.status_tx {
-                let _ = tx.send(format!(
-                    "[TRACE] Conversation updated: {} chars (added {} new chars)",
-                    conv_size,
-                    conv_size - last_logged_position
-                ));
-            }
-            last_logged_position = conv_size;
-
-            // Performance warning if conversation is getting large
-            if conv_size > 50_000 {
-                warn!("Conversation history is large: {} chars ({:.1} KB) - consider reducing max_iterations",
-                    conv_size, conv_size as f64 / 1024.0);
-                if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send(format!(
-                        "[WARN] ⚠ Large conversation: {:.1} KB",
-                        conv_size as f64 / 1024.0
-                    ));
-                }
-            } else if conv_size > 20_000 {
-                debug!(
-                    "Conversation size: {} chars ({:.1} KB)",
-                    conv_size,
-                    conv_size as f64 / 1024.0
-                );
-            }
-
-            debug!(
-                "Completed turn {}/{}, continuing conversation with tool results",
-                turn, max_iterations
-            );
-        }
-
-        let final_size = conversation_history.len();
-        info!(
-            "Multi-turn conversation complete: {} actions, final size: {} chars ({:.1} KB)",
-            all_actions.len(),
-            final_size,
-            final_size as f64 / 1024.0
-        );
-        if let Some(ref tx) = self.status_tx {
-            let _ = tx.send(format!(
-                "[INFO] ✓ Conversation complete: {} actions, {:.1} KB history",
-                all_actions.len(),
-                final_size as f64 / 1024.0
-            ));
-        }
-        Ok(all_actions)
     }
 
     /// Check if the LLM backend is available
