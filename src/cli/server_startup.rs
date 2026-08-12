@@ -251,7 +251,9 @@ pub async fn start_server_by_id(
         interface: None,
         host: None,
         port: None,
-        llm_client: llm_client.clone(),
+        // Attach the per-server status channel so event-template lifecycle logs
+        // (rendered via EventLogContext) reach the TUI, not just netget.log.
+        llm_client: llm_client.clone().with_status_tx(status_tx.clone()),
         state: Arc::new(state.clone()),
         status_tx: status_tx.clone(),
         server_id,
@@ -700,7 +702,10 @@ pub async fn start_server_from_action(
     } else {
         let ollama_url = state.get_ollama_url().await;
         OllamaClient::new(ollama_url)
-    };
+    }
+    // Attach the per-server status channel so event-template lifecycle logs
+    // (rendered via EventLogContext) reach the TUI, not just netget.log.
+    .with_status_tx(status_tx.clone());
 
     #[allow(deprecated)]
     let spawn_ctx = crate::protocol::SpawnContext {
