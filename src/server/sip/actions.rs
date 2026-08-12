@@ -413,11 +413,23 @@ fn sip_invite_action() -> ActionDefinition {
                 description: "Session Description Protocol body (required for 200 OK)".to_string(),
                 required: false,
             },
+            Parameter {
+                name: "rtp_audio".to_string(),
+                type_hint: "object".to_string(),
+                description: "Optional media to actually stream on a 200 OK: {content, tone_hz, \
+                              payload_type, duration_ms}. When NetGet is built with the `rtp` \
+                              feature, accepting a call streams this as real RTP to the m=audio \
+                              target in the caller's INVITE SDP, so the negotiated session carries \
+                              media rather than only promising it. Ignored without the `rtp` feature."
+                    .to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "sip_invite",
             "status_code": 200,
-            "sdp": "v=0\no=- 0 0 IN IP4 127.0.0.1\ns=Call\nc=IN IP4 127.0.0.1\nt=0 0\nm=audio 8000 RTP/AVP 0\n"
+            "sdp": "v=0\no=- 0 0 IN IP4 127.0.0.1\ns=Call\nc=IN IP4 127.0.0.1\nt=0 0\nm=audio 8000 RTP/AVP 0\n",
+            "rtp_audio": {"content": "tone", "tone_hz": 440, "payload_type": "pcmu", "duration_ms": 2000}
         }),
         log_template: Some(
             LogTemplate::new()

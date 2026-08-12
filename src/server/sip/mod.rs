@@ -162,6 +162,31 @@ impl SipServer {
                                                 ));
                                             }
                                         }
+
+                                        // Media flow: SIP is signaling only, but when built with
+                                        // the `rtp` feature and the accept action carries an
+                                        // `rtp_audio` description, we honour the SDP we just
+                                        // negotiated by streaming real RTP to the caller's
+                                        // advertised media address. This is what makes a SIP INVITE
+                                        // result in RTP actually arriving, rather than a 200 OK with
+                                        // an SDP that points at nothing.
+                                        #[cfg(feature = "rtp")]
+                                        {
+                                            let status_code = action
+                                                .get("status_code")
+                                                .and_then(|v| v.as_u64())
+                                                .unwrap_or(200);
+                                            if sip_message.method == "INVITE" && status_code == 200
+                                            {
+                                                if let Some(rtp_audio) = action.get("rtp_audio") {
+                                                    Self::stream_invite_media(
+                                                        sip_message.body.as_deref(),
+                                                        rtp_audio.clone(),
+                                                        status_clone.clone(),
+                                                    );
+                                                }
+                                            }
+                                        }
                                     } else {
                                         debug!(
                                             "SIP no action taken for {} request",
@@ -499,6 +524,105 @@ impl SipServer {
         let tag: u32 = rand::thread_rng().gen();
         format!("{:x}", tag)
     }
+
+    /// Stream RTP audio to the media address the caller advertised in its INVITE SDP.
+    ///
+    /// Only compiled with the `rtp` feature. The `rtp_audio` value is the same structured media
+    /// description the RTP protocol understands (`content`, `tone_hz`, `payload_type`,
+    /// `duration_ms`) — the model describes what the call carries, and the shared media engine
+    /// (`crate::server::rtp::media`) owns the samples and RTP framing. A fresh ephemeral UDP
+    /// socket is used because RTP must not share the SIP signaling port.
+    #[cfg(feature = "rtp")]
+    fn stream_invite_media(
+        caller_sdp: Option<&str>,
+        rtp_audio: serde_json::Value,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::server::rtp::media::{self, AudioCodec, RtpPacketizer};
+
+        let Some((ip, port)) = caller_sdp.and_then(parse_sdp_audio_target) else {
+            let _ = status_tx.send(
+                "[WARN] SIP INVITE had rtp_audio but no parseable m=audio target in the caller's SDP"
+                    .to_string(),
+            );
+            return;
+        };
+        let target = std::net::SocketAddr::new(ip, port);
+
+        let codec = rtp_audio
+            .get("payload_type")
+            .and_then(|v| v.as_str())
+            .map(AudioCodec::parse)
+            .unwrap_or(Ok(AudioCodec::Pcmu))
+            .unwrap_or(AudioCodec::Pcmu);
+        let content = media::parse_audio_content(&rtp_audio)
+            .unwrap_or(media::AudioContent::Tone { hz: 440.0 });
+        let duration_ms = rtp_audio
+            .get("duration_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(2000);
+
+        tokio::spawn(async move {
+            let socket =
+                match tokio::net::UdpSocket::bind(std::net::SocketAddr::from(([0u8, 0, 0, 0], 0)))
+                    .await
+                {
+                    Ok(s) => s,
+                    Err(e) => {
+                        let _ =
+                            status_tx.send(format!("[ERROR] SIP RTP socket bind failed: {}", e));
+                        return;
+                    }
+                };
+            let payload = match media::synthesize(codec, &content, duration_ms) {
+                Ok(p) => p,
+                Err(e) => {
+                    let _ = status_tx.send(format!("[WARN] SIP RTP synthesis: {}", e));
+                    return;
+                }
+            };
+            let mut packetizer =
+                RtpPacketizer::new(rand::random(), codec.payload_type(), None, None);
+            let packets = packetizer.packetize(&payload, media::G711_SAMPLES_PER_FRAME);
+            let mut sent = 0u64;
+            for pkt in &packets {
+                if socket.send_to(pkt, target).await.is_err() {
+                    break;
+                }
+                sent += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            let _ = status_tx.send(format!(
+                "→ SIP call media: {} RTP {} packet(s) to {}",
+                sent,
+                codec.rtpmap_name(),
+                target
+            ));
+        });
+    }
+}
+
+/// Extract the media target (connection IP + audio port) from an SDP offer.
+///
+/// Reads the `c=IN IP4 <ip>` connection line and the first `m=audio <port> ...` line. Returns
+/// None if either is missing or unparseable.
+#[cfg(feature = "rtp")]
+fn parse_sdp_audio_target(sdp: &str) -> Option<(std::net::IpAddr, u16)> {
+    let mut ip: Option<std::net::IpAddr> = None;
+    let mut port: Option<u16> = None;
+    for line in sdp.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("c=IN IP4 ") {
+            ip = rest
+                .trim()
+                .split('/')
+                .next()
+                .and_then(|s| s.trim().parse().ok());
+        } else if let Some(rest) = line.strip_prefix("m=audio ") {
+            port = rest.split_whitespace().next().and_then(|s| s.parse().ok());
+        }
+    }
+    Some((ip?, port?))
 }
 
 /// Parsed SIP message
