@@ -22,7 +22,16 @@ items when fifteen were already fixed and seventeen were findings rather than wo
 `DevelopmentState::Incomplete` is down from twelve to **zero**. The last one,
 `bluetooth_ble_beacon`, was a platform limit rather than unfinished work, and was closed by
 implementing the BlueZ path and making the macOS refusal explicit — see the maturity section of
-`CLAUDE.md`.
+`CLAUDE.md`. `Stable` is also **zero** now (`wireguard` demoted — see item 10).
+
+A large protocol-and-features wave landed August 2026 on top of that: **21 new server protocols**
+(named_pipe, pty, stdio, rtp, rtsp, hls + real SIP RTP, snowflake, db2, yarn, spark, reverse_shell,
+rdp, modbus, coap, websocket, kubernetes, oci_registry, radius, memcached), plus stability gating
+(`/stability` + `--min-stability`), resident scripts, the `pipe` event-forwarding tap, the
+create/update management surface, and the static-default conversion of nine mechanical protocols.
+`--all-features` is green throughout. It was built by ~10 concurrent agents and cost the fifth
+shared-index incident (see the Git section of `CLAUDE.md`, now with the `GIT_INDEX_FILE` fix) —
+history is misattributed in places but nothing was lost and the tree self-healed.
 
 Measured at `5d18c9fb` in a throwaway worktree, not on a dirty tree:
 
@@ -99,6 +108,20 @@ entries below are kept only as archive.
 7. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
 8. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
 9. `src/server/usb/{msc,serial,fido2}/CLAUDE.md` describe pre-fix behaviour and are stale.
+12. **`stdio` can only be launched via actions-JSON / `--load`, never a natural-language prompt.**
+    NetGet's bootstrap (`Args::get_actions_json` → `piped_stdin`) does a blocking `read_to_string`
+    on stdin for any non-actions-JSON invocation, so on an open pipe it blocks forever *before any
+    server starts* — a prompt can never hand a live stdin to the stdio server. And the
+    non-interactive runner `println!`s its status stream to stdout, sharing the channel with the
+    model's bytes. Both are core `src/cli/` fixes; `prog | netget "be a filter" | prog` needs them.
+13. **Per-protocol doc debt from the wave.** `src/scripting/CLAUDE.md` still says "scripts are
+    stateless by construction" (resident mode now exists); `src/server/sip/CLAUDE.md` still says no
+    RTP flows (it does with the `rtp` feature); the routing/discovery protocols' `CLAUDE.md`s still
+    describe always-LLM behaviour (they static-default now); `src/mcp_stdio/CLAUDE.md` predates the
+    `update_server`/`update_client` tools. Refresh when working nearby.
+14. **The management `/manage` TUI is list-and-shape only.** The `ServerForm`/`ClientForm` data
+    model and `update_server`/`update_client` executors are in place; a full interactive prefilled
+    create/update form is the remaining slice.
 10. **WireGuard's authorization model is backwards, and it is now the reason zero protocols are
     Stable.** Demoted to Beta (commit `4ebdd5d9`) — NetGet implements none of the protocol (it
     orchestrates `defguard_wireguard_rs`, needing root and, on macOS, `wireguard-go`), so it could

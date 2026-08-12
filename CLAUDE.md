@@ -557,6 +557,42 @@ Assume other agents work in this repo concurrently.
   `git hash-object` + `git update-index --cacheinfo` achieves the same thing when the file is
   easier to reconstruct than to patch. Either way, **verify `git diff --cached` before
   committing** — that is the only step that actually catches the mistake.
+
+- **Even the patch-the-index method races, because the index is shared. Under heavy concurrency,
+  commit through a PRIVATE index.** The fifth incident (August 2026, a wave of ~10 concurrent
+  agents): three agents each staged only their own hunks correctly via `git apply --cached`, and
+  were *still* swept — because in the window between their staging and their `git commit`, another
+  agent's bare `git commit` (no pathspec) committed the whole shared index, carrying the first
+  agent's staged files into the second agent's commit. `git diff --cached` was clean when they
+  checked it; the race happened after. Several new protocols landed misattributed inside
+  unrelated commits this way. It compiled and nothing was lost, but the branch ref also got
+  rewound twice, orphaning commits.
+
+  The shared `.git/index` is the contended resource. Give yourself a private one with
+  `GIT_INDEX_FILE` so no other agent's commit can see or sweep your staging:
+
+  ```bash
+  export GIT_INDEX_FILE=$(mktemp /tmp/idx-<your-task>.XXXX)
+  git read-tree HEAD                      # seed the private index from HEAD
+  git add -- <your paths>                 # stages into the PRIVATE index only
+  git diff --cached --name-only           # must list only your files
+  T=$(git write-tree)
+  C=$(git commit-tree "$T" -p HEAD -m "feat(x): ...")   # GPG: add -S
+  git update-ref refs/heads/master "$C" HEAD            # CAS: fails if master moved — then retry
+  unset GIT_INDEX_FILE
+  ```
+
+  Two cautions. (1) `commit-tree`+`update-ref` is the one legitimate use of `update-ref` — but it
+  must be a compare-and-swap against the `HEAD` you built on (the third arg), so it *fails* rather
+  than clobbering if master advanced; on failure, re-read HEAD and rebuild. Never `update-ref`
+  without the old-value CAS argument — an unconditional one is the force-move that got flagged as a
+  security violation. (2) This only serializes *your* commit's atomicity; it does not order you
+  against other agents. When two agents both target `master`, the CAS makes the loser retry — which
+  is correct. If your harness gives each agent its own **worktree** (separate `.git` index and
+  working tree both), that is strictly better and none of this is needed — prefer it for any agent
+  expected to commit under contention. But worktrees branched from a stale base still cost a
+  re-apply for anything touching hot central files (`action_helper.rs`, the `CommonAction` enum,
+  `executor.rs`), so isolation moves the cost from *corruption* to *merge*, it does not remove it.
 - **Shared files** (`Cargo.toml`, both registries, `server/mod.rs`, `client/mod.rs`, both test
   `mod.rs` files, `state/server.rs`): use `Edit`, add incrementally, never overwrite wholesale.
 - **Give scratchpad files a name unique to you.** Two agents independently wrote `mod.rs.bak`
