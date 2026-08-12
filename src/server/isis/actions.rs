@@ -120,7 +120,7 @@ impl Protocol for IsisProtocol {
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("Layer 2 IS-IS with pcap (ISO/IEC 10589, RFC 1195)")
-            .llm_control("Hello PDUs, LSPs, neighbor adjacencies, multicast MAC")
+            .llm_control("Optional: whether to engage with an IS-IS speaker (answer a Hello, form an adjacency, act as a honeypot) is a policy decision. With no operator policy (no instruction, no handler) the server observes passively and does NOT respond, with no LLM round-trip per PDU. When the operator opts in, the LLM decides the Hello/LSP responses")
             .e2e_testing(
                 "tests/capture_startup_reports_failure_test.rs asserts spawn() returns Err for an \
                  unknown device and for missing capture privilege. PDU handling itself is \
@@ -131,8 +131,11 @@ impl Protocol for IsisProtocol {
                  reported: spawn() awaits the pcap handle and the BPF filter and returns Err, \
                  so a privilege failure lands in ServerStatus::Error rather than Running. \
                  NEVER validated against a real router (FRR/Cisco) or any IS-IS speaker - the \
-                 earlier 'interoperable with real routers' claim was unfounded. LSP/CSNP/PSNP \
-                 are parsed and logged but not handled; there is no LSP database or SPF.",
+                 earlier 'interoperable with real routers' claim was unfounded. Whether to \
+                 respond is policy, so with no operator policy the server is a passive listener \
+                 (no response, no LLM call); this passive default is compile-verified since the \
+                 pcap path needs root and the E2E suite is #[ignore]d. LSP/CSNP/PSNP are parsed \
+                 and logged but not handled; there is no LSP database or SPF.",
             )
             .build()
     }

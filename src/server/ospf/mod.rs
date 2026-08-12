@@ -861,6 +861,24 @@ impl OspfServer {
         ospf_state: Arc<OspfState>,
         server_id: crate::state::ServerId,
     ) -> Result<()> {
+        // Whether to engage with an OSPF speaker at all — respond to a Hello, claim DR/BDR, run
+        // as a passive listener, or act as a honeypot — is a policy/engagement decision, not
+        // something the received packet determines. With no operator policy — no server
+        // instruction and no per-event handler — the spec-safe default is to listen passively
+        // and not respond, WITHOUT burning an LLM round-trip per received packet. The model is
+        // consulted only when the operator opts in with how the router should behave.
+        if !operator_wants_dynamic(&app_state, server_id, &event.event_type.id).await {
+            debug!(
+                "OSPF {} observed passively: no operator policy configured (no instruction or handler), no response and no LLM call",
+                event.event_type.id
+            );
+            let _ = status_tx.send(format!(
+                "OSPF {} observed passively: no policy configured (static default, no LLM)",
+                event.event_type.id
+            ));
+            return Ok(());
+        }
+
         match call_llm(
             &llm_client,
             &app_state,
@@ -1062,4 +1080,29 @@ impl OspfServer {
 
         Ok(())
     }
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for this
+/// server: either a non-empty server instruction was given, or an event handler is configured
+/// for `event_id`. When false the server observes passively and never consults the model —
+/// whether to respond to an OSPF speaker (and how: DR claim, honeypot, ...) is a policy decision
+/// with no configured policy to apply.
+#[cfg(feature = "ospf")]
+async fn operator_wants_dynamic(
+    state: &AppState,
+    server_id: crate::state::ServerId,
+    event_id: &str,
+) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
 }

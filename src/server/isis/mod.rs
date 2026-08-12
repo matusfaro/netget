@@ -601,6 +601,21 @@ impl IsisServer {
 
         let event = Event::new(&ISIS_HELLO_EVENT, event_data);
 
+        // Whether to engage with an IS-IS speaker — answer a Hello and form an adjacency, act as
+        // a passive listener, or run as a honeypot — is a policy/engagement decision, not
+        // something the received PDU determines. With no operator policy — no server instruction
+        // and no per-event handler — the spec-safe default is to listen passively and not
+        // respond, WITHOUT burning an LLM round-trip per captured PDU. The model is consulted
+        // only when the operator opts in with how the router should behave.
+        if !operator_wants_dynamic(app_state, server_id, &event.event_type.id).await {
+            debug!("IS-IS Hello observed passively: no operator policy configured, no response and no LLM call");
+            let _ = status_tx.send(
+                "IS-IS Hello observed passively: no policy configured (static default, no LLM)"
+                    .to_string(),
+            );
+            return Ok(());
+        }
+
         debug!("IS-IS calling LLM for Hello");
         let _ = status_tx.send("[DEBUG] IS-IS calling LLM for Hello".to_string());
 
@@ -726,4 +741,28 @@ impl IsisServer {
         // Fallback: use locally administered MAC
         Err(anyhow::anyhow!("Could not determine interface MAC address"))
     }
+}
+
+/// Returns true if the operator opted into dynamic (LLM- or handler-driven) responses for this
+/// server: either a non-empty server instruction was given, or an event handler is configured
+/// for `event_id`. When false the server observes passively and never consults the model —
+/// whether to engage with an IS-IS speaker is a policy decision with no configured policy to
+/// apply.
+async fn operator_wants_dynamic(
+    state: &AppState,
+    server_id: crate::state::ServerId,
+    event_id: &str,
+) -> bool {
+    state
+        .with_server_mut(server_id, |server| {
+            let has_instruction = !server.instruction.trim().is_empty();
+            let has_handler = server
+                .event_handler_config
+                .as_ref()
+                .map(|c| c.find_handler(event_id).is_some())
+                .unwrap_or(false);
+            has_instruction || has_handler
+        })
+        .await
+        .unwrap_or(false)
 }
