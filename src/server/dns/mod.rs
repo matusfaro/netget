@@ -3,11 +3,11 @@ pub mod actions;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::DnsProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
 use actions::DNS_QUERY_EVENT;
 use anyhow::Result;
 use hickory_proto::op::Message as DnsMessage;
@@ -15,7 +15,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
 
 /// DNS server that integrates with LLM for query handling
 pub struct DnsServer;
@@ -31,8 +30,7 @@ impl DnsServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("DNS server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] DNS server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("DNS server listening on {}", local_addr));
 
         let protocol = Arc::new(DnsProtocol::new());
 
@@ -75,12 +73,14 @@ impl DnsServer {
                             .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                        // DEBUG: Log summary
-                        console_debug!(status_tx, "DNS received {} bytes from {}", n, peer_addr);
-
-                        // TRACE: Log full payload (hex for binary DNS)
-                        let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "DNS data (hex): {}", hex_str);
+                        // Datagram summary + full payload are FileOnly: the dns_query
+                        // event template surfaces the query to the TUI, so streaming the
+                        // raw datagram too would duplicate it on the unbounded channel.
+                        {
+                            let log = Log::new(Some(&status_tx));
+                            log.debug(format!("DNS received {} bytes from {}", n, peer_addr));
+                            log.trace(format!("DNS data (hex): {}", hex::encode(&data)));
+                        }
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -89,6 +89,7 @@ impl DnsServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
+                            let log = Log::new(Some(&status_clone));
                             // Parse DNS query using hickory-proto
                             match DnsMessage::from_vec(&data) {
                                 Ok(query) => {
@@ -106,10 +107,10 @@ impl DnsServer {
                                             qname, qtype, qclass, query_id
                                         ));
 
-                                        // DEBUG: Log parsed query
-                                        debug!("DNS query: {} {} {}", qname, qtype, qclass);
-                                        let _ = status_clone.send(format!(
-                                            "[DEBUG] DNS query: {} {} {}",
+                                        // Parsed-query summary (FileOnly; the dns_query
+                                        // event template covers the TUI).
+                                        log.debug(format!(
+                                            "DNS query: {} {} {}",
                                             qname, qtype, qclass
                                         ));
                                     }
@@ -132,9 +133,8 @@ impl DnsServer {
                                         }),
                                     );
 
-                                    debug!("DNS calling LLM for query from {}", peer_addr);
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] DNS calling LLM for query from {}",
+                                    log.debug(format!(
+                                        "DNS calling LLM for query from {}",
                                         peer_addr
                                     ));
 
@@ -151,17 +151,11 @@ impl DnsServer {
                                         Ok(execution_result) => {
                                             // Display messages from LLM
                                             for message in &execution_result.messages {
-                                                info!("{}", message);
-                                                let _ = status_clone
-                                                    .send(format!("[INFO] {}", message));
+                                                log.info(message);
                                             }
 
-                                            debug!(
+                                            log.debug(format!(
                                                 "DNS got {} protocol results",
-                                                execution_result.protocol_results.len()
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] DNS got {} protocol results",
                                                 execution_result.protocol_results.len()
                                             ));
 
@@ -187,36 +181,27 @@ impl DnsServer {
                                                         )
                                                         .await;
 
-                                                    // DEBUG: Log summary
-                                                    debug!(
+                                                    // Sent summary + payload are FileOnly;
+                                                    // the access line below carries the TUI.
+                                                    log.debug(format!(
                                                         "DNS sent {} bytes to {}",
                                                         output_data.len(),
                                                         peer_addr
-                                                    );
-                                                    let _ = status_clone.send(format!(
-                                                        "[DEBUG] DNS sent {} bytes to {}",
-                                                        output_data.len(),
-                                                        peer_addr
+                                                    ));
+                                                    log.trace(format!(
+                                                        "DNS sent (hex): {}",
+                                                        hex::encode(output_data)
                                                     ));
 
-                                                    // TRACE: Log full payload (hex for binary DNS)
-                                                    let hex_str = hex::encode(output_data);
-                                                    trace!("DNS sent (hex): {}", hex_str);
-                                                    let _ = status_clone.send(format!(
-                                                        "[TRACE] DNS sent (hex): {}",
-                                                        hex_str
-                                                    ));
-
-                                                    let _ = status_clone.send(format!(
-                                                        "→ DNS response to {} ({} bytes)",
+                                                    log.info(format!(
+                                                        "DNS response to {} ({} bytes)",
                                                         peer_addr,
                                                         output_data.len()
                                                     ));
                                                 } else {
-                                                    debug!(
-                                                        "DNS protocol result has no output data"
+                                                    log.debug(
+                                                        "DNS protocol result has no output data",
                                                     );
-                                                    let _ = status_clone.send("[DEBUG] DNS protocol result has no output data".to_string());
                                                 }
                                             }
                                         }
@@ -229,17 +214,15 @@ impl DnsServer {
                                             // query ID and question section are echoed, without
                                             // which a stub resolver discards the packet and we
                                             // are back to silence.
-                                            error!(
+                                            log.warn(format!(
                                                 "DNS LLM call failed for query from {} ({}): {}",
                                                 peer_addr, connection_id, e
-                                            );
-                                            let _ =
-                                                status_clone.send(format!("✗ DNS LLM error: {e}"));
+                                            ));
                                             if crate::llm::is_overload_error(&e) {
-                                                warn!(
+                                                log.warn(format!(
                                                     "DNS SERVFAIL to {}: LLM capacity exhausted",
                                                     peer_addr
-                                                );
+                                                ));
                                             }
 
                                             match actions::build_servfail(&query) {
@@ -257,19 +240,16 @@ impl DnsServer {
                                                             Some(1),
                                                         )
                                                         .await;
-                                                    let _ = status_clone.send(format!(
-                                                        "→ DNS SERVFAIL to {} ({} bytes)",
+                                                    log.info(format!(
+                                                        "DNS SERVFAIL to {} ({} bytes)",
                                                         peer_addr,
                                                         packet.len()
                                                     ));
                                                 }
                                                 Err(build_err) => {
-                                                    error!(
+                                                    log.error(format!(
                                                         "DNS failed to build SERVFAIL for {}: {}",
                                                         peer_addr, build_err
-                                                    );
-                                                    let _ = status_clone.send(format!(
-                                                        "✗ DNS failed to build SERVFAIL: {build_err}"
                                                     ));
                                                 }
                                             }
@@ -277,28 +257,22 @@ impl DnsServer {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("Failed to parse DNS query: {}", e);
-                                    let _ = status_clone
-                                        .send(format!("✗ Failed to parse DNS query: {e}"));
+                                    log.warn(format!("Failed to parse DNS query: {e}"));
 
                                     // Fall back to hex representation for malformed queries
                                     let hex_str = hex::encode(&data);
-                                    let event_description = format!(
-                                        "Malformed DNS query from {} ({} bytes, hex: {})",
+                                    log.debug(format!(
+                                        "DNS malformed query from {} ({} bytes, hex: {})",
                                         peer_addr,
                                         data.len(),
                                         hex_str
-                                    );
-
-                                    debug!("DNS malformed query: {}", event_description);
-                                    let _ =
-                                        status_clone.send(format!("[DEBUG] {event_description}"));
+                                    ));
                                 }
                             }
                         });
                     }
                     Err(e) => {
-                        error!("DNS receive error: {}", e);
+                        Log::new(Some(&status_tx)).error(format!("DNS receive error: {}", e));
                         break;
                     }
                 }

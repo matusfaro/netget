@@ -9,16 +9,16 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info};
 
 use super::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::TcpProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
 use actions::{TCP_CONNECTION_OPENED_EVENT, TCP_DATA_RECEIVED_EVENT};
 
 /// Connection state for LLM processing
@@ -54,8 +54,7 @@ impl TcpServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("TCP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] TCP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("TCP server listening on {}", local_addr));
 
         let connections = Arc::new(Mutex::new(HashMap::new()));
         let protocol = Arc::new(TcpProtocol::new());
@@ -162,15 +161,20 @@ impl TcpServer {
                                         app_state_clone
                                             .close_connection_on_server(server_id, connection_id)
                                             .await;
-                                        let _ = status_tx_clone
-                                            .send(format!("✗ Connection {connection_id} closed"));
+                                        Log::new(Some(&status_tx_clone))
+                                            .info(format!("Connection {connection_id} closed"));
                                         let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                         break;
                                     }
                                     Ok(n) => {
                                         let data = Bytes::copy_from_slice(&buffer[..n]);
 
-                                        // DEBUG: Log summary with data preview
+                                        // Data summary + full payload. These are FileOnly:
+                                        // the tcp_data_received event template renders the
+                                        // equivalent lines to the TUI (see actions.rs), so
+                                        // streaming the payload here too would duplicate it
+                                        // and load the unbounded status channel.
+                                        let log = Log::new(Some(&status_tx_clone));
                                         if data.iter().all(|&b| {
                                             b.is_ascii_graphic() || b.is_ascii_whitespace()
                                         }) {
@@ -180,37 +184,19 @@ impl TcpServer {
                                             } else {
                                                 data_str.to_string()
                                             };
-                                            debug!(
+                                            log.debug(format!(
                                                 "TCP received {} bytes on {}: {}",
                                                 n, connection_id, preview
-                                            );
-                                            let _ = status_tx_clone.send(format!(
-                                                "[DEBUG] TCP received {} bytes on {}: {}",
-                                                n, connection_id, preview
                                             ));
-
-                                            // TRACE: Log full text payload
-                                            trace!("TCP data (text): {:?}", data_str);
-                                            let _ = status_tx_clone.send(format!(
-                                                "[TRACE] TCP data (text): {:?}",
-                                                data_str
-                                            ));
+                                            log.trace(format!("TCP data (text): {:?}", data_str));
                                         } else {
-                                            debug!(
+                                            log.debug(format!(
                                                 "TCP received {} bytes on {} (binary data)",
                                                 n, connection_id
-                                            );
-                                            let _ = status_tx_clone.send(format!(
-                                                "[DEBUG] TCP received {} bytes on {} (binary data)",
-                                                n, connection_id
                                             ));
-
-                                            // TRACE: Log full hex payload
-                                            let hex_str = hex::encode(&data);
-                                            trace!("TCP data (hex): {}", hex_str);
-                                            let _ = status_tx_clone.send(format!(
-                                                "[TRACE] TCP data (hex): {}",
-                                                hex_str
+                                            log.trace(format!(
+                                                "TCP data (hex): {}",
+                                                hex::encode(&data)
                                             ));
                                         }
 
@@ -235,7 +221,10 @@ impl TcpServer {
                                         });
                                     }
                                     Err(e) => {
-                                        error!("Read error on {}: {}", connection_id, e);
+                                        Log::new(Some(&status_tx_clone)).error(format!(
+                                            "Read error on {}: {}",
+                                            connection_id, e
+                                        ));
                                         connections_clone.lock().await.remove(&connection_id);
                                         break;
                                     }
@@ -244,7 +233,7 @@ impl TcpServer {
                         });
                     }
                     Err(e) => {
-                        error!("Accept error: {}", e);
+                        Log::new(Some(&status_tx)).error(format!("Accept error: {}", e));
                         break;
                     }
                 }
@@ -288,6 +277,7 @@ impl TcpServer {
             .await
             {
                 Ok(execution_result) => {
+                    let log = Log::new(Some(&status_tx));
                     debug!("LLM TCP banner response received");
 
                     // Display messages
@@ -301,11 +291,13 @@ impl TcpServer {
                             ActionResult::Output(output_data) => {
                                 let mut write = write_half.lock().await;
                                 if let Err(e) = write.write_all(&output_data).await {
-                                    error!("Failed to send banner: {}", e);
+                                    log.error(format!("Failed to send banner: {}", e));
                                 } else if let Err(e) = write.flush().await {
-                                    error!("Failed to flush banner: {}", e);
+                                    log.error(format!("Failed to flush banner: {}", e));
                                 } else {
-                                    // DEBUG: Log summary with data preview
+                                    // Sent-data summary + payload are FileOnly: the
+                                    // send_tcp_data action template already reports the
+                                    // send to the TUI (see actions.rs).
                                     if output_data
                                         .iter()
                                         .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
@@ -316,49 +308,37 @@ impl TcpServer {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(
-                                            status_tx,
+                                        log.debug(format!(
                                             "TCP sent {} bytes to {}: {}",
                                             output_data.len(),
                                             connection_id,
                                             preview
-                                        );
-
-                                        // TRACE: Log full text payload
-                                        console_trace!(
-                                            status_tx,
-                                            "TCP sent (text): {:?}",
-                                            data_str
-                                        );
+                                        ));
+                                        log.trace(format!("TCP sent (text): {:?}", data_str));
                                     } else {
-                                        console_debug!(
-                                            status_tx,
+                                        log.debug(format!(
                                             "TCP sent {} bytes to {} (binary data)",
                                             output_data.len(),
                                             connection_id
-                                        );
-
-                                        // TRACE: Log full hex payload
-                                        let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "TCP sent (hex): {}", hex_str);
+                                        ));
+                                        log.trace(format!(
+                                            "TCP sent (hex): {}",
+                                            hex::encode(&output_data)
+                                        ));
                                     }
-                                    let _ =
-                                        status_tx.send(format!("→ Sent banner to {connection_id}"));
+                                    log.debug(format!("Sent banner to {connection_id}"));
                                 }
                             }
                             ActionResult::CloseConnection => {
                                 connections.lock().await.remove(&connection_id);
-                                let _ = status_tx.send(format!(
-                                    "✗ Closed connection {connection_id} after banner"
-                                ));
+                                log.info(format!("Closed connection {connection_id} after banner"));
                             }
                             _ => {}
                         }
                     }
                 }
                 Err(e) => {
-                    error!("LLM error generating banner: {}", e);
-                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
+                    Log::new(Some(&status_tx)).warn(format!("LLM error generating banner: {e}"));
                 }
             }
         }
@@ -395,8 +375,8 @@ impl TcpServer {
                 .and_modify(|conn| {
                     conn.queued_data.extend_from_slice(&data);
                 });
-            let _ = status_tx.send(format!(
-                "⏸ Queued {} bytes for {}",
+            Log::new(Some(&status_tx)).debug(format!(
+                "Queued {} bytes for {}",
                 data.len(),
                 connection_id
             ));
@@ -475,6 +455,7 @@ impl TcpServer {
             .await
             {
                 Ok(execution_result) => {
+                    let log = Log::new(Some(&status_tx));
                     debug!("LLM TCP response received");
 
                     // Update memory
@@ -498,11 +479,13 @@ impl TcpServer {
                             ActionResult::Output(output_data) => {
                                 let mut write = write_half.lock().await;
                                 if let Err(e) = write.write_all(&output_data).await {
-                                    error!("Failed to send response: {}", e);
+                                    log.error(format!("Failed to send response: {}", e));
                                 } else if let Err(e) = write.flush().await {
-                                    error!("Failed to flush response: {}", e);
+                                    log.error(format!("Failed to flush response: {}", e));
                                 } else {
-                                    // DEBUG: Log summary with data preview
+                                    // Sent-data summary + payload are FileOnly: the
+                                    // send_tcp_data action template already reports the
+                                    // send to the TUI (see actions.rs).
                                     if output_data
                                         .iter()
                                         .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
@@ -513,34 +496,26 @@ impl TcpServer {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(
-                                            status_tx,
+                                        log.debug(format!(
                                             "TCP sent {} bytes to {}: {}",
                                             output_data.len(),
                                             connection_id,
                                             preview
-                                        );
-
-                                        // TRACE: Log full text payload
-                                        console_trace!(
-                                            status_tx,
-                                            "TCP sent (text): {:?}",
-                                            data_str
-                                        );
+                                        ));
+                                        log.trace(format!("TCP sent (text): {:?}", data_str));
                                     } else {
-                                        console_debug!(
-                                            status_tx,
+                                        log.debug(format!(
                                             "TCP sent {} bytes to {} (binary data)",
                                             output_data.len(),
                                             connection_id
-                                        );
-
-                                        // TRACE: Log full hex payload
-                                        let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "TCP sent (hex): {}", hex_str);
+                                        ));
+                                        log.trace(format!(
+                                            "TCP sent (hex): {}",
+                                            hex::encode(&output_data)
+                                        ));
                                     }
-                                    let _ = status_tx.send(format!(
-                                        "→ Sent {} bytes to {}",
+                                    log.debug(format!(
+                                        "Sent {} bytes to {}",
                                         output_data.len(),
                                         connection_id
                                     ));
@@ -563,15 +538,14 @@ impl TcpServer {
                             .await
                             .entry(connection_id)
                             .and_modify(|conn| conn.state = ConnectionState::Accumulating);
-                        let _ = status_tx
-                            .send(format!("⏳ Waiting for more data from {connection_id}"));
+                        log.debug(format!("Waiting for more data from {connection_id}"));
                         return;
                     }
 
                     // Handle close_connection
                     if should_close {
                         connections.lock().await.remove(&connection_id);
-                        let _ = status_tx.send(format!("✗ Closed connection {connection_id}"));
+                        log.info(format!("Closed connection {connection_id}"));
                         return;
                     }
 
@@ -585,8 +559,7 @@ impl TcpServer {
                     };
 
                     if has_queued {
-                        let _ =
-                            status_tx.send(format!("▶ Processing queued data for {connection_id}"));
+                        log.debug(format!("Processing queued data for {connection_id}"));
                         // Loop continues to process queued data
                     } else {
                         // Go to Idle state
@@ -599,8 +572,8 @@ impl TcpServer {
                     }
                 }
                 Err(e) => {
-                    error!("LLM error for TCP data: {}", e);
-                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
+                    let log = Log::new(Some(&status_tx));
+                    log.warn(format!("LLM error for TCP data: {e}"));
 
                     // Say *something* on the wire. Raw TCP has no error frame, so
                     // the only honest signal is FIN: half-close the connection so
@@ -613,10 +586,10 @@ impl TcpServer {
                     // "reset to Idle and write nothing" pattern noted in
                     // CLAUDE.md's known systemic issues.
                     if crate::llm::is_overload_error(&e) {
-                        warn!(
+                        log.warn(format!(
                             "TCP connection {} closed: LLM capacity exhausted",
                             connection_id
-                        );
+                        ));
                     }
                     {
                         let mut write = write_half.lock().await;
@@ -626,9 +599,7 @@ impl TcpServer {
                     app_state
                         .close_connection_on_server(server_id, connection_id)
                         .await;
-                    let _ = status_tx.send(format!(
-                        "✗ Closed connection {connection_id} after LLM error"
-                    ));
+                    log.info(format!("Closed connection {connection_id} after LLM error"));
                     return;
                 }
             }

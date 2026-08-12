@@ -17,6 +17,7 @@ use tracing::{debug, error, info};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::HttpProtocol;
@@ -45,12 +46,8 @@ impl HttpServer {
         } else {
             "HTTP"
         };
-        info!(
-            "{} server (action-based) listening on {}",
-            protocol_name, local_addr
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] {} server listening on {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "{} server listening on {}",
             protocol_name, local_addr
         ));
 
@@ -72,8 +69,9 @@ impl HttpServer {
         // Filter parsing is fail-open: a bad rule is dropped, not fatal, so every
         // request would silently reach the LLM. Make that visible in the TUI/MCP
         // status stream, not just in netget.log.
+        let filter_log = Log::new(Some(&status_tx));
         for warning in filter.warnings() {
-            let _ = status_tx.send(format!("[ERROR] HTTP request_filter: {}", warning));
+            filter_log.error(format!("HTTP request_filter: {}", warning));
         }
 
         // Create TLS acceptor if TLS is enabled
@@ -132,12 +130,8 @@ impl HttpServer {
                             if let Some(acceptor) = tls_acceptor_clone {
                                 match acceptor.accept(stream).await {
                                     Ok(tls_stream) => {
-                                        debug!(
+                                        Log::new(Some(&status_tx_clone)).debug(format!(
                                             "{} TLS handshake complete with {}",
-                                            protocol_name, remote_addr
-                                        );
-                                        let _ = status_tx_clone.send(format!(
-                                            "[DEBUG] {} TLS handshake complete with {}",
                                             protocol_name, remote_addr
                                         ));
                                         let io = TokioIo::new(tls_stream);
@@ -154,9 +148,8 @@ impl HttpServer {
                                         .await;
                                     }
                                     Err(e) => {
-                                        error!("{} TLS handshake failed: {}", protocol_name, e);
-                                        let _ = status_tx_clone.send(format!(
-                                            "[ERROR] {} TLS handshake failed: {}",
+                                        Log::new(Some(&status_tx_clone)).warn(format!(
+                                            "{} TLS handshake failed: {}",
                                             protocol_name, e
                                         ));
                                     }
@@ -181,15 +174,16 @@ impl HttpServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone.send(format!(
-                                "✗ {} connection {connection_id} closed",
+                            Log::new(Some(&status_tx_clone)).info(format!(
+                                "{} connection {connection_id} closed",
                                 protocol_name
                             ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept HTTP connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept HTTP connection: {}", e));
                         break;
                     }
                 }
@@ -340,11 +334,10 @@ async fn handle_http_request_inner(
         if let Some(upgrade_header) = req.headers().get(hyper::header::UPGRADE) {
             if let Ok(upgrade_value) = upgrade_header.to_str() {
                 if upgrade_value.contains("h2c") {
-                    info!(
-                        "HTTP/2 upgrade (h2c) request detected from connection {}",
+                    Log::new(Some(&status_tx)).info(format!(
+                        "HTTP/2 upgrade (h2c) requested on connection {}",
                         connection_id
-                    );
-                    let _ = status_tx.send(format!("[INFO] HTTP/2 upgrade (h2c) requested"));
+                    ));
 
                     // Check for HTTP2-Settings header (required for h2c upgrade)
                     if req.headers().get("HTTP2-Settings").is_none() {
@@ -368,9 +361,8 @@ async fn handle_http_request_inner(
                         // Wait for upgrade to complete
                         match hyper::upgrade::on(req).await {
                             Ok(upgraded) => {
-                                info!("HTTP/2 upgrade successful for connection {}", connection_id);
-                                let _ = status_tx_clone.send(format!(
-                                    "[INFO] Upgraded connection {} to HTTP/2",
+                                Log::new(Some(&status_tx_clone)).info(format!(
+                                    "Upgraded connection {} to HTTP/2",
                                     connection_id
                                 ));
 
@@ -395,9 +387,8 @@ async fn handle_http_request_inner(
                                 }
                             }
                             Err(e) => {
-                                error!("HTTP/2 upgrade failed: {}", e);
-                                let _ = status_tx_clone
-                                    .send(format!("[ERROR] HTTP/2 upgrade failed: {}", e));
+                                Log::new(Some(&status_tx_clone))
+                                    .warn(format!("HTTP/2 upgrade failed: {}", e));
                             }
                         }
                     });
@@ -422,10 +413,8 @@ async fn handle_http_request_inner(
         if let Some(upgrade_header) = req.headers().get(hyper::header::UPGRADE) {
             if let Ok(upgrade_value) = upgrade_header.to_str() {
                 if upgrade_value.contains("h2c") {
-                    info!("HTTP/2 upgrade requested but http2 feature not enabled");
-                    let _ = status_tx.send(
-                        "[INFO] HTTP/2 upgrade not supported (http2 feature disabled)".to_string(),
-                    );
+                    Log::new(Some(&status_tx))
+                        .info("HTTP/2 upgrade not supported (http2 feature disabled)".to_string());
 
                     let response = Response::builder()
                         .status(501) // Not Implemented
@@ -474,8 +463,8 @@ async fn handle_http_request_inner(
     // no LLM call. With no filter configured this is a no-op (pass-through).
     if !filter.is_pass_through() && !filter.allows(&request_data, &path) {
         let resp = filter.rejection();
-        let _ = status_tx.send(format!(
-            "↩ HTTP filtered {} {} → {} (no LLM call)",
+        Log::new(Some(&status_tx)).info(format!(
+            "HTTP filtered {} {} -> {} (no LLM call)",
             request_data.method,
             path,
             resp.status().as_u16()

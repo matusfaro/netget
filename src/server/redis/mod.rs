@@ -4,10 +4,10 @@ pub mod actions;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error};
 use actions::{RedisProtocol, REDIS_COMMAND_EVENT};
 use anyhow::Result;
 use redis_protocol::resp2::decode::decode;
@@ -17,7 +17,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 /// Maximum bytes we will buffer for a single, still-incomplete RESP frame.
 ///
@@ -64,8 +64,7 @@ impl RedisServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        info!("Redis server starting on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] Redis server listening on {}", actual_addr));
+        Log::new(Some(&status_tx)).info(format!("Redis server listening on {}", actual_addr));
 
         let server = Arc::new(RedisServer::new(
             llm_client,
@@ -82,7 +81,7 @@ impl RedisServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        console_debug!(status_tx, "Redis connection from {}", addr);
+                        Log::new(Some(&status_tx)).info(format!("Redis connection from {}", addr));
 
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
@@ -129,7 +128,7 @@ impl RedisServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Redis accept error: {}", e);
+                        Log::new(Some(&status_tx)).error(format!("Redis accept error: {}", e));
                     }
                 }
             }
@@ -183,6 +182,7 @@ impl RedisHandler {
         ));
 
         let mut buffer = Vec::new();
+        let log = Log::new(Some(&self.status_tx));
 
         loop {
             // Read data from the stream
@@ -215,13 +215,9 @@ impl RedisHandler {
             }
 
             if buffer.len() > MAX_PENDING_FRAME_BYTES {
-                error!(
+                log.error(format!(
                     "Redis client {} exceeded the {} byte frame buffer limit without completing a frame; closing",
                     self.connection_id, MAX_PENDING_FRAME_BYTES
-                );
-                let _ = self.status_tx.send(format!(
-                    "[ERROR] Redis connection {} exceeded frame buffer limit, closing",
-                    self.connection_id
                 ));
                 let _ = stream
                     .write_all(&encode_error(
@@ -238,12 +234,10 @@ impl RedisHandler {
                     Ok(Some((frame, consumed))) => {
                         trace!("Redis frame: {:?}", frame);
 
-                        // Extract command from frame
+                        // Extract command from frame. FileOnly: the redis_command
+                        // event template surfaces the command to the TUI.
                         let command_str = frame_to_command_string(&frame);
-                        debug!("Redis command: {}", command_str);
-                        let _ = self
-                            .status_tx
-                            .send(format!("[DEBUG] Redis command: {}", command_str));
+                        log.debug(format!("Redis command: {}", command_str));
 
                         // Create command event
                         let event = Event::new(
@@ -376,14 +370,10 @@ impl RedisHandler {
                                 // already know that prefix means "not ready yet, retry", and
                                 // several retry it automatically. Anything else is `-ERR`.
                                 let overloaded = crate::llm::is_overload_error(&e);
-                                error!(
-                                    "LLM error for Redis command '{}' on connection {} (overload={}): {}",
-                                    command_str, self.connection_id, overloaded, e
-                                );
                                 let message = redis_error_message(&e, overloaded);
-                                let _ = self.status_tx.send(format!(
-                                    "[ERROR] Redis connection {} replying: -{}",
-                                    self.connection_id, message
+                                log.warn(format!(
+                                    "LLM error for Redis command '{}' on connection {} (overload={}); replying -{}: {}",
+                                    command_str, self.connection_id, overloaded, message, e
                                 ));
                                 response.extend_from_slice(&encode_error(&message));
                             }
