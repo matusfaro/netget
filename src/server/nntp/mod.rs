@@ -7,12 +7,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
 
-use crate::console_error;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::NntpProtocol;
 use crate::state::app_state::AppState;
@@ -33,7 +32,7 @@ impl NntpServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("NNTP server (action-based) listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("NNTP server listening on {}", local_addr));
 
         let protocol = Arc::new(NntpProtocol::new());
 
@@ -51,6 +50,7 @@ impl NntpServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
+                            let log = Log::new(Some(&status_clone));
                             let (read_half, write_half) = tokio::io::split(stream);
                             let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
 
@@ -79,9 +79,8 @@ impl NntpServer {
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
 
                             // Send initial greeting
-                            debug!("NNTP sending greeting to connection {}", connection_id);
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] NNTP sending greeting to connection {}",
+                            log.debug(format!(
+                                "NNTP sending greeting to connection {}",
                                 connection_id
                             ));
 
@@ -103,8 +102,7 @@ impl NntpServer {
                             {
                                 Ok(execution_result) => {
                                     for message in &execution_result.messages {
-                                        info!("{}", message);
-                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                        log.info(message);
                                     }
 
                                     for protocol_result in execution_result.protocol_results {
@@ -113,27 +111,18 @@ impl NntpServer {
                                             let _ = write.write_all(&data).await;
                                             let _ = write.flush().await;
 
-                                            // DEBUG: Log summary
+                                            // Sent summary + payload are FileOnly.
                                             let response = String::from_utf8_lossy(&data);
                                             let preview =
                                                 crate::utils::truncate_for_log(&response, 100);
-                                            debug!(
+                                            log.debug(format!(
                                                 "NNTP sent {} bytes on connection {}: {}",
                                                 data.len(),
                                                 connection_id,
                                                 preview.trim()
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] NNTP sent {} bytes on connection {}: {}",
-                                                data.len(),
-                                                connection_id,
-                                                preview.trim()
                                             ));
-
-                                            // TRACE: Log full payload
-                                            trace!("NNTP sent (text): {:?}", response.trim());
-                                            let _ = status_clone.send(format!(
-                                                "[TRACE] NNTP sent (text): {:?}",
+                                            log.trace(format!(
+                                                "NNTP sent (text): {:?}",
                                                 response.trim()
                                             ));
                                         }
@@ -144,15 +133,12 @@ impl NntpServer {
                                     // temporarily unavailable`, after which the server closes.
                                     // Writing nothing left the client blocked reading a
                                     // greeting line that was never coming.
-                                    error!(
-                                        "NNTP greeting LLM error on connection {}: {}",
-                                        connection_id, e
-                                    );
                                     let line = nntp_greeting_failure_line(&e);
-                                    let _ = status_clone.send(format!(
-                                        "[ERROR] NNTP connection {} refused: {}",
+                                    log.warn(format!(
+                                        "NNTP greeting LLM error on connection {} (refused: {}): {}",
                                         connection_id,
-                                        line.trim_end()
+                                        line.trim_end(),
+                                        e
                                     ));
                                     {
                                         let mut write = write_half_arc.lock().await;
@@ -177,25 +163,16 @@ impl NntpServer {
                                     break;
                                 }
 
-                                // DEBUG: Log summary with text preview
+                                // Summary + payload FileOnly: the nntp_command_received
+                                // event template surfaces the command to the TUI.
                                 let preview = crate::utils::truncate_for_log(&line, 100);
-                                debug!(
+                                log.debug(format!(
                                     "NNTP received {} bytes on connection {}: {}",
                                     n,
                                     connection_id,
                                     preview.trim()
-                                );
-                                let _ = status_clone.send(format!(
-                                    "[DEBUG] NNTP received {} bytes on connection {}: {}",
-                                    n,
-                                    connection_id,
-                                    preview.trim()
                                 ));
-
-                                // TRACE: Log full text payload
-                                trace!("NNTP data (text): {:?}", line.trim());
-                                let _ = status_clone
-                                    .send(format!("[TRACE] NNTP data (text): {:?}", line.trim()));
+                                log.trace(format!("NNTP data (text): {:?}", line.trim()));
 
                                 let event = Event::new(
                                     &NNTP_COMMAND_RECEIVED_EVENT,
@@ -204,9 +181,8 @@ impl NntpServer {
                                     }),
                                 );
 
-                                debug!("NNTP calling LLM for connection {}", connection_id);
-                                let _ = status_clone.send(format!(
-                                    "[DEBUG] NNTP calling LLM for connection {}",
+                                log.debug(format!(
+                                    "NNTP calling LLM for connection {}",
                                     connection_id
                                 ));
 
@@ -222,17 +198,11 @@ impl NntpServer {
                                 {
                                     Ok(execution_result) => {
                                         for message in &execution_result.messages {
-                                            info!("{}", message);
-                                            let _ =
-                                                status_clone.send(format!("[INFO] {}", message));
+                                            log.info(message);
                                         }
 
-                                        debug!(
+                                        log.debug(format!(
                                             "NNTP got {} protocol results",
-                                            execution_result.protocol_results.len()
-                                        );
-                                        let _ = status_clone.send(format!(
-                                            "[DEBUG] NNTP got {} protocol results",
                                             execution_result.protocol_results.len()
                                         ));
 
@@ -243,26 +213,19 @@ impl NntpServer {
                                                     let _ = write.write_all(&data).await;
                                                     let _ = write.flush().await;
 
-                                                    // DEBUG: Log summary with text preview
+                                                    // Sent summary + payload are FileOnly.
                                                     let response = String::from_utf8_lossy(&data);
                                                     let preview = crate::utils::truncate_for_log(
                                                         &response, 100,
                                                     );
-                                                    debug!(
+                                                    log.debug(format!(
                                                         "NNTP sent {} bytes on connection {}: {}",
                                                         data.len(),
                                                         connection_id,
                                                         preview.trim()
-                                                    );
-                                                    let _ = status_clone.send(format!("[DEBUG] NNTP sent {} bytes on connection {}: {}", data.len(), connection_id, preview.trim()));
-
-                                                    // TRACE: Log full text payload
-                                                    trace!(
+                                                    ));
+                                                    log.trace(format!(
                                                         "NNTP sent (text): {:?}",
-                                                        response.trim()
-                                                    );
-                                                    let _ = status_clone.send(format!(
-                                                        "[TRACE] NNTP sent (text): {:?}",
                                                         response.trim()
                                                     ));
                                                 }
@@ -279,15 +242,12 @@ impl NntpServer {
                                         // refusal on every command NNTP has, AUTHINFO
                                         // included - there is no way for this path to
                                         // authenticate anyone or hand back an article.
-                                        error!(
-                                            "NNTP LLM error on connection {}: {}",
-                                            connection_id, e
-                                        );
                                         let (reply, close) = nntp_command_failure_line(&e);
-                                        let _ = status_clone.send(format!(
-                                            "[ERROR] NNTP connection {} replying: {}",
+                                        log.warn(format!(
+                                            "NNTP LLM error on connection {} (replying: {}): {}",
                                             connection_id,
-                                            reply.trim_end()
+                                            reply.trim_end(),
+                                            e
                                         ));
                                         {
                                             let mut write = write_half_arc.lock().await;
@@ -306,9 +266,7 @@ impl NntpServer {
                                 line.clear();
                             }
 
-                            debug!("NNTP connection {} closed", connection_id);
-                            let _ = status_clone
-                                .send(format!("[DEBUG] NNTP connection {} closed", connection_id));
+                            log.info(format!("NNTP connection {} closed", connection_id));
 
                             // Remove connection from server instance
                             state_clone
@@ -318,7 +276,8 @@ impl NntpServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept NNTP connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept NNTP connection: {}", e));
                     }
                 }
             }
