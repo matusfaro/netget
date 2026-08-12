@@ -58,6 +58,9 @@ impl ServerRegistry {
         #[cfg(all(feature = "named_pipe", unix))]
         self.register(Arc::new(crate::server::NamedPipeProtocol::new()));
 
+        #[cfg(all(feature = "pty", unix))]
+        self.register(Arc::new(crate::server::PtyProtocol::new()));
+
         #[cfg(feature = "http")]
         self.register(Arc::new(crate::server::HttpProtocol::new()));
 

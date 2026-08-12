@@ -1,0 +1,84 @@
+# Pseudo-Terminal (PTY) Protocol Implementation
+
+Impersonates a program with a terminal. The server allocates a PTY with `openpty`, holds the
+**master**, and role-plays: it reads what a terminal program types on the **slave**
+(`pty_input_received`) and the model decides the bytes that appear on the terminal
+(`write_pty_output`). A real client is any terminal program that opens the slave device —
+`screen ./netget.pty`, `cat ./netget.pty`, a Python `open('/dev/ttysNNN')`.
+
+**State**: Experimental. **Platform**: Unix only; the whole module is `#![cfg(unix)]`.
+**Privilege**: none — a PTY is an unprivileged user resource.
+
+## Master/slave orientation (important)
+
+Normally a terminal emulator holds the master and the application holds the slave. Here it is
+**inverted**: NetGet (the roleplayed program) holds the master, and the real client holds the
+slave. Consequently:
+
+- `write_pty_output` writes to the master → appears as bytes the client reads off the slave
+  (what shows "on the terminal").
+- The client writing to the slave → readable on the master → NetGet reads it as
+  `pty_input_received`.
+
+The slave is put in **raw mode** (`cfmakeraw`): echo off and canonical line-buffering off. Echo
+off is essential — otherwise bytes written to the master would echo straight back and NetGet would
+read its own output. Canonical off means bytes flow immediately without waiting for a newline, so
+a prompt like `netget$ ` (no newline) reaches the client at once.
+
+We use **libc directly** (`openpty`, `tcgetattr`/`cfmakeraw`/`tcsetattr`, `ttyname_r`, `fcntl`)
+rather than `nix`, because `nix` is a dev-only dependency in this crate.
+
+## Startup
+
+| Parameter | Required | Meaning |
+|---|---|---|
+| `link_path` | no | symlink to create pointing at the allocated slave device, so a client can open a stable path |
+| `send_first` | no | raise `pty_opened` on startup so the model can print a banner/prompt first |
+
+No port; `default_binding()` returns empty binding defaults so `server_startup.rs` does not demand
+one. `link_path` is symlinked to the kernel-assigned `/dev/ttysNNN`; an existing **symlink** there
+is replaced, but a regular file/dir is refused rather than clobbered (same guard shape as
+`socket_file`).
+
+## What the model sees and controls
+
+**Events**
+
+- `pty_opened` — `slave_path`. Emitted once at startup, only under `send_first` (same conditional
+  pattern as `socket_file_connection_opened`).
+- `pty_input_received` — `data` + `encoding`. Emitted whenever the terminal program writes/types.
+
+**Action**: `write_pty_output` — `data` + optional `encoding` (`"utf8"` default, `"hex"` for ANSI
+escape sequences / binary). Both events attach this action, so the model always has a usable
+vocabulary. Explicit encoding, no auto-detection, invalid hex is an action error not a panic —
+the `send_tcp_data` lesson.
+
+## Why the master never spins on EIO
+
+Reading a PTY master returns `EIO` when **no** process holds the slave open. The server therefore
+keeps its own `OwnedFd` on the slave open for the whole session, so clients can attach and detach
+freely without ending the server; the read loop also treats a stray `EIO` as "no client attached"
+and continues rather than dying.
+
+## Failure and lifecycle
+
+- **`spawn()` awaits readiness** (PTY allocated, slave set raw, symlink created, master registered
+  with the runtime) and returns `Err` on any failure → `ServerStatus::Error`.
+- **Fail closed** on LLM error: nothing is written to the terminal, and the error is logged at
+  ERROR on both channels.
+- The read/dispatch loop is registered via `register_server_task`, so `stop_server` aborts it and
+  releases the fds. A `LinkCleanup` guard moved into the task removes the symlink on stop/abort.
+- Processing is **serial** (a terminal is a serial line): read a chunk → one LLM round-trip →
+  write output → repeat. Input arriving during an LLM call waits in the PTY buffer.
+
+## Not implemented
+
+Window size (`TIOCSWINSZ`) / `SIGWINCH`, job control / signals (raw mode disables `ISIG`),
+multiple concurrent clients as distinct sessions, and any accumulation state machine.
+
+## Verified
+
+`tests/server/pty/e2e_test.rs`: a real terminal client opens the slave through the symlink, reads
+the model's `netget$ ` banner (master→slave), types `whoami\n` (slave→master, surfaced as
+`pty_input_received`), and reads the model's `root\n` answer. Asserts actual bytes on the
+terminal.

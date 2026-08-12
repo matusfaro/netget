@@ -76,6 +76,13 @@ pub use named_pipe::actions::NamedPipeProtocol;
 #[cfg(all(feature = "named_pipe", unix))]
 pub use named_pipe::NamedPipeServer;
 
+#[cfg(all(feature = "pty", unix))]
+pub mod pty;
+#[cfg(all(feature = "pty", unix))]
+pub use pty::actions::PtyProtocol;
+#[cfg(all(feature = "pty", unix))]
+pub use pty::PtyServer;
+
 #[cfg(feature = "http")]
 pub mod http;
 #[cfg(feature = "http")]

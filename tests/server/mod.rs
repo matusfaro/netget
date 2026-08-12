@@ -122,6 +122,8 @@ pub mod mssql;
 pub mod mysql;
 #[cfg(all(feature = "named_pipe", unix))]
 pub mod named_pipe;
+#[cfg(all(feature = "pty", unix))]
+pub mod pty;
 #[cfg(feature = "nfc")]
 pub mod nfc;
 #[cfg(feature = "nfs")]

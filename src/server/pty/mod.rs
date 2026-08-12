@@ -1,0 +1,321 @@
+//! Pseudo-terminal (PTY) server implementation.
+//!
+//! Platform: Unix/Linux/macOS only. The server allocates a PTY with `openpty`, holds the master,
+//! and role-plays a program with a terminal: it reads what a terminal program types on the slave
+//! (`pty_input_received`), and the model decides the bytes that appear on the terminal
+//! (`write_pty_output`). A real client is any terminal program that opens the slave device.
+#![cfg(unix)]
+
+pub mod actions;
+
+use anyhow::{Context, Result};
+use std::ffi::OsStr;
+use std::fs::File;
+use std::io::{Read, Write};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::io::{FromRawFd, OwnedFd, RawFd};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::io::unix::AsyncFd;
+use tokio::sync::mpsc;
+use tracing::{debug, error, info};
+
+use crate::llm::action_helper::call_llm;
+use crate::llm::ollama_client::OllamaClient;
+use crate::llm::ActionResult;
+use crate::protocol::Event;
+use crate::server::pty::actions::{PtyProtocol, PTY_INPUT_RECEIVED_EVENT, PTY_OPENED_EVENT};
+use crate::state::app_state::AppState;
+
+/// Removes the slave symlink this server created when the read task ends — including on abort by
+/// `stop_server`, because aborting drops the task future and with it this guard.
+struct LinkCleanup(Option<PathBuf>);
+
+impl Drop for LinkCleanup {
+    fn drop(&mut self) {
+        if let Some(p) = &self.0 {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+/// Resolve the filesystem path of the slave PTY device from its fd, portably (Linux and macOS).
+fn slave_device_path(slave_fd: RawFd) -> Result<PathBuf> {
+    let mut buf = vec![0u8; 256];
+    // ttyname_r returns 0 on success, or an errno value.
+    let rc = unsafe { libc::ttyname_r(slave_fd, buf.as_mut_ptr() as *mut libc::c_char, buf.len()) };
+    if rc != 0 {
+        return Err(std::io::Error::from_raw_os_error(rc))
+            .context("ttyname_r failed to resolve slave PTY device path");
+    }
+    let cstr = unsafe { std::ffi::CStr::from_ptr(buf.as_ptr() as *const libc::c_char) };
+    Ok(PathBuf::from(OsStr::from_bytes(cstr.to_bytes())))
+}
+
+/// Point `link` at `target` as a symlink, refusing to clobber a non-symlink.
+///
+/// `link_path` comes from the model or an MCP caller, so a pre-existing symlink is replaced but a
+/// regular file/dir at that path is refused rather than deleted — the same guard shape as
+/// `socket_file`'s stale-socket handling.
+fn ensure_symlink(link: &Path, target: &Path) -> Result<()> {
+    match std::fs::symlink_metadata(link) {
+        Ok(meta) => {
+            if meta.file_type().is_symlink() {
+                std::fs::remove_file(link)
+                    .with_context(|| format!("Failed to replace existing symlink {:?}", link))?;
+            } else {
+                anyhow::bail!(
+                    "Refusing to use link_path {:?}: it exists and is not a symlink. Delete it \
+                     yourself or pass a different link_path.",
+                    link
+                );
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e).with_context(|| format!("Failed to stat {:?}", link)),
+    }
+    std::os::unix::fs::symlink(target, link)
+        .with_context(|| format!("Failed to symlink {:?} -> {:?}", link, target))
+}
+
+/// Put the slave PTY into raw mode: no echo and no canonical line buffering, so the model owns the
+/// exact byte stream in both directions (nothing echoes back to the master, and bytes flow without
+/// waiting for a newline). Uses libc directly (nix is a dev-only dependency here).
+fn set_slave_raw(slave_fd: RawFd) -> Result<()> {
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(slave_fd, &mut termios) != 0 {
+            return Err(std::io::Error::last_os_error()).context("tcgetattr on slave PTY failed");
+        }
+        libc::cfmakeraw(&mut termios);
+        if libc::tcsetattr(slave_fd, libc::TCSANOW, &termios) != 0 {
+            return Err(std::io::Error::last_os_error()).context("tcsetattr on slave PTY failed");
+        }
+    }
+    Ok(())
+}
+
+/// Set O_NONBLOCK on `fd` so it can be driven by tokio's `AsyncFd`.
+fn set_nonblocking(fd: RawFd) -> Result<()> {
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return Err(std::io::Error::last_os_error()).context("fcntl F_GETFL on PTY master failed");
+    }
+    let rc = unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) };
+    if rc < 0 {
+        return Err(std::io::Error::last_os_error()).context("fcntl F_SETFL on PTY master failed");
+    }
+    Ok(())
+}
+
+/// Pseudo-terminal server.
+pub struct PtyServer;
+
+impl PtyServer {
+    /// Allocate the PTY, wire up the master, and spawn the read/dispatch loop.
+    ///
+    /// Awaits readiness (PTY allocated, slave configured, symlink created, master registered) and
+    /// returns `Err` on any failure, so `server_startup` records `ServerStatus::Error`.
+    pub async fn spawn_with_llm_actions(
+        link_path: Option<PathBuf>,
+        send_first: bool,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        server_id: crate::state::ServerId,
+    ) -> Result<()> {
+        // Allocate the PTY with libc::openpty (nix is a dev-only dependency in this crate).
+        let (master_raw, slave_raw) = unsafe {
+            let mut master: libc::c_int = -1;
+            let mut slave: libc::c_int = -1;
+            if libc::openpty(
+                &mut master,
+                &mut slave,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ) != 0
+            {
+                return Err(std::io::Error::last_os_error()).context("openpty failed");
+            }
+            (master, slave)
+        };
+        // Own the slave fd so it is closed on drop; holding it open keeps the master from
+        // returning EIO when a terminal client detaches.
+        let slave_fd = unsafe { OwnedFd::from_raw_fd(slave_raw) };
+
+        set_slave_raw(slave_raw)?;
+
+        let slave_path = slave_device_path(slave_raw)?;
+        info!("PTY allocated, slave device {:?}", slave_path);
+
+        if let Some(link) = &link_path {
+            ensure_symlink(link, &slave_path)?;
+            info!("PTY slave symlinked at {:?}", link);
+        }
+        let cleanup = LinkCleanup(link_path.clone());
+
+        // Master fd: make nonblocking and hand to a std File / AsyncFd.
+        set_nonblocking(master_raw)?;
+        let master_file = unsafe { File::from_raw_fd(master_raw) };
+        let async_master = AsyncFd::new(master_file)
+            .context("Failed to register PTY master with the async runtime")?;
+
+        let _ = status_tx.send(format!(
+            "[INFO] PTY server ready, slave device {}",
+            slave_path.to_string_lossy()
+        ));
+
+        let protocol = Arc::new(PtyProtocol::new());
+        let task_registrar = app_state.clone();
+
+        let handle = tokio::spawn(async move {
+            // Keep the slave fd open for the whole session: it prevents the master from returning
+            // EIO when a terminal client detaches, so clients can come and go without ending the
+            // server. Moved in here so it drops on abort. The cleanup guard unlinks the symlink.
+            let _slave_fd = slave_fd;
+            let _cleanup = cleanup;
+
+            // send_first: give the model a chance to print a banner/prompt on connect.
+            if send_first {
+                let event = Event::new(
+                    &PTY_OPENED_EVENT,
+                    serde_json::json!({ "slave_path": slave_path.to_string_lossy() }),
+                );
+                Self::dispatch(
+                    &event,
+                    &async_master,
+                    &llm_client,
+                    &app_state,
+                    server_id,
+                    protocol.as_ref(),
+                    &status_tx,
+                )
+                .await;
+            }
+
+            let mut buffer = vec![0u8; 8192];
+            loop {
+                let mut guard = match async_master.readable().await {
+                    Ok(g) => g,
+                    Err(e) => {
+                        error!("PTY master readable() error: {}", e);
+                        break;
+                    }
+                };
+
+                let read_result = guard.try_io(|inner| inner.get_ref().read(&mut buffer));
+
+                let n = match read_result {
+                    Ok(Ok(0)) => {
+                        // With the slave fd held open this should not occur; guard against a spin.
+                        continue;
+                    }
+                    Ok(Ok(n)) => n,
+                    Ok(Err(e)) => {
+                        // EIO here means no slave is currently attached; treat other errors as fatal.
+                        if e.raw_os_error() == Some(libc::EIO) {
+                            continue;
+                        }
+                        error!("PTY master read error: {}", e);
+                        break;
+                    }
+                    Err(_would_block) => continue,
+                };
+
+                let data = &buffer[..n];
+                let (data_str, encoding) = if data
+                    .iter()
+                    .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
+                {
+                    (String::from_utf8_lossy(data).to_string(), "utf8")
+                } else {
+                    (hex::encode(data), "hex")
+                };
+
+                debug!("PTY received {} bytes of input ({})", n, encoding);
+                let _ = status_tx.send(format!("[DEBUG] PTY received {} bytes ({})", n, encoding));
+
+                let event = Event::new(
+                    &PTY_INPUT_RECEIVED_EVENT,
+                    serde_json::json!({ "data": data_str, "encoding": encoding }),
+                );
+                Self::dispatch(
+                    &event,
+                    &async_master,
+                    &llm_client,
+                    &app_state,
+                    server_id,
+                    protocol.as_ref(),
+                    &status_tx,
+                )
+                .await;
+            }
+        });
+
+        task_registrar.register_server_task(server_id, handle).await;
+        Ok(())
+    }
+
+    /// Run one LLM round-trip for `event` and write any produced output onto the PTY master.
+    #[allow(clippy::too_many_arguments)]
+    async fn dispatch(
+        event: &Event,
+        async_master: &AsyncFd<File>,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        server_id: crate::state::ServerId,
+        protocol: &PtyProtocol,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        match call_llm(llm_client, app_state, server_id, None, event, protocol).await {
+            Ok(result) => {
+                for msg in result.messages {
+                    let _ = status_tx.send(msg);
+                }
+                for pr in result.protocol_results {
+                    if let ActionResult::Output(bytes) = pr {
+                        Self::write_master(async_master, &bytes, status_tx).await;
+                    }
+                    // CloseConnection / WaitForMore are meaningless for a PTY and are ignored.
+                }
+            }
+            Err(e) => {
+                // Fail closed: put nothing on the terminal, report on both channels.
+                error!("LLM error for PTY event: {}", e);
+                let _ = status_tx.send(format!("[ERROR] PTY LLM error: {e}"));
+            }
+        }
+    }
+
+    /// Write `bytes` to the PTY master (they appear to the terminal program reading the slave).
+    async fn write_master(
+        async_master: &AsyncFd<File>,
+        bytes: &[u8],
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        let mut written = 0;
+        while written < bytes.len() {
+            let mut guard = match async_master.writable().await {
+                Ok(g) => g,
+                Err(e) => {
+                    error!("PTY master writable() error: {}", e);
+                    let _ = status_tx.send(format!("[ERROR] PTY write error: {e}"));
+                    return;
+                }
+            };
+            match guard.try_io(|inner| inner.get_ref().write(&bytes[written..])) {
+                Ok(Ok(0)) => break,
+                Ok(Ok(n)) => written += n,
+                Ok(Err(e)) => {
+                    error!("PTY master write error: {}", e);
+                    let _ = status_tx.send(format!("[ERROR] PTY write error: {e}"));
+                    return;
+                }
+                Err(_would_block) => continue,
+            }
+        }
+        debug!("PTY wrote {} bytes to terminal", written);
+        let _ = status_tx.send(format!("→ Wrote {written} bytes to PTY terminal"));
+    }
+}
