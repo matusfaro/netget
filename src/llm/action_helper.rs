@@ -381,8 +381,15 @@ pub async fn call_llm(
         protocol.protocol_name(),
     );
 
+    // The event template renderer dual-logs (file + TUI) when given a status channel;
+    // it was always called with `None`, so the 1600+ defined event templates reached the
+    // file and never the TUI. Route them to whatever TUI stream this client narrates to
+    // (the same channel the transport/conversation layers use). This is `None` wherever the
+    // client was built without a status channel, in which case behaviour is unchanged.
+    let event_status_tx = llm_client.status_tx();
+
     // Log event start (DEBUG level)
-    log_ctx.log_start(None);
+    log_ctx.log_start(event_status_tx);
 
     // TRY EASY PROTOCOL HANDLER FIRST if this server is managed by an easy protocol
     if let Some(easy_id) = state.get_easy_for_server(server_id).await {
@@ -411,7 +418,7 @@ pub async fn call_llm(
                 .await?;
 
                 // Log event completion
-                log_ctx.log_complete(None, &result.protocol_results);
+                log_ctx.log_complete(event_status_tx, &result.protocol_results);
                 record_event_access_log(state, server_id, connection_id, protocol, event, &result)
                     .await;
                 return Ok(result);
@@ -434,7 +441,7 @@ pub async fn call_llm(
     {
         crate::llm::event_handler_executor::EventHandlerResult::Handled(result) => {
             // Handler executed successfully (script or static)
-            log_ctx.log_complete(None, &result.protocol_results);
+            log_ctx.log_complete(event_status_tx, &result.protocol_results);
             record_event_access_log(state, server_id, connection_id, protocol, event, &result)
                 .await;
             return Ok(result);
@@ -590,7 +597,7 @@ pub async fn call_llm(
     );
 
     // Log event completion with timing and results
-    log_ctx.log_complete(None, &result.protocol_results);
+    log_ctx.log_complete(event_status_tx, &result.protocol_results);
     record_event_access_log(state, server_id, connection_id, protocol, event, &result).await;
 
     Ok(result)
