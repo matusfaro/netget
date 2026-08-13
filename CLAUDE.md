@@ -428,6 +428,23 @@ Use minimal features. `--all-features` compiles 50+ protocols and their dependen
 
 Kill stuck builds with `./cargo-isolated-kill.sh`, never `pkill cargo`.
 
+### The installed binary — `/Users/matus/bin/netget`
+
+The maintainer's `netget` on `PATH` lives at `/Users/matus/bin/netget` and **must always be built
+with every protocol compiled in** — i.e. `--all-features`, release. After any change that adds a
+protocol, a feature, or otherwise affects the compiled surface, rebuild and reinstall it:
+
+```bash
+./cargo-isolated.sh build --release --all-features && \
+  cp target/release/netget /Users/matus/bin/.netget.new && \
+  mv -f /Users/matus/bin/.netget.new /Users/matus/bin/netget   # atomic; safe if netget is running
+```
+
+The atomic `mv` matters: the maintainer runs `netget --mcp` interactively, and overwriting the
+file in place can fail with `ETXTBSY` while it is running. Rename swaps the inode instead — the
+live process keeps the old image, the new binary takes effect on next launch. **Never kill the
+running `netget` to install** — the rename never needs it stopped.
+
 ### Features unavailable in Claude Code for Web
 
 Detect with `./am_i_claude_code_for_web.sh` or `[ "$CLAUDE_CODE_REMOTE" = "true" ]`.
