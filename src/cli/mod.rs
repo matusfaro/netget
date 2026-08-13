@@ -530,9 +530,30 @@ async fn run_server_direct(protocol: &str, args: &Args) -> Result<()> {
         .configure_rate_limiter(args.build_rate_limiter_config())
         .await?;
 
-    if let Some(model) = args.model.clone().or_else(|| settings.model.clone()) {
-        state.set_ollama_model(Some(model)).await;
-    }
+    // Select/validate the model exactly as run_non_interactive does. A --server
+    // needs the LLM to answer every request, so — unlike a scripted --client — an
+    // unavailable model must fail HERE with a clear message. With no --model we
+    // pick an available one from Ollama rather than sending an unvalidated name
+    // (a stale settings default like a model that was never pulled) that fails on
+    // the first request with an unhelpful "LLM failed to generate valid response".
+    let configured_model = args.model.clone().or_else(|| settings.model.clone());
+    let selected_model = if args.openai_url.is_some() {
+        configured_model
+            .ok_or_else(|| anyhow::anyhow!("--model is required when using --openai-url"))?
+    } else {
+        let ollama_url = args
+            .ollama_url
+            .as_deref()
+            .unwrap_or("http://localhost:11434");
+        crate::llm::select_or_validate_model(configured_model, false, ollama_url)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("No model available — pull one in Ollama or pass --model")
+            })?
+    };
+    println!("[SERVER] Using model: {}", selected_model);
+    state.set_ollama_model(Some(selected_model)).await;
+
     if let Some(mode) = args
         .parse_scripting_mode()?
         .or_else(|| settings.parse_scripting_mode())
