@@ -51,8 +51,8 @@ pub use action_helper::{
 
 // Current ollama client exports
 pub use ollama_client::{
-    CommandAction, CommandInterpretation, GenerateResponse, HttpLlmResponse, LlmResponse,
-    OllamaClient, TokenUsage,
+    accumulate_ollama_stream, CommandAction, CommandInterpretation, GenerateResponse,
+    HttpLlmResponse, LlmResponse, OllamaClient, OllamaResponseKind, StreamAccumulation, TokenUsage,
 };
 pub use prompt::PromptBuilder;
 pub use response_handler::{handle_llm_response, ProcessedResponse};

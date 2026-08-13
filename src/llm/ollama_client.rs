@@ -7,7 +7,6 @@ use crate::llm::circuit_breaker::{is_transport_failure, BreakerStatus, CircuitBr
 use crate::logging::emit::Log;
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use ollama_rs::generation::completion::request::GenerationRequest;
 use ollama_rs::Ollama;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -53,6 +52,217 @@ fn strip_markdown_fences(text: &str) -> String {
     }
 
     result.to_string()
+}
+
+// ============================================================================
+// Streaming (NDJSON) response handling
+// ============================================================================
+//
+// Both Ollama endpoints support `"stream": true`, in which case the HTTP body is
+// NDJSON — one JSON object per line, each carrying an incremental delta — ending
+// with a `{"done": true}` object that also holds the final token counts. When
+// `stream` is false (and, importantly, what the in-process test mock always
+// returns) the body is a SINGLE JSON object. The accumulator below handles BOTH
+// shapes: it feeds the body line by line, and a single-object body is simply the
+// degenerate case of "one line", so the mock harness keeps working unchanged.
+//
+// The `thinking` field (gemma/qwen "thinking" models, `message.thinking` for chat
+// and top-level `thinking` for generate) is the chain-of-thought. It is forwarded
+// to the status/log stream AS IT ARRIVES so the reasoning appears live in both the
+// TUI and the non-interactive stdout forwarder; `content` is only accumulated (it
+// is the actual answer — typically the JSON action body — and streaming it to the
+// TUI would just reproduce the response dump the logging split deliberately keeps
+// file-only).
+
+/// Which Ollama endpoint produced a streamed body — decides which JSON fields
+/// carry the content and the reasoning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OllamaResponseKind {
+    /// `/api/chat`: content at `message.content`, reasoning at `message.thinking`,
+    /// tool calls at `message.tool_calls`.
+    Chat,
+    /// `/api/generate`: content at `response`, reasoning at `thinking`.
+    Generate,
+}
+
+/// The complete result of accumulating a (possibly streamed) Ollama response.
+///
+/// After the last line is processed this holds the same full text the old
+/// single-shot path produced, so all downstream `ActionResponse` parsing is
+/// unchanged.
+#[derive(Debug, Clone, Default)]
+pub struct StreamAccumulation {
+    /// Full concatenated assistant content (the answer).
+    pub content: String,
+    /// Full concatenated chain-of-thought, if the model emitted any.
+    pub thinking: String,
+    /// `message.tool_calls` from the last chunk that carried a non-empty array.
+    pub tool_calls: Option<serde_json::Value>,
+    /// Prompt (input) token count from the final chunk, if reported.
+    pub prompt_eval_count: u64,
+    /// Completion (output) token count from the final chunk, if reported.
+    pub eval_count: u64,
+    /// An `{"error": "..."}` object seen anywhere in the body.
+    pub error: Option<String>,
+}
+
+/// Force a partial reasoning line onto the status stream once it reaches this many
+/// characters without a newline, so a model that streams a long unbroken thought
+/// still appears live rather than in one lump at the end.
+const REASONING_FLUSH_CHARS: usize = 160;
+
+/// TUI/stdout prefix marking a streamed reasoning line. Deliberately NOT one of
+/// the five `logging::emit::Log` level prefixes: reasoning is its own recognizable
+/// kind (like `[USER]`/`[SERVER]`), it renders inline in the TUI and the
+/// non-interactive forwarder prints it verbatim, and it is not mistaken for an
+/// action. It also stays clear of the `llm_log_prefix_guard` test, which only
+/// guards the five level prefixes.
+const REASONING_PREFIX: &str = "[REASONING] ";
+
+/// Coalesces reasoning deltas and forwards them to the status channel line by line.
+///
+/// Coalescing choice: flush on every newline, and additionally force-flush once the
+/// pending buffer reaches [`REASONING_FLUSH_CHARS`]. This yields roughly
+/// line-granular updates instead of one channel send per token — the maintainer
+/// wants to *see* the reasoning, and the status channel is unbounded with no
+/// backpressure, so per-token sends would be needless flooding.
+struct ReasoningForwarder<'a> {
+    status_tx: Option<&'a mpsc::UnboundedSender<String>>,
+    buf: String,
+}
+
+impl<'a> ReasoningForwarder<'a> {
+    fn new(status_tx: Option<&'a mpsc::UnboundedSender<String>>) -> Self {
+        Self {
+            status_tx,
+            buf: String::new(),
+        }
+    }
+
+    /// Append a reasoning delta and emit any complete/over-long lines.
+    fn push(&mut self, delta: &str) {
+        // No channel bound (e.g. unit tests without a receiver, or headless with no
+        // consumer): nothing to forward, and `content`/`thinking` accumulation is
+        // handled by the caller regardless.
+        if self.status_tx.is_none() || delta.is_empty() {
+            return;
+        }
+        self.buf.push_str(delta);
+
+        while let Some(pos) = self.buf.find('\n') {
+            let line: String = self.buf.drain(..=pos).collect();
+            self.emit(line.trim_end_matches(['\n', '\r']));
+        }
+
+        // Force-flush an over-long unbroken buffer, cutting on a char boundary.
+        while self.buf.chars().count() >= REASONING_FLUSH_CHARS {
+            let cut = self
+                .buf
+                .char_indices()
+                .nth(REASONING_FLUSH_CHARS)
+                .map(|(i, _)| i)
+                .unwrap_or(self.buf.len());
+            let seg: String = self.buf.drain(..cut).collect();
+            self.emit(&seg);
+        }
+    }
+
+    fn emit(&self, line: &str) {
+        let line = line.trim();
+        if line.is_empty() {
+            return;
+        }
+        if let Some(tx) = self.status_tx {
+            let _ = tx.send(format!("{}{}", REASONING_PREFIX, line));
+        }
+    }
+
+    /// Flush any buffered remainder (called once at end of stream).
+    fn flush(&mut self) {
+        let rest = std::mem::take(&mut self.buf);
+        self.emit(&rest);
+    }
+}
+
+/// Process a single NDJSON line: accumulate its deltas into `acc` and forward any
+/// reasoning to `fwd`. Blank lines and non-JSON keepalives are ignored.
+fn process_stream_line(
+    line: &str,
+    kind: OllamaResponseKind,
+    acc: &mut StreamAccumulation,
+    fwd: &mut ReasoningForwarder,
+) {
+    let line = line.trim();
+    if line.is_empty() {
+        return;
+    }
+    let v: serde_json::Value = match serde_json::from_str(line) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+        acc.error = Some(err.to_string());
+    }
+
+    let (content, thinking, tool_calls) = match kind {
+        OllamaResponseKind::Chat => {
+            let msg = v.get("message");
+            let tool_calls = msg
+                .and_then(|m| m.get("tool_calls"))
+                .filter(|tc| tc.as_array().map(|a| !a.is_empty()).unwrap_or(false))
+                .cloned();
+            (
+                msg.and_then(|m| m.get("content")).and_then(|c| c.as_str()),
+                msg.and_then(|m| m.get("thinking")).and_then(|c| c.as_str()),
+                tool_calls,
+            )
+        }
+        OllamaResponseKind::Generate => (
+            v.get("response").and_then(|c| c.as_str()),
+            v.get("thinking").and_then(|c| c.as_str()),
+            None,
+        ),
+    };
+
+    if let Some(c) = content {
+        acc.content.push_str(c);
+    }
+    if let Some(t) = thinking {
+        acc.thinking.push_str(t);
+        fwd.push(t);
+    }
+    if let Some(tc) = tool_calls {
+        acc.tool_calls = Some(tc);
+    }
+    if let Some(n) = v.get("prompt_eval_count").and_then(|x| x.as_u64()) {
+        acc.prompt_eval_count = n;
+    }
+    if let Some(n) = v.get("eval_count").and_then(|x| x.as_u64()) {
+        acc.eval_count = n;
+    }
+}
+
+/// Accumulate a complete Ollama response `body` (NDJSON stream OR single object)
+/// into a [`StreamAccumulation`], forwarding reasoning deltas to `status_tx` line
+/// by line exactly as the live streaming path does.
+///
+/// This is the synchronous core shared by the async transport reader and the unit
+/// tests: feeding a whole body here is equivalent to receiving it in one network
+/// chunk, so a test can assert both the accumulated text and the forwarded deltas
+/// without a live model.
+pub fn accumulate_ollama_stream(
+    body: &str,
+    kind: OllamaResponseKind,
+    status_tx: Option<&mpsc::UnboundedSender<String>>,
+) -> StreamAccumulation {
+    let mut acc = StreamAccumulation::default();
+    let mut fwd = ReasoningForwarder::new(status_tx);
+    for line in body.split('\n') {
+        process_stream_line(line, kind, &mut acc, &mut fwd);
+    }
+    fwd.flush();
+    acc
 }
 
 /// Message in a conversation with role (system/user/assistant/tool)
@@ -547,6 +757,75 @@ impl OllamaClient {
         Log::new(self.status_tx.as_ref())
     }
 
+    /// Read an Ollama HTTP response body — NDJSON stream or single object — into a
+    /// [`StreamAccumulation`], forwarding reasoning deltas to this client's status
+    /// channel as each line arrives.
+    ///
+    /// Uses `Response::chunk()` (no extra reqwest feature) and splits on `\n`, so
+    /// the reasoning appears live rather than after the whole body is buffered. A
+    /// non-streaming single-object body (the test mock, any `stream:false` backend)
+    /// simply arrives as one trailing line with no newline and is handled the same.
+    async fn read_ollama_stream(
+        &self,
+        mut http_response: reqwest::Response,
+        kind: OllamaResponseKind,
+    ) -> Result<StreamAccumulation> {
+        let mut acc = StreamAccumulation::default();
+        let mut fwd = ReasoningForwarder::new(self.status_tx.as_ref());
+        let mut buf: Vec<u8> = Vec::new();
+
+        // Bound the whole body read by the same wall-clock budget as the request, so
+        // a hung stream mid-body cannot block forever.
+        let read = async {
+            while let Some(chunk) = http_response
+                .chunk()
+                .await
+                .context("reading Ollama streaming response body")?
+            {
+                buf.extend_from_slice(&chunk);
+                // A '\n' byte never occurs inside a UTF-8 multibyte sequence, so each
+                // drained line is a complete, valid-UTF-8 logical line.
+                while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = buf.drain(..=pos).collect();
+                    if let Ok(s) = std::str::from_utf8(&line) {
+                        process_stream_line(s, kind, &mut acc, &mut fwd);
+                    }
+                }
+            }
+            // Trailing line without a newline — notably the single-object mock body.
+            if !buf.is_empty() {
+                if let Ok(s) = std::str::from_utf8(&buf) {
+                    process_stream_line(s, kind, &mut acc, &mut fwd);
+                }
+            }
+            fwd.flush();
+            Ok::<(), anyhow::Error>(())
+        };
+
+        tokio::time::timeout(self.request_timeout, read)
+            .await
+            .with_context(|| {
+                format!(
+                    "Ollama streaming response body timed out after {:?}",
+                    self.request_timeout
+                )
+            })??;
+
+        // Wire facts: reasoning recorded to the FILE (DEBUG summary + TRACE payload),
+        // never streamed to the TUI here — the TUI already received the live
+        // [REASONING] lines. This is a new output, not a duplicate of the response log.
+        if !acc.thinking.is_empty() {
+            let log = self.log();
+            log.debug(format!(
+                "LLM reasoning: {} chars streamed",
+                acc.thinking.len()
+            ));
+            log.payload("Full LLM reasoning", &acc.thinking, usize::MAX);
+        }
+
+        Ok(acc)
+    }
+
     /// Set the mock configuration file path (for testing)
     pub fn with_mock_config_file(mut self, path: Option<std::path::PathBuf>) -> Self {
         self.mock_config_file = path;
@@ -698,22 +977,27 @@ impl OllamaClient {
         // Dispatch to the appropriate backend
         let (response_text, token_usage) = match &self.backend {
             LlmBackend::Ollama(ollama) => {
-                let mut request = GenerationRequest::new(model.to_string(), prompt.to_string());
-
-                // Set num_predict to allow longer responses (especially for binary protocol data)
-                use ollama_rs::models::ModelOptions;
-                let options = ModelOptions::default().num_predict(2048);
-                request = request.options(options);
-
-                // Add format if provided
-                if let Some(_schema) = format {
-                    use ollama_rs::generation::parameters::FormatType;
-                    request = request.format(FormatType::Json);
+                // Streamed `/api/generate`: `stream: true` returns NDJSON deltas we
+                // forward live (reasoning) while accumulating the full response. Called
+                // via reqwest rather than ollama-rs because ollama-rs's high-level
+                // `generate()` buffers the whole reply, defeating live streaming.
+                let mut body = serde_json::json!({
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": true,
+                    // num_predict allows longer responses (esp. binary protocol data).
+                    "options": { "num_predict": 2048 },
+                });
+                if format.is_some() {
+                    body["format"] = serde_json::json!("json");
                 }
 
-                let api_response = tokio::time::timeout(
+                let url = format!("{}/api/generate", ollama.url_str().trim_end_matches('/'));
+                let http_client = reqwest::Client::new();
+
+                let http_response = tokio::time::timeout(
                     self.request_timeout,
-                    ollama.generate(request),
+                    http_client.post(&url).json(&body).send(),
                 )
                 .await
                 .with_context(|| format!("Ollama API call timed out after {:?}.\n   Please check:\n   1. Ollama is running (https://ollama.ai)\n   2. Model is loaded and ready\n   3. Use `/model` to list and select a model", self.request_timeout))?
@@ -723,17 +1007,43 @@ impl OllamaClient {
                         anyhow::anyhow!(
                             "✗  Cannot connect to Ollama.\n   Please ensure:\n   1. Ollama is running: https://ollama.ai\n   2. Ollama is listening on http://localhost:11434\n   3. Use `/model` command to list and select a model\n\n   Original error: {}", e
                         )
-                    } else if error_str.contains("not found") || error_str.contains("404") {
-                        anyhow::anyhow!(
-                            "✗  Model not found in Ollama.\n   Please:\n   1. Pull the model: ollama pull {}\n   2. Or use `/model` to select a different model\n\n   Original error: {}", model, e
-                        )
                     } else {
                         anyhow::anyhow!("✗  Ollama request failed: {}\n   Use `/model` to check available models", e)
                     }
                 })?;
 
-                let usage = TokenUsage::from_response(&api_response);
-                (api_response.response, usage)
+                let status = http_response.status();
+                if !status.is_success() {
+                    let body = http_response.text().await.unwrap_or_default();
+                    let msg = serde_json::from_str::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|v| {
+                            v.get("error")
+                                .and_then(|e| e.as_str())
+                                .map(|s| s.to_string())
+                        })
+                        .unwrap_or(body);
+                    if status.as_u16() == 404 || msg.to_lowercase().contains("not found") {
+                        anyhow::bail!(
+                            "✗  Model not found in Ollama.\n   Please:\n   1. Pull the model: ollama pull {}\n   2. Or use `/model` to select a different model\n\n   Original error: {}", model, msg
+                        );
+                    }
+                    anyhow::bail!("✗  Ollama request failed ({}): {}\n   Use `/model` to check available models", status, msg);
+                }
+
+                let acc = self
+                    .read_ollama_stream(http_response, OllamaResponseKind::Generate)
+                    .await?;
+                if let Some(err) = acc.error {
+                    anyhow::bail!("✗  Ollama request failed: {}", err);
+                }
+
+                let usage = TokenUsage {
+                    prompt_tokens: acc.prompt_eval_count,
+                    completion_tokens: acc.eval_count,
+                    total_tokens: acc.prompt_eval_count + acc.eval_count,
+                };
+                (acc.content, usage)
             }
 
             LlmBackend::OpenAI {
@@ -1067,7 +1377,10 @@ impl OllamaClient {
         let mut body = serde_json::json!({
             "model": request.model,
             "messages": messages,
-            "stream": false,
+            // Stream so reasoning (`message.thinking`) is forwarded live; the
+            // accumulator reassembles the full content/tool_calls, and the test mock's
+            // single-object body is handled as the one-line degenerate case.
+            "stream": true,
         });
 
         // Add tools if any
@@ -1094,46 +1407,55 @@ impl OllamaClient {
         .context("Ollama chat API request failed")?;
 
         let status = http_response.status();
-        let response_body: serde_json::Value = http_response
-            .json()
-            .await
-            .context("Failed to parse Ollama chat API response")?;
-
         if !status.is_success() {
-            let error_msg = response_body["error"].as_str().unwrap_or("Unknown error");
+            let body = http_response.text().await.unwrap_or_default();
+            let error_msg = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| {
+                    v.get("error")
+                        .and_then(|e| e.as_str())
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| "Unknown error".to_string());
             anyhow::bail!("Ollama chat API error ({}): {}", status, error_msg);
         }
 
-        // Parse response
-        let content = response_body["message"]["content"]
-            .as_str()
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty());
+        let acc = self
+            .read_ollama_stream(http_response, OllamaResponseKind::Chat)
+            .await?;
+        if let Some(err) = acc.error {
+            anyhow::bail!("Ollama chat API error: {}", err);
+        }
 
-        let tool_calls = if let Some(calls) = response_body["message"]["tool_calls"].as_array() {
-            calls
-                .iter()
-                .enumerate()
-                .filter_map(|(i, tc)| {
-                    let function = tc.get("function")?;
-                    let name = function["name"].as_str()?.to_string();
-                    let arguments = function.get("arguments").cloned().unwrap_or_default();
-                    Some(ToolCall {
-                        id: format!("call_{}", i),
-                        function_name: name,
-                        arguments,
+        // Parse accumulated response
+        let content = Some(acc.content).filter(|s| !s.is_empty());
+
+        let tool_calls = acc
+            .tool_calls
+            .as_ref()
+            .and_then(|v| v.as_array())
+            .map(|calls| {
+                calls
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, tc)| {
+                        let function = tc.get("function")?;
+                        let name = function["name"].as_str()?.to_string();
+                        let arguments = function.get("arguments").cloned().unwrap_or_default();
+                        Some(ToolCall {
+                            id: format!("call_{}", i),
+                            function_name: name,
+                            arguments,
+                        })
                     })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
+                    .collect()
+            })
+            .unwrap_or_default();
 
         let token_usage = TokenUsage {
-            prompt_tokens: response_body["prompt_eval_count"].as_u64().unwrap_or(0),
-            completion_tokens: response_body["eval_count"].as_u64().unwrap_or(0),
-            total_tokens: response_body["prompt_eval_count"].as_u64().unwrap_or(0)
-                + response_body["eval_count"].as_u64().unwrap_or(0),
+            prompt_tokens: acc.prompt_eval_count,
+            completion_tokens: acc.eval_count,
+            total_tokens: acc.prompt_eval_count + acc.eval_count,
         };
 
         Ok(ChatResponse {
