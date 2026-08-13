@@ -416,29 +416,34 @@ impl ClientRegistry {
             ));
         }
 
-        // Find all keywords that are claimed by multiple protocols
+        // Only count overlaps across DISTINCT protocols — a protocol whose keyword
+        // equals its own stack_name contributes two entries for one keyword and is
+        // not an overlap.
         let mut overlaps = Vec::new();
         for (keyword, protocols) in &keyword_to_protocols {
-            if protocols.len() > 1 {
+            let distinct: std::collections::HashSet<&String> =
+                protocols.iter().map(|(name, _)| name).collect();
+            if distinct.len() > 1 {
                 overlaps.push((keyword.clone(), protocols.clone()));
             }
         }
 
-        // If overlaps found, log warnings with detailed information
+        // Development-time advisory only — log at DEBUG (netget.log) rather than
+        // spamming the TUI on every startup. `test_keyword_overlaps` is the gate.
         if !overlaps.is_empty() {
-            use tracing::warn;
-            warn!("⚠️  WARNING: Client keyword overlaps detected between protocols:\n");
+            use tracing::debug;
+            debug!("Client keyword overlaps detected between protocols:");
 
             for (keyword, protocols) in &overlaps {
-                warn!("  Keyword '{}' is used by:", keyword);
+                debug!("  Keyword '{}' is used by:", keyword);
                 for (protocol_name, source) in protocols {
-                    warn!("    - {} ({})", protocol_name, source);
+                    debug!("    - {} ({})", protocol_name, source);
                 }
             }
 
-            warn!("Note: Each keyword should ideally be unique to a single protocol.");
-            warn!(
-                "      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n"
+            debug!("Note: Each keyword should ideally be unique to a single protocol.");
+            debug!(
+                "      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps."
             );
         }
     }

@@ -585,10 +585,14 @@ impl ServerRegistry {
             ));
         }
 
-        // Find all keywords that are claimed by multiple protocols
+        // Find all keywords claimed by more than one DISTINCT protocol. A single
+        // protocol whose keyword equals its own stack_name contributes two entries
+        // for the same keyword — that is not an overlap and must not be reported.
         let mut overlaps = Vec::new();
         for (keyword, protocols) in &keyword_to_protocols {
-            if protocols.len() > 1 {
+            let distinct: std::collections::HashSet<&String> =
+                protocols.iter().map(|(name, _)| name).collect();
+            if distinct.len() > 1 {
                 overlaps.push((keyword.clone(), protocols.clone()));
             }
         }
@@ -603,21 +607,25 @@ impl ServerRegistry {
     fn validate_keyword_uniqueness(&self) {
         let overlaps = self.get_keyword_overlaps();
 
-        // If overlaps found, log warnings with detailed information
+        // Overlaps between distinct protocols are a development-time advisory, not a
+        // runtime problem (many are intentional family keywords like "bluetooth"/"usb"
+        // that then narrow by a more specific keyword). Log at DEBUG so it lands in
+        // netget.log for whoever cares without spamming the TUI on every startup; the
+        // `test_keyword_overlaps` test is the enforcement point.
         if !overlaps.is_empty() {
-            use tracing::warn;
-            warn!("⚠️  WARNING: Keyword overlaps detected between protocols:\n");
+            use tracing::debug;
+            debug!("Keyword overlaps detected between protocols:");
 
             for (keyword, protocols) in &overlaps {
-                warn!("  Keyword '{}' is used by:", keyword);
+                debug!("  Keyword '{}' is used by:", keyword);
                 for (protocol_name, source) in protocols {
-                    warn!("    - {} ({})", protocol_name, source);
+                    debug!("    - {} ({})", protocol_name, source);
                 }
             }
 
-            warn!("Note: Each keyword should ideally be unique to a single protocol.");
-            warn!(
-                "      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps.\n"
+            debug!("Note: Each keyword should ideally be unique to a single protocol.");
+            debug!(
+                "      Run 'cargo test test_keyword_overlaps -- --ignored' to see all overlaps."
             );
         }
     }
