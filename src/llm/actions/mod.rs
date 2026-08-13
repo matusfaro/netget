@@ -502,6 +502,56 @@ pub struct Parameter {
     pub required: bool,
 }
 
+/// Normalize an LLM-emitted action/tool-call object into the canonical flat
+/// `{"type": <name>, <params...>}` shape that the action/tool parsers expect.
+///
+/// Tolerates the common OpenAI/tool-calling variants that some models (notably
+/// MLX/gemma builds) emit instead of NetGet's format:
+///   - the action name under `type`, `function`, or `name`;
+///   - parameters nested under `args`, `arguments`, or `parameters` rather than flat.
+///
+/// A value with no recognizable name key, or a non-object, is returned unchanged.
+pub fn normalize_action_object(value: &serde_json::Value) -> serde_json::Value {
+    let obj = match value.as_object() {
+        Some(o) => o,
+        None => return value.clone(),
+    };
+
+    let name = obj
+        .get("type")
+        .and_then(|v| v.as_str())
+        .or_else(|| obj.get("function").and_then(|v| v.as_str()))
+        .or_else(|| obj.get("name").and_then(|v| v.as_str()));
+    let name = match name {
+        Some(n) => n.to_string(),
+        None => return value.clone(),
+    };
+
+    let mut out = serde_json::Map::new();
+    out.insert("type".to_string(), serde_json::Value::String(name));
+
+    // Flat params: keep everything except the name and wrapper keys.
+    for (k, v) in obj {
+        if matches!(
+            k.as_str(),
+            "type" | "function" | "name" | "args" | "arguments" | "parameters"
+        ) {
+            continue;
+        }
+        out.insert(k.clone(), v.clone());
+    }
+    // Merge nested params up to the top level (flat params win on conflict).
+    for wrapper in ["args", "arguments", "parameters"] {
+        if let Some(serde_json::Value::Object(inner)) = obj.get(wrapper) {
+            for (k, v) in inner {
+                out.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+        }
+    }
+
+    serde_json::Value::Object(out)
+}
+
 /// Response from LLM containing tools and/or actions
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ActionResponse {
@@ -540,16 +590,21 @@ impl ActionResponse {
             trimmed
         };
 
-        // Strip any extra characters before the JSON object or array
-        // Sometimes LLMs add extra text like "Y{" instead of just "{"
-        let json_start = json_str
-            .find('{')
-            .or_else(|| json_str.find('['))
-            .unwrap_or(0);
+        // Strip any extra characters before the JSON object or array.
+        // Sometimes LLMs add extra text like "Y{" instead of just "{". Take whichever
+        // of `{` or `[` comes FIRST — preferring `{` unconditionally would strip the
+        // leading `[` off a top-level array and corrupt it.
+        let json_start = match (json_str.find('{'), json_str.find('[')) {
+            (Some(b), Some(k)) => b.min(k),
+            (Some(b), None) => b,
+            (None, Some(k)) => k,
+            (None, None) => 0,
+        };
         let clean_json = &json_str[json_start..];
 
         // Try parsing as a single object first (most common case)
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(clean_json) {
+            use crate::llm::actions::tools::ToolAction;
             match json_value {
                 // Case 1: Full response object with tools and/or actions fields
                 serde_json::Value::Object(ref map)
@@ -557,6 +612,13 @@ impl ActionResponse {
                 {
                     match serde_json::from_value::<ActionResponse>(json_value.clone()) {
                         Ok(mut response) => {
+                            // Normalize each entry (flatten nested args, map function->type).
+                            for a in response.actions.iter_mut() {
+                                *a = normalize_action_object(a);
+                            }
+                            for t in response.tools.iter_mut() {
+                                *t = normalize_action_object(t);
+                            }
                             // Separate tools and actions if mixed (support cross-contamination)
                             Self::separate_tools_and_actions(&mut response);
                             return Ok(response);
@@ -571,29 +633,57 @@ impl ActionResponse {
                     }
                 }
 
-                // Case 2: Single action/tool object at top level {"type": "...", ...}
-                serde_json::Value::Object(ref map) if map.contains_key("type") => {
-                    use crate::llm::actions::tools::ToolAction;
+                // Case 1b: OpenAI-style tool-call wrapper
+                // {"tool_calls": [{"function"/"name": "...", "args"/"arguments"/"parameters": {...}}]}
+                // Many models (e.g. MLX/gemma builds) emit this instead of the native format.
+                serde_json::Value::Object(ref map)
+                    if map.contains_key("tool_calls") || map.contains_key("tool_call") =>
+                {
                     let mut response = ActionResponse::empty();
+                    let calls = map.get("tool_calls").or_else(|| map.get("tool_call"));
+                    let items: Vec<serde_json::Value> = match calls {
+                        Some(serde_json::Value::Array(a)) => a.clone(),
+                        Some(v @ serde_json::Value::Object(_)) => vec![v.clone()],
+                        _ => Vec::new(),
+                    };
+                    for item in &items {
+                        let norm = normalize_action_object(item);
+                        if ToolAction::is_tool_action(&norm) {
+                            response.tools.push(norm);
+                        } else {
+                            response.actions.push(norm);
+                        }
+                    }
+                    return Ok(response);
+                }
 
-                    if ToolAction::is_tool_action(&json_value) {
-                        response.tools.push(json_value);
+                // Case 2: Single action/tool object at top level. Accept a name under
+                // `type`, `function`, or `name`; normalize flattens any nested args.
+                serde_json::Value::Object(ref map)
+                    if map.contains_key("type")
+                        || map.contains_key("function")
+                        || map.contains_key("name") =>
+                {
+                    let norm = normalize_action_object(&json_value);
+                    let mut response = ActionResponse::empty();
+                    if ToolAction::is_tool_action(&norm) {
+                        response.tools.push(norm);
                     } else {
-                        response.actions.push(json_value);
+                        response.actions.push(norm);
                     }
                     return Ok(response);
                 }
 
                 // Case 3: Top-level array [{"type": "..."}, ...]
                 serde_json::Value::Array(items) => {
-                    use crate::llm::actions::tools::ToolAction;
                     let mut response = ActionResponse::empty();
 
-                    for item in items {
-                        if ToolAction::is_tool_action(&item) {
-                            response.tools.push(item);
+                    for item in &items {
+                        let norm = normalize_action_object(item);
+                        if ToolAction::is_tool_action(&norm) {
+                            response.tools.push(norm);
                         } else {
-                            response.actions.push(item);
+                            response.actions.push(norm);
                         }
                     }
                     return Ok(response);

@@ -419,6 +419,18 @@ impl CommonAction {
         // BACKWARD COMPATIBILITY: Handle old field names
         let mut value_mut = value.clone();
         if let Some(obj) = value_mut.as_object_mut() {
+            // TOLERANCE: some models nest parameters under args/arguments/parameters
+            // (OpenAI tool-call style) instead of placing them flat on the object.
+            // Flatten them so {"type":"open_server","args":{"port":8123}} parses.
+            for wrapper in ["args", "arguments", "parameters"] {
+                if let Some(serde_json::Value::Object(inner)) = obj.remove(wrapper) {
+                    for (k, v) in inner {
+                        obj.entry(k).or_insert(v);
+                    }
+                }
+            }
+        }
+        if let Some(obj) = value_mut.as_object_mut() {
             // BACKWARD COMPATIBILITY: Rename base_stack to protocol (if protocol doesn't exist)
             if matches!(
                 obj.get("type").and_then(|v| v.as_str()),
