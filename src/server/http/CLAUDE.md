@@ -50,7 +50,12 @@ There are no async actions: HTTP is purely reactive.
 ### Failure behavior
 
 - LLM call fails → `500 Internal Server Error`.
-- Model emits no `send_http_response` → empty `200`.
+- Model emits no `send_http_response` → the server's `default_response` startup param
+  if set, otherwise an empty `200`. The `send_http_response` action and `http_request`
+  event descriptions now tell the model to always answer and to honor the client's
+  `Accept` header (return a matching `Content-Type`; 404 for an image/binary it cannot
+  produce), and the `request_filter` param is recommended so favicon/preflight noise
+  never reaches the model.
 - Model emits a `send_http_response` the executor rejects (e.g. a status outside
   100-599) → the action is dropped with a warning by
   `execute_actions()` and the client still gets the empty `200`. This is why the

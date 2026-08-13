@@ -161,3 +161,54 @@ fn rejection_defaults_to_404_and_is_configurable() {
     assert_eq!(resp.status(), 418);
     assert_eq!(resp.headers().get("x-teapot").unwrap(), "yes");
 }
+
+// --- default_response: what the server sends when the model returns no action ---
+
+#[test]
+fn default_response_parts_reflect_the_startup_param() {
+    let f = filter(serde_json::json!({
+        "default_response": { "status": 404, "headers": { "Content-Type": "text/html" }, "body": "<h1>404</h1>" }
+    }));
+    let (status, headers, body) = f
+        .default_response_parts()
+        .expect("default_response must be parsed");
+    assert_eq!(status, 404);
+    assert_eq!(body, "<h1>404</h1>");
+    assert!(headers
+        .iter()
+        .any(|(k, v)| k.eq_ignore_ascii_case("content-type") && v.contains("text/html")));
+}
+
+#[test]
+fn absent_default_response_is_none() {
+    assert!(filter(serde_json::json!({}))
+        .default_response_parts()
+        .is_none());
+}
+
+#[test]
+fn build_response_uses_default_when_model_produced_nothing() {
+    use netget::server::http_common::handler::build_response;
+    let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // No protocol_results (empty action list) + a default -> the default is used.
+    let with_default = build_response(
+        Vec::new(),
+        "HTTP",
+        "GET",
+        "/",
+        &tx,
+        Some((
+            404,
+            vec![("Content-Type".into(), "text/html".into())],
+            "nope".into(),
+        )),
+    )
+    .unwrap();
+    assert_eq!(with_default.status(), 404);
+
+    // No results + no default -> historical empty 200 (unchanged behavior).
+    let (tx2, _rx2) = tokio::sync::mpsc::unbounded_channel();
+    let without = build_response(Vec::new(), "HTTP", "GET", "/", &tx2, None).unwrap();
+    assert_eq!(without.status(), 200);
+}

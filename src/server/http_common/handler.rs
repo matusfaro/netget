@@ -185,16 +185,22 @@ pub fn build_response(
     method: &str,
     uri: &str,
     status_tx: &mpsc::UnboundedSender<String>,
+    // Fallback for when the model produced no `send_http_response` — the server's
+    // `default_response` startup param, as `(status, headers, body)`. `None` keeps
+    // the historical empty `200`.
+    default_response: Option<(u16, Vec<(String, String)>, String)>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
     // Default response in case nothing was produced
     let mut status_code = 200;
     let mut response_headers = HashMap::new();
     let mut response_body = String::new();
+    let mut produced_response = false;
 
     for protocol_result in protocol_results {
         if let ActionResult::Output(output_data) = protocol_result {
             // Parse the output as JSON containing HTTP response fields
             if let Ok(json_value) = serde_json::from_slice::<serde_json::Value>(&output_data) {
+                produced_response = true;
                 if let Some(status) = json_value.get("status").and_then(|v| v.as_u64()) {
                     status_code = status as u16;
                 }
@@ -209,6 +215,16 @@ pub fn build_response(
                     response_body = body.to_string();
                 }
             }
+        }
+    }
+
+    // The model was consulted but returned no send_http_response. Use the server's
+    // configured default_response if it set one, instead of a bare (blank) 200.
+    if !produced_response {
+        if let Some((status, headers, body)) = default_response {
+            status_code = status;
+            response_headers = headers.into_iter().collect();
+            response_body = body;
         }
     }
 
@@ -364,6 +380,11 @@ impl Default for FilteredResponse {
 pub struct RequestFilter {
     rules: Vec<FilterRule>,
     filtered_response: FilteredResponse,
+    /// Canned response used when the model is consulted but produces no
+    /// `send_http_response` (an empty action list). `None` keeps the historical
+    /// behavior of an empty `200`. Set via the `default_response` startup param so
+    /// a declined request looks intentional (e.g. a 404 page) rather than blank.
+    default_response: Option<FilteredResponse>,
     /// Human-readable problems found while parsing the config. Callers surface
     /// these on the status channel so a typo is visible in the TUI/MCP stream,
     /// not just in `netget.log`.
@@ -432,11 +453,27 @@ impl RequestFilter {
             warnings.push(msg);
         }
 
+        // Independent of the filter: what to send when the model is asked and
+        // answers with no response action. Absent => the historical empty 200.
+        let default_response = params
+            .and_then(|p| p.get("default_response"))
+            .map(|raw| Self::parse_filtered_response(raw, &mut warnings));
+
         Self {
             rules,
             filtered_response,
+            default_response,
             warnings,
         }
+    }
+
+    /// The configured `default_response` as `(status, headers, body)`, or `None`
+    /// to keep the empty-200 default. Used by `build_response` when the model
+    /// produced no `send_http_response`.
+    pub fn default_response_parts(&self) -> Option<(u16, Vec<(String, String)>, String)> {
+        self.default_response
+            .as_ref()
+            .map(|r| (r.status, r.headers.clone(), r.body.clone()))
     }
 
     /// Problems found while parsing the filter config (empty when it is clean).
@@ -590,7 +627,13 @@ pub fn request_handling_startup_parameters() -> Vec<crate::llm::actions::Paramet
         ParameterDefinition {
             name: "request_filter".to_string(),
             type_hint: "array".to_string(),
-            description: "Allowlist of request-match rules deciding which requests reach the LLM. \
+            description: "RECOMMENDED for any HTTP server a browser or the public internet will \
+                reach: set this so you do not spend a slow LLM call on favicon.ico, CORS \
+                preflights, and scanner noise. A good default that only reasons about real page \
+                loads is [{\"methods\":[\"GET\"],\"headers\":{\"accept\":\"text/html\"}}] — favicon \
+                and image probes carry `Accept: image/*`, and preflights are not GET, so they are \
+                auto-answered without a model call. \
+                Allowlist of request-match rules deciding which requests reach the LLM. \
                 A request is handled by the LLM only if it matches at least one rule; requests \
                 matching no rule get `filtered_response` (default 404) with NO LLM call. Omit this \
                 to send every request to the LLM. Each rule is an object; all present conditions \
@@ -621,6 +664,22 @@ pub fn request_handling_startup_parameters() -> Vec<crate::llm::actions::Paramet
                 .to_string(),
             required: false,
             example: serde_json::json!({ "status": 404, "body": "Not Found" }),
+        },
+        ParameterDefinition {
+            name: "default_response".to_string(),
+            type_hint: "object".to_string(),
+            description: "Response used when the model IS consulted for a request but returns no \
+                send_http_response (an empty answer). Without this, such a request gets a blank \
+                200, which looks broken. Set a sensible fallback — commonly a 404 page — so a \
+                declined request looks intentional. Same shape as filtered_response: `status` \
+                (number), `body` (string), `headers` (object of name→value)."
+                .to_string(),
+            required: false,
+            example: serde_json::json!({
+                "status": 404,
+                "headers": { "Content-Type": "text/html" },
+                "body": "<!doctype html><title>Not Found</title><h1>404</h1>"
+            }),
         },
     ]
 }

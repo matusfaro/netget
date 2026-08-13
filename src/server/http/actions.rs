@@ -209,11 +209,17 @@ fn send_http_response_action() -> ActionDefinition {
         name: "send_http_response".to_string(),
         description: "Respond to the HTTP request that triggered this event. This is the ONLY \
             action that produces an HTTP response - do NOT use generic 'send_data' or \
-            'show_message' for that. Emit it exactly once per request: the response is sent \
-            complete, in one piece, as soon as you return. There is no way to stream or chunk a \
-            response, to send it in several parts, or to keep the request open; and the body is \
-            sent as UTF-8 text, so binary payloads (images, gzip, protobuf) cannot be produced at \
-            all. If you emit no send_http_response, the client gets an empty 200."
+            'show_message' for that. ALWAYS emit exactly one send_http_response for every request \
+            — never return an empty action list, or the client gets a blank page. \
+            HONOR THE CLIENT'S `Accept` REQUEST HEADER (in the event's headers.accept): return a \
+            `Content-Type` the client accepts, and a body in that format. If Accept is \
+            `text/html`, return HTML; `application/json`, return JSON; `text/plain`, return text. \
+            If the client asks ONLY for a type you cannot produce — most commonly an image \
+            (`Accept: image/*`, e.g. a browser fetching /favicon.ico) or any other binary type — \
+            respond `404` (or `204`) rather than sending text mislabeled as an image: the body is \
+            UTF-8 text only, so binary payloads (images, gzip, protobuf) cannot be produced at \
+            all. The response is sent complete, in one piece, as soon as you return; there is no \
+            way to stream or chunk it, to send it in parts, or to keep the request open."
             .to_string(),
         parameters: vec![
             Parameter {
@@ -276,7 +282,11 @@ pub static SEND_HTTP_RESPONSE_ACTION: LazyLock<ActionDefinition> =
 pub static HTTP_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "http_request",
-        "HTTP request received from client",
+        "HTTP request received from client. Always answer with exactly one send_http_response, \
+         and match the response Content-Type to the client's Accept header (headers.accept): \
+         HTML for text/html, JSON for application/json; if the client only accepts an image or \
+         other binary type you cannot produce (e.g. a browser fetching /favicon.ico with \
+         Accept: image/*), answer 404 rather than sending text as an image.",
         serde_json::json!({
             "type": "send_http_response",
             "status": 200,

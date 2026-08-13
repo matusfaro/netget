@@ -554,6 +554,7 @@ async fn handle_http_request_inner(
                 &request_data.method,
                 &request_data.uri,
                 &status_tx,
+                filter.default_response_parts(),
             )
         }
         Err(e) => {
