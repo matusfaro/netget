@@ -18,6 +18,71 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Instant};
+
+/// Restore the terminal if the process dies on a *native* fatal signal.
+///
+/// The `RawModeGuard` (a `Drop`) and any Rust panic hook only run for Rust-level
+/// unwinding. A native crash — a SIGSEGV/SIGABRT/SIGTRAP from a C/ObjC library
+/// (e.g. a Metal/CoreFoundation over-release) — terminates the process without
+/// unwinding, so the guard never runs and the terminal is left in raw mode with
+/// the cursor hidden: the shell "hangs". This installs an async-signal-safe handler
+/// that puts the terminal back before the process actually dies.
+#[cfg(unix)]
+mod crash_restore {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const STDIN_FD: libc::c_int = 0;
+    const STDOUT_FD: libc::c_int = 1;
+    // Show cursor; disable mouse tracking modes 1000/1002/1003/1006; disable bracketed paste 2004.
+    const RESET: &[u8] = b"\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l";
+
+    // Written once, before any handler is installed; only read from the handler.
+    static mut SAVED: libc::termios = unsafe { std::mem::zeroed() };
+    static HAVE_SAVED: AtomicBool = AtomicBool::new(false);
+    static INSTALLED: AtomicBool = AtomicBool::new(false);
+
+    // Only calls async-signal-safe functions (tcsetattr, write, signal, raise).
+    extern "C" fn handler(sig: libc::c_int) {
+        unsafe {
+            if HAVE_SAVED.load(Ordering::SeqCst) {
+                libc::tcsetattr(STDIN_FD, libc::TCSANOW, std::ptr::addr_of!(SAVED));
+            }
+            libc::write(
+                STDOUT_FD,
+                RESET.as_ptr() as *const libc::c_void,
+                RESET.len(),
+            );
+            // Re-raise with the default disposition so the process still dies with
+            // this signal (and the OS records the crash) — we only cleaned up first.
+            libc::signal(sig, libc::SIG_DFL);
+            libc::raise(sig);
+        }
+    }
+
+    /// Capture the *current* (pre-raw-mode, cooked) terminal state and install the
+    /// handler. Call this immediately BEFORE enabling raw mode so the saved state is
+    /// the one to restore to. Idempotent.
+    pub fn install() {
+        if INSTALLED.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        unsafe {
+            if libc::tcgetattr(STDIN_FD, std::ptr::addr_of_mut!(SAVED)) == 0 {
+                HAVE_SAVED.store(true, Ordering::SeqCst);
+            }
+            for &sig in &[
+                libc::SIGSEGV,
+                libc::SIGABRT,
+                libc::SIGBUS,
+                libc::SIGILL,
+                libc::SIGTRAP,
+                libc::SIGFPE,
+            ] {
+                libc::signal(sig, handler as libc::sighandler_t);
+            }
+        }
+    }
+}
 use tracing::{debug, error, info, warn};
 
 use crate::events::{EventHandler, UserCommand};
@@ -139,6 +204,11 @@ pub async fn run_rolling_tui(
     }
 
     // Setup terminal (raw mode only, no alternate screen)
+    // Capture the cooked terminal state and arm the native-crash restorer BEFORE
+    // entering raw mode, so a SIGSEGV/SIGABRT/SIGTRAP from a C/ObjC library does not
+    // leave the shell wedged in raw mode. See `crash_restore`.
+    #[cfg(unix)]
+    crash_restore::install();
     debug!("Rolling TUI: Enabling raw mode...");
     terminal::enable_raw_mode()?;
     debug!("Rolling TUI: Raw mode enabled");

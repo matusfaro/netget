@@ -430,12 +430,13 @@ Kill stuck builds with `./cargo-isolated-kill.sh`, never `pkill cargo`.
 
 ### The installed binary — `/Users/matus/bin/netget`
 
-The maintainer's `netget` on `PATH` lives at `/Users/matus/bin/netget` and **must always be built
-with every protocol compiled in** — i.e. `--all-features`, release. After any change that adds a
-protocol, a feature, or otherwise affects the compiled surface, rebuild and reinstall it:
+The maintainer's `netget` on `PATH` lives at `/Users/matus/bin/netget` and **must always have every
+protocol compiled in.** Build it with the **`all-protocols`** feature, release — **NOT
+`--all-features`** (see the footgun below). After any change that adds a protocol or affects the
+compiled surface, rebuild and reinstall:
 
 ```bash
-./cargo-isolated.sh build --release --all-features && \
+./cargo-isolated.sh build --release --no-default-features --features all-protocols && \
   cp target/release/netget /Users/matus/bin/.netget.new && \
   mv -f /Users/matus/bin/.netget.new /Users/matus/bin/netget   # atomic; safe if netget is running
 ```
@@ -444,6 +445,23 @@ The atomic `mv` matters: the maintainer runs `netget --mcp` interactively, and o
 file in place can fail with `ETXTBSY` while it is running. Rename swaps the inode instead — the
 live process keeps the old image, the new binary takes effect on next launch. **Never kill the
 running `netget` to install** — the rename never needs it stopped.
+
+**`--all-features` vs `all-protocols` — they are NOT interchangeable, and using the wrong one
+crashes the binary at startup.** `--all-features` is a Cargo built-in that turns on *every* feature
+in `Cargo.toml`: not just protocols but also `embedded-llm`, **`gpu`** (Metal/MLX GPU backend),
+`android-termux`, the test-only `terminal-snapshot`, and the `dist*`/`portable-base` aggregates.
+On macOS the `gpu` feature initializes a Metal context at startup that CFRelease-crashes
+(`EXC_BREAKPOINT`/SIGTRAP in CoreFoundation) — so an `--all-features` binary dies the instant the
+TUI renders. Use `--all-features` **only** for a compile check (`cargo check --all-features`), never
+for a binary you run. `all-protocols` is the curated "every protocol, and only things safe to run"
+set — it includes `embedded-llm` (dormant unless `--embedded-model` is passed) but **not** `gpu`,
+which is why it runs. If `gpu`/Metal startup is ever fixed the two could converge; until then, build
+the runtime binary from `all-protocols`.
+
+The TUI installs a native-crash terminal restorer (`crash_restore` in `src/cli/rolling_tui.rs`): a
+SIGSEGV/SIGABRT/SIGTRAP from a C/ObjC library bypasses Rust's `Drop`/panic machinery, so without it
+a crash leaves the shell wedged in raw mode. The handler restores cooked mode + cursor before the
+process dies. It is a safety net, not a licence to ship a crashing binary — fix the crash too.
 
 ### Features unavailable in Claude Code for Web
 
