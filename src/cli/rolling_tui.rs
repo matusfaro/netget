@@ -2544,6 +2544,54 @@ async fn handle_status_command(
                 footer,
                 palette,
             )?;
+
+            // List the protocols excluded from this run and WHY — the footer's
+            // "N excluded (/env)" hint points here, so actually explain it.
+            let caps = state.get_system_capabilities().await;
+            let server_excluded =
+                crate::protocol::server_registry::registry().get_excluded_protocols(&caps);
+            let client_excluded = crate::protocol::CLIENT_REGISTRY.get_excluded_protocols(&caps);
+            let total = server_excluded.len() + client_excluded.len();
+
+            if total == 0 {
+                print_output_line(
+                    "Excluded protocols: none (all dependencies met)",
+                    footer,
+                    palette,
+                )?;
+            } else {
+                print_output_line(
+                    &format!(
+                        "Excluded protocols: {} ({} server, {} client) — hidden from the model \
+                         because a dependency is missing on this machine:",
+                        total,
+                        server_excluded.len(),
+                        client_excluded.len()
+                    ),
+                    footer,
+                    palette,
+                )?;
+                for (label, excluded) in
+                    [("server", &server_excluded), ("client", &client_excluded)]
+                {
+                    let mut names: Vec<&String> = excluded.keys().collect();
+                    names.sort();
+                    for name in names {
+                        // Deduplicate reasons (a protocol may miss several deps).
+                        let reasons: Vec<String> = excluded[name]
+                            .iter()
+                            .map(|d| d.name())
+                            .collect::<std::collections::BTreeSet<_>>()
+                            .into_iter()
+                            .collect();
+                        print_output_line(
+                            &format!("  [{}] {} — needs {}", label, name, reasons.join(", ")),
+                            footer,
+                            palette,
+                        )?;
+                    }
+                }
+            }
         }
         UserCommand::ShowUsage => {
             // Toggle usage stats display

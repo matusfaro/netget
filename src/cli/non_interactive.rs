@@ -175,7 +175,7 @@ pub async fn run_non_interactive(
 }
 
 /// Run a server in non-interactive mode
-async fn run_server(
+pub(crate) async fn run_server(
     state: &AppState,
     llm: OllamaClient,
     mut status_rx: mpsc::UnboundedReceiver<String>,

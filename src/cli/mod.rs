@@ -96,9 +96,21 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
+    // Handle --docs flag (print all protocol documentation and exit)
+    if args.docs {
+        print!("{}", crate::protocol::render_all_protocol_docs());
+        return Ok(());
+    }
+
     // Handle --client <protocol> flag (connect a client in non-interactive mode)
     if let Some(ref protocol) = args.client_protocol {
         return run_client(protocol, &args).await;
+    }
+
+    // Handle --server <protocol> flag (start a server directly, skipping the
+    // initial LLM call that would interpret the prompt into an open_server).
+    if let Some(ref protocol) = args.server_protocol {
+        return run_server_direct(protocol, &args).await;
     }
 
     // Handle --mcp-stdio flag (run as MCP STDIO server)
@@ -477,6 +489,119 @@ async fn run_client(protocol: &str, args: &Args) -> Result<()> {
 
     println!("[CLIENT] Client stopped.");
     Ok(())
+}
+
+/// Start a server of `protocol` directly (`--server <PROTOCOL>`), skipping the
+/// initial model call that would otherwise interpret the prompt into an
+/// `open_server` action.
+///
+/// The deterministic counterpart to `open_server`: the operator already told us
+/// the protocol and port, so there is nothing for the model to decide up front.
+/// The trailing prompt becomes the server's per-request instruction, used by the
+/// per-request LLM (the same instruction `open_server` would have carried). This
+/// routes straight to `server_startup::start_server_from_action`, the same
+/// function the MCP `start_server` tool and the actions-JSON loader use, then
+/// hands off to the shared non-interactive server loop.
+async fn run_server_direct(protocol: &str, args: &Args) -> Result<()> {
+    use tokio::sync::mpsc;
+
+    setup::init_logging(args, false)?;
+
+    // Resolve the protocol up front so an unknown/compiled-out name fails
+    // immediately with the registry's own diagnostic (before any setup work).
+    let canonical = crate::protocol::server_registry::registry()
+        .resolve(protocol)
+        .map(|p| p.protocol_name().to_string())
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let startup_params = args.parse_server_params()?;
+    let instruction = args.server_instruction(&canonical);
+    let settings = Settings::load();
+
+    let base_url = args
+        .openai_url
+        .clone()
+        .or_else(|| args.ollama_url.clone())
+        .unwrap_or_else(|| "http://localhost:11434".to_string());
+    let state =
+        AppState::new_with_options(args.include_disabled_protocols, args.ollama_lock, base_url);
+    state.set_min_stability(args.parse_min_stability()?).await;
+    state
+        .configure_rate_limiter(args.build_rate_limiter_config())
+        .await?;
+
+    if let Some(model) = args.model.clone().or_else(|| settings.model.clone()) {
+        state.set_ollama_model(Some(model)).await;
+    }
+    if let Some(mode) = args
+        .parse_scripting_mode()?
+        .or_else(|| settings.parse_scripting_mode())
+    {
+        state.set_selected_scripting_mode(mode).await;
+    }
+    if let Some(handler_mode) = args.parse_event_handler_mode()? {
+        state.set_event_handler_mode(handler_mode).await;
+    }
+    let mut web_search_mode = settings.get_web_search_mode();
+    if web_search_mode == crate::state::app_state::WebSearchMode::Ask {
+        web_search_mode = crate::state::app_state::WebSearchMode::Off;
+    }
+    state.set_web_search_mode(web_search_mode).await;
+
+    let lock_enabled = state.get_ollama_lock_enabled().await;
+    let llm = create_llm_client(args, lock_enabled)?
+        .with_mock_config_file(args.mock_config_file.clone())
+        .with_app_state(state.clone());
+    state.set_llm_client(llm.clone()).await;
+
+    // Status channel + a forwarder that prints server startup/lifecycle lines to
+    // stdout, mirroring run_non_interactive so `--server` behaves the same way.
+    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+    let _forwarder = tokio::spawn(async move {
+        use std::io::{self, Write};
+        while let Some(msg) = status_rx.recv().await {
+            if !msg.starts_with("__") {
+                let clean = msg
+                    .strip_prefix("[INFO] ")
+                    .or_else(|| msg.strip_prefix("[ERROR] "))
+                    .or_else(|| msg.strip_prefix("[WARN] "))
+                    .or_else(|| msg.strip_prefix("[DEBUG] "))
+                    .unwrap_or(&msg);
+                println!("{clean}");
+                let _ = io::stdout().flush();
+            }
+        }
+    });
+    tokio::task::yield_now().await;
+
+    let server_id = crate::cli::server_startup::start_server_from_action(
+        &state,
+        None, // mac_address
+        None, // interface
+        None, // host (defaults to 127.0.0.1)
+        args.server_port,
+        &canonical,
+        false, // send_first
+        None,  // initial_memory
+        instruction,
+        startup_params,
+        None, // event_handlers
+        None, // scheduled_tasks
+        None, // feedback_instructions
+        status_tx,
+    )
+    .await?;
+
+    println!(
+        "Server #{} ({}) started, skipping the initial model call. Press Ctrl+C to stop.",
+        server_id.as_u32(),
+        canonical
+    );
+    println!("Waiting for connections...\n");
+
+    // Hand off to the shared non-interactive server loop (Ctrl+C + task ticker).
+    let (_srv_tx, srv_rx) = mpsc::unbounded_channel::<String>();
+    non_interactive::run_server(&state, llm, srv_rx).await
 }
 
 /// Run a simple protocol in non-interactive mode

@@ -419,6 +419,40 @@ pub struct Args {
     )]
     pub client_list: bool,
 
+    /// Start a server of PROTOCOL directly, skipping the initial model call
+    #[clap(
+        long = "server",
+        value_name = "PROTOCOL",
+        conflicts_with = "client_protocol",
+        help = "Start a server of PROTOCOL directly, WITHOUT asking the model which protocol to run — the initial LLM call is skipped. Any trailing text becomes the server's per-request instruction (the general prompt used for every request). Use a base-stack name (e.g. http, dns, redis); run with --docs to see them. Combine with --port and --server-params."
+    )]
+    pub server_protocol: Option<String>,
+
+    /// Listen port for --server
+    #[clap(
+        long = "port",
+        value_name = "PORT",
+        requires = "server_protocol",
+        help = "Port the --server listens on (default is the protocol's own default)."
+    )]
+    pub server_port: Option<u16>,
+
+    /// Startup parameters for --server
+    #[clap(
+        long = "server-params",
+        value_name = "JSON",
+        requires = "server_protocol",
+        help = "JSON object of startup parameters for --server (same keys as the MCP start_server tool's startup_params, e.g. request_filter/default_response for http). Not every parameter has a dedicated flag — use this for the rest."
+    )]
+    pub server_params: Option<String>,
+
+    /// Print documentation for every protocol and exit
+    #[clap(
+        long = "docs",
+        help = "Print documentation for every compiled-in server and client protocol (base stacks, keywords, startup parameters, events, actions, examples) to stdout, then exit."
+    )]
+    pub docs: bool,
+
     /// Run as MCP STDIO server (for Claude Desktop/Code integration)
     #[clap(
         long = "mcp",
@@ -682,6 +716,37 @@ impl Args {
             )
         } else {
             trailing
+        }
+    }
+
+    /// The per-request instruction for `--server`: the trailing prompt, or a
+    /// minimal default naming the protocol when none was given.
+    pub fn server_instruction(&self, protocol: &str) -> String {
+        let trailing = self.prompt.join(" ").trim().to_string();
+        if trailing.is_empty() {
+            format!(
+                "You are a {} server. Respond to each request appropriately.",
+                protocol
+            )
+        } else {
+            trailing
+        }
+    }
+
+    /// Parse `--server-params` into a JSON object.
+    pub fn parse_server_params(&self) -> Result<Option<serde_json::Value>> {
+        match &self.server_params {
+            None => Ok(None),
+            Some(raw) => {
+                let value: serde_json::Value = serde_json::from_str(raw)
+                    .map_err(|e| anyhow::anyhow!("--server-params is not valid JSON: {}", e))?;
+                if !value.is_object() {
+                    anyhow::bail!(
+                        "--server-params must be a JSON object, e.g. '{{\"request_filter\": [...]}}'"
+                    );
+                }
+                Ok(Some(value))
+            }
         }
     }
 
