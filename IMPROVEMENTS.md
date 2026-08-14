@@ -78,69 +78,49 @@ tests fail — false, `server::dns` is 5/5), item 47 (ntp asserts nothing — no
 `rsntp` client), item 76 (nfs/ipp/vnc/webdav transport-only — all decode payloads now). Their
 entries below are kept only as archive.
 
+### Closed in the August 2026 backlog wave
+
+A parallel wave cleared most of the discrete open items (all verified against the current tree):
+`grpc` empty-`OK` fail-open → `INTERNAL` (`107c6c87`); MCP scheduled tasks now fire via a 1s
+ticker in both `--mcp`/`--mcp-http` (`1fb979d8`); `bluetooth_ble` `block_on` removed and the
+first-start poisoning fixed with a process-wide shared `Peripheral` (`6394895e`); WireGuard's
+authorize flow made reachable via a `wireguard_add_peer` pre-authorization action (`a57f7145`);
+the `stdio` pipe-filter unblocked and its stdout kept clean (`50513c4d`); 13 stale per-protocol
+`CLAUDE.md` files refreshed (`a19c6592`); and the "too much LLM" family (`stun`/`ntp`/the
+routing-discovery protocols) was already static-defaulted earlier. Some of these landed as CODE
+fixes whose end-to-end validation still needs hardware — see item 2 below.
+
 ### Still open
 
 1. **`bluetooth_ble_beacon` on real Linux hardware.** *(Implemented, unverified.)* The
-   Linux-only BlueZ path exists — `bluer` registering `org.bluez.LEAdvertisement1` on
-   `org.bluez.LEAdvertisingManager1` — and macOS/Windows now return an explicit `Err` from
-   `spawn()` instead of the protocol being hidden. Payload construction is pure and tested
-   byte-for-byte against the Apple and google/eddystone layouts. What is still open is that the
-   BlueZ half has never been **compiled or run on Linux**, so first use is bring-up: an
-   `#[ignore]`d test in `tests/server/bluetooth_ble_beacon/e2e_test.rs` is the starting point,
-   and `btmon` is the confirmation. Also note the release `dist` (Linux) feature set excludes
-   all `bluetooth-ble*` for libdbus reasons, so the shipped Linux binary does not contain it.
-2. **The first BLE server start in a process poisons every subsequent one.** Proven by
-   isolation: `bluetooth_ble_thermometer` alone powers on in 569ms; started second it burns
-   10,565ms and reports *"Bluetooth adapter failed to power on after 10 seconds"* — a false
-   diagnosis, the adapter is fine. Inside `ble_peripheral_rust`'s CoreBluetooth backend, reached
-   from `src/server/bluetooth_ble/mod.rs:123-146`. Needs a shared `Peripheral`, not a reworded
-   error. Costs ~3 minutes of the startup sweep.
-3. **`bluetooth_ble/mod.rs` calls `futures::executor::block_on` in async context** — the
-   antipattern that bit usb-msc, usb-fido2 and smb (see `CLAUDE.md`, Known systemic issues).
-   Panic swallowed by `tokio::spawn`, server reports healthy.
-4. **`grpc handle_unary` answers "no action" with an empty message and `grpc-status: 0`** — a
-   fail-open of the model-said-nothing kind. The caller cannot distinguish a deliberate empty
-   response from the model never answering.
-5. **MCP still has no scheduled-task timer.** It gained a feedback drain, but `schedule_task`
-   over MCP creates tasks nothing fires.
-6. **Item 48** — auditing library panics reachable from the wire is standing practice, not a
-   discrete fix. `pgwire` (item 77) is the open one and is upstream.
-7. **Item 23** — `AppState` is one `RwLock` over everything. A throughput ceiling, not a defect.
-8. **Item 35** — the `easy` layer is a parallel subsystem serving one protocol. Finish or delete.
-9. `src/server/usb/{msc,serial,fido2}/CLAUDE.md` describe pre-fix behaviour and are stale.
-12. **`stdio` can only be launched via actions-JSON / `--load`, never a natural-language prompt.**
-    NetGet's bootstrap (`Args::get_actions_json` → `piped_stdin`) does a blocking `read_to_string`
-    on stdin for any non-actions-JSON invocation, so on an open pipe it blocks forever *before any
-    server starts* — a prompt can never hand a live stdin to the stdio server. And the
-    non-interactive runner `println!`s its status stream to stdout, sharing the channel with the
-    model's bytes. Both are core `src/cli/` fixes; `prog | netget "be a filter" | prog` needs them.
-13. **Per-protocol doc debt from the wave.** `src/scripting/CLAUDE.md` still says "scripts are
-    stateless by construction" (resident mode now exists); `src/server/sip/CLAUDE.md` still says no
-    RTP flows (it does with the `rtp` feature); the routing/discovery protocols' `CLAUDE.md`s still
-    describe always-LLM behaviour (they static-default now); `src/mcp_stdio/CLAUDE.md` predates the
-    `update_server`/`update_client` tools. Refresh when working nearby.
-14. **The management `/manage` TUI is list-and-shape only.** The `ServerForm`/`ClientForm` data
-    model and `update_server`/`update_client` executors are in place; a full interactive prefilled
-    create/update form is the remaining slice.
-10. **WireGuard's authorization model is backwards, and it is now the reason zero protocols are
-    Stable.** Demoted to Beta (commit `4ebdd5d9`) — NetGet implements none of the protocol (it
-    orchestrates `defguard_wireguard_rs`, needing root and, on macOS, `wireguard-go`), so it could
-    never be validated here and its Stable test was fictional. The real bug the demotion exposed:
-    a WireGuard responder decrypts the initiator's static key and drops the handshake if that key
-    is not already a configured peer — but NetGet only learns of a peer by polling
-    `read_interface_data()` *after* it appears and offers no action to pre-add one
-    (`get_async_actions()` is empty), so `wireguard_peer_connected` can effectively never fire for
-    a genuinely new peer and the whole LLM authorize/reject flow is unreachable except for
-    out-of-band-configured peers. Fixing it needs a running backend to validate, which this
-    environment cannot provide.
-11. **The remaining protocol risk is all "too much LLM", never "too little".** No protocol answers
-    statically where it should reason; several reason where a static default would do — `stun`
-    (per binding request, 100% mechanical: reflect mapped addr, echo txid), `ntp` (every field
-    defaults), and the deterministic routing/discovery family `igmp, arp, rip, ospf, isis, mdns,
-    bgp, turn`. Each spends an LLM round-trip on an answer the wire fully determines — wasteful
-    and an error surface. Give each a static default with the LLM as opt-in. (`dns`/`dhcp` are
-    correctly excluded — those are genuine policy decisions.) Counterpoint worth noting: `tor_relay`
-    now has a stronger real-client test than several Beta protocols — a promotion candidate.
+   Linux-only BlueZ path exists (`bluer` registering `org.bluez.LEAdvertisement1`); macOS/Windows
+   return a clean `Err`. Payload construction is pure and tested byte-for-byte, but the BlueZ half
+   has never been compiled or run on Linux — first use is bring-up, via the `#[ignore]`d test in
+   `tests/server/bluetooth_ble_beacon/e2e_test.rs` and `btmon`. The Linux `dist` set excludes all
+   `bluetooth-ble*` (libdbus), so the shipped Linux binary does not contain it.
+2. **Real-hardware validation of the BLE and WireGuard fixes.** The CODE for the BLE shared-
+   `Peripheral` (`6394895e`) and the WireGuard `wireguard_add_peer` authorize flow (`a57f7145`)
+   landed and is unit-tested radio-/backend-free, but neither has been driven end to end: BLE
+   needs a real adapter + permission, WireGuard needs root + a backend (kernel, or `wireguard-go`
+   on macOS). `boringtun` is the recommended in-process WireGuard driver once a privileged
+   environment exists. WireGuard stays **Beta** (the reason zero protocols are Stable) until then.
+3. **`pgwire` malformed-query panic (item 77)** — the one open remotely-reachable library panic,
+   and it is upstream. Auditing library panics reachable from the wire (item 48) is standing
+   practice, not a discrete fix.
+4. **`AppState` is one `RwLock` over everything (item 23)** — a throughput ceiling, not a defect.
+5. **The `easy` layer (item 35)** — a parallel subsystem serving one protocol. Finish or delete.
+6. **Logging Step 4 long tail.** ~22 highest-traffic server protocols are on the `Log` facade; the
+   remaining server `mod.rs` (density-ordered: kafka, amqp, socks5, mqtt, dot, doh, etcd, …) and
+   all ~91 client `mod.rs` still carry hand-rolled dual logging. Mechanical, per-batch; sweep in
+   progress. The global LLM request/response de-duplication (the headline complaint) is already
+   done everywhere.
+7. **Startup-example placeholders.** ~67 protocols still carry a bare `<x_handler>` script
+   placeholder in `get_startup_examples()` (enumerated in `tests/examples/example_runnability_test.rs`'s
+   shrink-only `KNOWN_BROKEN` allowlist). Fixing one = replace the placeholder with real Python and
+   delete its allowlist entry. 68 protocols already have working examples.
+8. **The management interactive form (item 14).** The `ServerForm`/`ClientForm` model and
+   `update_server`/`update_client` executors and the `/manage` + `/update` commands are in place;
+   the full prefilled create/update TUI form is the remaining slice (in progress).
 
 ### Patterns worth auditing for
 
