@@ -144,6 +144,18 @@ impl Protocol for ModbusProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: answer every read with a zero-filled register bank of
+        // the requested width, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "modbus_read_registers":
+    qty = event.get("quantity") or 1
+    actions = [{"type": "send_modbus_registers", "values": [0] * qty}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: the model invents self-consistent telemetry per request.
             json!({
@@ -165,7 +177,7 @@ impl Protocol for ModbusProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<modbus_register_handler>"
+                        "code": script
                     }
                 }]
             }),

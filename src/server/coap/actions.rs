@@ -120,6 +120,18 @@ impl Protocol for CoapProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: answer every request with a fixed JSON sensor reading,
+        // no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "coap_request":
+    actions = [{"type": "send_coap_response", "code": "2.05",
+                "payload": '{"pct": 41.2}', "content_format": "application/json"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: the model invents the resource tree and its representations.
             json!({
@@ -140,7 +152,7 @@ impl Protocol for CoapProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<coap_request_handler>"
+                        "code": script
                     }
                 }]
             }),

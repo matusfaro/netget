@@ -82,6 +82,20 @@ impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: reflect the client's mapped address back for every
+        // binding request, echoing its transaction id, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "stun_binding_request":
+    actions = [{"type": "send_stun_binding_response",
+                "transaction_id": event.get("transaction_id"),
+                "mapped_address": event.get("peer_addr"),
+                "xor_mapped_address": True}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all STUN responses
             json!({
@@ -100,7 +114,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<stun_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -83,6 +83,21 @@ impl Protocol for SvnProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: send the protocol greeting on connect and acknowledge
+        // every command with success, no LLM call. One script handles both.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+et = data["event_type_id"]
+if et == "svn_greeting":
+    actions = [{"type": "send_svn_greeting", "min_version": 2,
+                "max_version": 2, "mechanisms": ["ANONYMOUS"]}]
+elif et == "svn_command":
+    actions = [{"type": "send_svn_success"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -102,7 +117,7 @@ impl Protocol for SvnProtocol {
                         "handler": {
                             "type": "script",
                             "language": "python",
-                            "code": "<protocol_handler>"
+                            "code": script
                         }
                     },
                     {
@@ -110,7 +125,7 @@ impl Protocol for SvnProtocol {
                         "handler": {
                             "type": "script",
                             "language": "python",
-                            "code": "<protocol_handler>"
+                            "code": script
                         }
                     }
                 ]

@@ -222,6 +222,18 @@ impl Protocol for TftpProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: serve a single-block virtual file ("Hello\n") for every
+        // read request, no LLM call. data_hex is the file bytes, hex-encoded.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "tftp_read_request":
+    actions = [{"type": "send_tftp_data", "block_number": 1,
+                "data_hex": "48656c6c6f0a", "is_final": True}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all TFTP responses intelligently
             json!({
@@ -240,7 +252,7 @@ impl Protocol for TftpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<tftp_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -93,6 +93,16 @@ impl Protocol for TlsProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: reply "OK" to every decrypted record, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "tls_data_received":
+    actions = [{"type": "send_tls_data", "data": "OK\r\n"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -109,7 +119,7 @@ impl Protocol for TlsProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<tls_handler>"
+                        "code": script
                     }
                 }]
             }),

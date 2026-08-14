@@ -120,6 +120,20 @@ impl Protocol for Socks5Protocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: allow every auth attempt and every CONNECT (no MITM),
+        // no LLM call. One script handles both events.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+et = data["event_type_id"]
+if et == "socks5_connect_request":
+    actions = [{"type": "allow_socks5_connect", "mitm": False}]
+elif et == "socks5_auth_request":
+    actions = [{"type": "allow_socks5_auth"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -138,14 +152,14 @@ impl Protocol for Socks5Protocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }, {
                     "event_pattern": "socks5_auth_request",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }]
             }),
