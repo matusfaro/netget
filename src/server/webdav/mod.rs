@@ -25,11 +25,12 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::WebDavProtocol;
 use crate::state::app_state::AppState;
@@ -72,8 +73,7 @@ impl WebDavServer {
             .with_context(|| format!("Failed to bind WebDAV listener on {}", listen_addr))?;
         let local_addr = listener.local_addr()?;
 
-        info!("WebDAV server listening on {}", local_addr);
-        let _ = status_tx.send(format!("→ WebDAV server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("WebDAV server listening on {}", local_addr));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -82,9 +82,10 @@ impl WebDavServer {
                     Ok((stream, peer_addr)) => {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
-                        debug!("WebDAV connection {} from {}", connection_id, peer_addr);
-                        let _ =
-                            status_tx.send(format!("[DEBUG] WebDAV connection from {}", peer_addr));
+                        Log::new(Some(&status_tx)).debug(format!(
+                            "WebDAV connection {} from {}",
+                            connection_id, peer_addr
+                        ));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -145,13 +146,14 @@ impl WebDavServer {
                             app_for_close
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_for_close
-                                .send(format!("✗ WebDAV connection {} closed", connection_id));
+                            Log::new(Some(&status_for_close))
+                                .info(format!("WebDAV connection {} closed", connection_id));
                             let _ = status_for_close.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept WebDAV connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept WebDAV connection: {}", e));
                         break;
                     }
                 }
@@ -290,12 +292,8 @@ fn build_webdav_response(
     }
 
     let Some(payload) = find(&results) else {
-        error!(
-            "WebDAV: no usable response action for {} {} — refusing with 503",
-            method, path
-        );
-        let _ = status_tx.send(format!(
-            "[ERROR] WebDAV {} {} → 503 (model produced no send_webdav_* action)",
+        Log::new(Some(status_tx)).warn(format!(
+            "WebDAV {} {} -> 503 (model produced no send_webdav_* action)",
             method, path
         ));
         return build_safe_response(
@@ -325,15 +323,8 @@ fn build_webdav_response(
         .unwrap_or("")
         .to_string();
 
-    debug!(
-        "WebDAV {} {} → {} ({} bytes)",
-        method,
-        path,
-        status,
-        body.len()
-    );
-    let _ = status_tx.send(format!(
-        "↩ WebDAV {} {} → {} ({}B)",
+    Log::new(Some(status_tx)).debug(format!(
+        "WebDAV {} {} -> {} ({} bytes)",
         method,
         path,
         status,
@@ -404,14 +395,8 @@ async fn handle_webdav_request_inner(
 ) -> Response<Full<Bytes>> {
     let request = extract_request(req).await;
 
-    debug!(
+    Log::new(Some(&status_tx)).debug(format!(
         "WebDAV request: {} {} ({} bytes)",
-        request.method,
-        request.path,
-        request.body.len()
-    );
-    let _ = status_tx.send(format!(
-        "[DEBUG] WebDAV request: {} {} ({} bytes)",
         request.method,
         request.path,
         request.body.len()
@@ -439,8 +424,8 @@ async fn handle_webdav_request_inner(
     // proceed. The lock is synthetic and never enforced; nothing consults it.
     match request.method.as_str() {
         "OPTIONS" => {
-            let _ = status_tx.send(format!(
-                "↩ WebDAV OPTIONS {} → 200 (no LLM call)",
+            Log::new(Some(&status_tx)).debug(format!(
+                "WebDAV OPTIONS {} -> 200 (no LLM call)",
                 request.path
             ));
             return build_safe_response(
@@ -464,8 +449,8 @@ async fn handle_webdav_request_inner(
                  </D:activelock></D:lockdiscovery></D:prop>",
                 token
             );
-            let _ = status_tx.send(format!(
-                "↩ WebDAV LOCK {} → 200 (synthetic token, never enforced, no LLM call)",
+            Log::new(Some(&status_tx)).debug(format!(
+                "WebDAV LOCK {} -> 200 (synthetic token, never enforced, no LLM call)",
                 request.path
             ));
             return build_safe_response(
@@ -481,8 +466,8 @@ async fn handle_webdav_request_inner(
             );
         }
         "UNLOCK" => {
-            let _ = status_tx.send(format!(
-                "↩ WebDAV UNLOCK {} → 204 (no LLM call)",
+            Log::new(Some(&status_tx)).debug(format!(
+                "WebDAV UNLOCK {} -> 204 (no LLM call)",
                 request.path
             ));
             return build_safe_response(204, Vec::new(), String::new());
@@ -541,12 +526,8 @@ async fn handle_webdav_request_inner(
             // An LLM failure is the server's fault, not the client's request being wrong, and
             // it is distinct from both a refusal (whatever status the model chose) and a
             // no-answer (503).
-            error!(
-                "WebDAV: LLM call failed for {} {}: {}",
-                request.method, request.path, e
-            );
-            let _ = status_tx.send(format!(
-                "[ERROR] WebDAV {} {} → 500 (LLM error: {})",
+            Log::new(Some(&status_tx)).warn(format!(
+                "WebDAV {} {} -> 500 (LLM error: {})",
                 request.method, request.path, e
             ));
             build_safe_response(

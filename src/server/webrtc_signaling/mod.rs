@@ -13,6 +13,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::WebRtcSignalingProtocol;
@@ -201,9 +202,8 @@ impl WebRtcSignalingServer {
     ) -> Result<SocketAddr> {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("WebRTC Signaling server listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] WebRTC Signaling server listening on {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "WebRTC Signaling server listening on {}",
             local_addr
         ));
 
@@ -393,9 +393,8 @@ impl WebRtcSignalingServer {
                                             peer_id: new_peer_id.clone(),
                                         },
                                     );
-                                    info!("Peer {} registered successfully", new_peer_id);
-                                    let _ = status_tx.send(format!(
-                                        "[INFO] WebRTC signaling peer '{}' registered from {}",
+                                    Log::new(Some(&status_tx)).info(format!(
+                                        "WebRTC signaling peer '{}' registered from {}",
                                         new_peer_id, remote_addr
                                     ));
 
@@ -432,14 +431,9 @@ impl WebRtcSignalingServer {
                                             // that wait ended at the peer's own timeout. Say so
                                             // in the protocol's own vocabulary instead - and
                                             // never invent the reply the model did not give.
-                                            error!(
-                                                "LLM call failed for signaling peer_connected \
-                                                 ({}): {}",
-                                                new_peer_id, e
-                                            );
-                                            let _ = status_tx.send(format!(
-                                                "[ERROR] WebRTC signaling peer '{}': LLM call \
-                                                 failed ({}) - sent error frame",
+                                            Log::new(Some(&status_tx)).error(format!(
+                                                "WebRTC signaling peer '{}': LLM call failed \
+                                                 ({}) - sent error frame",
                                                 new_peer_id, e
                                             ));
                                             let _ = Self::reply(
@@ -510,8 +504,8 @@ impl WebRtcSignalingServer {
                                 }
                             };
 
-                            let _ = status_tx.send(format!(
-                                "[DEBUG] WebRTC signaling {} {} -> {} ({})",
+                            Log::new(Some(&status_tx)).debug(format!(
+                                "WebRTC signaling {} {} -> {} ({})",
                                 kind,
                                 from,
                                 to,
@@ -552,14 +546,9 @@ impl WebRtcSignalingServer {
                                     // suffer and could abort a negotiation that succeeded.
                                     // The operator is who needs to know, so say it loudly
                                     // there.
-                                    error!(
-                                        "LLM call failed for signaling message_received ({}): \
-                                         {} - relay already completed, nothing sent to the peer",
-                                        observed, e
-                                    );
-                                    let _ = status.send(format!(
-                                        "[ERROR] WebRTC signaling {}: LLM call failed ({}) - \
-                                         message was already relayed, no frame sent",
+                                    Log::new(Some(&status)).error(format!(
+                                        "WebRTC signaling {}: LLM call failed ({}) - message \
+                                         was already relayed, no frame sent",
                                         observed, e
                                     ));
                                 }
@@ -612,13 +601,9 @@ impl WebRtcSignalingServer {
                 // vocabulary. `webrtc_signaling_peer_disconnected` is declared
                 // `.with_no_actions()` for the same reason. Log it loudly and carry on with
                 // the cleanup below - the connection must still be torn down.
-                error!(
-                    "LLM call failed for signaling peer_disconnected ({}): {}",
-                    pid, e
-                );
-                let _ = status_tx.send(format!(
-                    "[ERROR] WebRTC signaling peer '{}': LLM call failed on disconnect ({}) - \
-                     peer already gone, nothing sent",
+                Log::new(Some(&status_tx)).error(format!(
+                    "WebRTC signaling peer '{}': LLM call failed on disconnect ({}) - peer \
+                     already gone, nothing sent",
                     pid, e
                 ));
             }
@@ -652,8 +637,9 @@ impl WebRtcSignalingServer {
         out_tx: &mpsc::UnboundedSender<Message>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> bool {
+        let log = Log::new(Some(status_tx));
         for message in &result.messages {
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            log.info(format!("{}", message));
         }
 
         let mut close = false;

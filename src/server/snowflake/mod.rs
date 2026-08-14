@@ -34,11 +34,12 @@ use hyper::{Method, Request, Response};
 use hyper_util::rt::TokioIo;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::snowflake::actions::{
@@ -74,11 +75,7 @@ impl SnowflakeServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("Snowflake server listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] Snowflake server listening on {}",
-            local_addr
-        ));
+        Log::new(Some(&status_tx)).info(format!("Snowflake server listening on {}", local_addr));
 
         let protocol = Arc::new(SnowflakeProtocol::new(
             ConnectionId::new(0),
@@ -157,13 +154,14 @@ impl SnowflakeServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("✗ Snowflake connection {connection_id} closed"));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("Snowflake connection {connection_id} closed"));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Snowflake connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept Snowflake connection: {}", e));
                         break;
                     }
                 }
@@ -225,8 +223,7 @@ async fn handle_snowflake_request(
     let path = uri.path().to_string();
     let query = uri.query().unwrap_or("").to_string();
 
-    debug!("Snowflake request: {} {}", method, path);
-    let _ = status_tx.send(format!("[DEBUG] Snowflake {} {}", method, path));
+    Log::new(Some(&status_tx)).debug(format!("Snowflake request: {} {}", method, path));
 
     app_state
         .update_connection_stats(server_id, connection_id, None, None, Some(1), None)
@@ -446,7 +443,7 @@ async fn handle_login(
                     "code": Value::Null,
                     "success": true
                 });
-                let _ = status_tx.send(format!("→ Snowflake login OK for {login_name}"));
+                Log::new(Some(&status_tx)).info(format!("Snowflake login OK for {login_name}"));
                 Ok(json_200(out.to_string()))
             }
             Some((name, payload)) if name == "snowflake_error" => {
@@ -459,7 +456,7 @@ async fn handle_login(
                     .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Login refused");
-                let _ = status_tx.send(format!("↩ Snowflake login denied: {code}"));
+                Log::new(Some(&status_tx)).info(format!("Snowflake login denied: {code}"));
                 Ok(json_200(error_envelope(code, message)))
             }
             _ => {
@@ -475,11 +472,10 @@ async fn handle_login(
             // LLM outage: refuse. No token is ever issued on failure, and the
             // message marks this as a backend outage, distinct from a model denial.
             let overloaded = crate::llm::is_overload_error(&e);
-            error!(
-                "Snowflake login LLM error (overload={}): {} — refusing",
+            Log::new(Some(&status_tx)).warn(format!(
+                "Snowflake login LLM error (overload={}): {} - refusing",
                 overloaded, e
-            );
-            let _ = status_tx.send(format!("✗ Snowflake login backend error: {e}"));
+            ));
             Ok(json_200(error_envelope(
                 CODE_AUTH_UNAVAILABLE,
                 &format!("netget: authentication backend unavailable: {e}"),
@@ -559,7 +555,7 @@ async fn handle_query(
                     "code": Value::Null,
                     "success": true
                 });
-                let _ = status_tx.send(format!("→ Snowflake query OK ({returned} rows)"));
+                Log::new(Some(&status_tx)).info(format!("Snowflake query OK ({returned} rows)"));
                 Ok(json_200(out.to_string()))
             }
             Some((name, payload)) if name == "snowflake_error" => {
@@ -571,7 +567,7 @@ async fn handle_query(
                     .get("message")
                     .and_then(|v| v.as_str())
                     .unwrap_or("Query failed");
-                let _ = status_tx.send(format!("↩ Snowflake query error: {code}"));
+                Log::new(Some(&status_tx)).info(format!("Snowflake query error: {code}"));
                 Ok(json_200(error_envelope(code, message)))
             }
             _ => {
@@ -584,13 +580,15 @@ async fn handle_query(
         },
         Err(e) => {
             let overloaded = crate::llm::is_overload_error(&e);
-            error!("Snowflake query LLM error (overload={}): {}", overloaded, e);
+            Log::new(Some(&status_tx)).warn(format!(
+                "Snowflake query LLM error (overload={}): {}",
+                overloaded, e
+            ));
             let code = if overloaded {
                 CODE_REQUEST_TIMEOUT
             } else {
                 CODE_INTERNAL
             };
-            let _ = status_tx.send(format!("✗ Snowflake query backend error: {e}"));
             Ok(json_200(error_envelope(
                 code,
                 &format!("netget: query backend unavailable: {e}"),
@@ -637,7 +635,7 @@ async fn handle_session(
                     "code": Value::Null,
                     "success": true
                 });
-                let _ = status_tx.send(format!("→ Snowflake session OK ({operation})"));
+                Log::new(Some(&status_tx)).info(format!("Snowflake session OK ({operation})"));
                 Ok(json_200(out.to_string()))
             }
             Some((name, payload)) if name == "snowflake_error" => {
@@ -669,7 +667,7 @@ async fn handle_session(
             }
         },
         Err(e) => {
-            error!("Snowflake session LLM error: {}", e);
+            Log::new(Some(&status_tx)).warn(format!("Snowflake session LLM error: {}", e));
             Ok(json_200(error_envelope(
                 CODE_INTERNAL,
                 &format!("netget: session backend unavailable: {e}"),

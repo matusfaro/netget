@@ -31,11 +31,11 @@ use tracing::{debug, error, info, trace, warn};
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::executor::ExecutionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::{Event, EventType};
 use crate::server::TurnProtocol;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use crate::{console_debug, console_trace};
 use actions::{
     TURN_ALLOCATE_REQUEST_EVENT, TURN_CHANNEL_BIND_REQUEST_EVENT,
     TURN_CREATE_PERMISSION_REQUEST_EVENT, TURN_REFRESH_REQUEST_EVENT,
@@ -257,21 +257,15 @@ impl TurnServer {
 
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("TURN server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] TURN server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("TURN server listening on {}", local_addr));
 
         let relay_bind_ip = local_addr.ip();
         let advertised_relay_ip = advertised_relay_ip.unwrap_or(relay_bind_ip);
         if advertised_relay_ip.is_unspecified() {
-            warn!(
+            Log::new(Some(&status_tx)).warn(format!(
                 "TURN relay address will be advertised as {} because the server is bound to a \
                  wildcard address; set the 'relay_ip' startup parameter to the address clients \
                  should send relayed traffic to",
-                advertised_relay_ip
-            );
-            let _ = status_tx.send(format!(
-                "[WARN] TURN advertising wildcard relay address {}; set 'relay_ip' startup \
-                 parameter to a reachable address",
                 advertised_relay_ip
             ));
         }
@@ -311,12 +305,8 @@ impl TurnServer {
 
                         Self::register_connection(&ctx, peer_addr, n).await;
 
-                        console_debug!(
-                            ctx.status_tx,
-                            "TURN received {} bytes from {}",
-                            n,
-                            peer_addr
-                        );
+                        Log::new(Some(&ctx.status_tx))
+                            .debug(format!("TURN received {} bytes from {}", n, peer_addr));
                         trace!("TURN data (hex): {}", hex::encode(&data));
 
                         let ctx = ctx.clone();
@@ -325,8 +315,7 @@ impl TurnServer {
                         });
                     }
                     Err(e) => {
-                        error!("TURN receive error: {}", e);
-                        let _ = status_tx.send(format!("✗ TURN receive error: {}", e));
+                        Log::new(Some(&status_tx)).error(format!("TURN receive error: {}", e));
                         break;
                     }
                 }
@@ -397,21 +386,17 @@ impl TurnServer {
                     // Dropping the allocation aborts its relay task and closes
                     // the relay socket (see `impl Drop for TurnAllocation`).
                     allocations.remove(&id);
-                    console_debug!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).debug(format!(
                         "TURN expired allocation {} for {} (relay {})",
-                        id,
-                        client_addr,
-                        relay_addr
-                    );
+                        id, client_addr, relay_addr
+                    ));
                 }
 
                 if removed > 0 {
-                    console_debug!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).debug(format!(
                         "TURN cleanup removed {} expired allocations",
                         removed
-                    );
+                    ));
                 }
             }
         });
@@ -654,10 +639,7 @@ async fn handle_datagram(ctx: TurnContext, data: Vec<u8>, peer_addr: SocketAddr)
     }
 
     let Some(msg) = TurnMessage::parse(&data) else {
-        debug!("TURN invalid message from {}", peer_addr);
-        let _ = ctx
-            .status_tx
-            .send(format!("[DEBUG] TURN invalid message from {}", peer_addr));
+        Log::new(Some(&ctx.status_tx)).debug(format!("TURN invalid message from {}", peer_addr));
         return;
     };
 
@@ -667,7 +649,8 @@ async fn handle_datagram(ctx: TurnContext, data: Vec<u8>, peer_addr: SocketAddr)
         (0, 1) => match TurnProtocol::build_binding_response(&msg.transaction_id, peer_addr) {
             Ok(packet) => {
                 let _ = ctx.socket.send_to(&packet, peer_addr).await;
-                console_debug!(ctx.status_tx, "TURN binding response to {}", peer_addr);
+                Log::new(Some(&ctx.status_tx))
+                    .debug(format!("TURN binding response to {}", peer_addr));
             }
             Err(e) => error!("TURN failed to build binding response: {}", e),
         },
@@ -677,14 +660,10 @@ async fn handle_datagram(ctx: TurnContext, data: Vec<u8>, peer_addr: SocketAddr)
         (0, 9) => handle_channel_bind_request(&ctx, &msg, &data, peer_addr).await,
         (1, 6) => handle_send_indication(&ctx, &msg, peer_addr).await,
         _ => {
-            debug!(
+            Log::new(Some(&ctx.status_tx)).debug(format!(
                 "TURN unhandled message type {} from {}",
                 msg.type_name(),
                 peer_addr
-            );
-            let _ = ctx.status_tx.send(format!(
-                "[DEBUG] TURN unhandled message type: {}",
-                msg.type_name()
             ));
         }
     }
@@ -722,12 +701,9 @@ async fn call_llm_for_event(
     // for a refusal or an LLM failure. The model is consulted only when the operator opts in
     // with the grant policy it should apply.
     if !operator_wants_dynamic(&ctx.state, ctx.server_id, &event_type.id).await {
-        debug!(
-            "TURN {} not granted: no operator policy configured (no instruction or handler), fail-closed with no LLM call",
-            event_type.id
-        );
-        let _ = ctx.status_tx.send(format!(
-            "TURN {} ignored: no grant policy configured (static default, no LLM)",
+        Log::new(Some(&ctx.status_tx)).debug(format!(
+            "TURN {} not granted: no operator policy configured (no instruction or handler), \
+             fail-closed with no LLM call",
             event_type.id
         ));
         return None;
@@ -744,20 +720,15 @@ async fn call_llm_for_event(
     .await
     {
         Ok(result) => {
+            let log = Log::new(Some(&ctx.status_tx));
             for message in &result.messages {
-                info!("{}", message);
-                let _ = ctx.status_tx.send(format!("[INFO] {}", message));
+                log.info(format!("{}", message));
             }
-            console_debug!(
-                ctx.status_tx,
-                "TURN parsed {} actions",
-                result.raw_actions.len()
-            );
+            log.debug(format!("TURN parsed {} actions", result.raw_actions.len()));
             Some(result)
         }
         Err(e) => {
-            error!("TURN LLM call failed: {}", e);
-            let _ = ctx.status_tx.send(format!("✗ TURN LLM error: {}", e));
+            Log::new(Some(&ctx.status_tx)).warn(format!("TURN LLM error: {}", e));
             None
         }
     }
@@ -768,13 +739,9 @@ async fn send_outputs(ctx: &TurnContext, result: &ExecutionResult, peer_addr: So
     for protocol_result in &result.protocol_results {
         for output in protocol_result.get_all_output() {
             let _ = ctx.socket.send_to(&output, peer_addr).await;
-            console_debug!(
-                ctx.status_tx,
-                "TURN sent {} bytes to {}",
-                output.len(),
-                peer_addr
-            );
-            console_trace!(ctx.status_tx, "TURN sent (hex): {}", hex::encode(&output));
+            let log = Log::new(Some(&ctx.status_tx));
+            log.debug(format!("TURN sent {} bytes to {}", output.len(), peer_addr));
+            log.trace(format!("TURN sent (hex): {}", hex::encode(&output)));
         }
     }
 }
@@ -792,13 +759,10 @@ async fn send_local_error(
     match TurnProtocol::build_error_response(transaction_id, method, code, reason) {
         Ok(packet) => {
             let _ = ctx.socket.send_to(&packet, peer_addr).await;
-            console_debug!(
-                ctx.status_tx,
+            Log::new(Some(&ctx.status_tx)).debug(format!(
                 "TURN sent error {} {} to {}",
-                code,
-                reason,
-                peer_addr
-            );
+                code, reason, peer_addr
+            ));
         }
         Err(e) => error!("TURN failed to build error response: {}", e),
     }
@@ -867,10 +831,8 @@ async fn handle_allocate_request(
     let relay_socket = match UdpSocket::bind(SocketAddr::new(ctx.relay_bind_ip, 0)).await {
         Ok(s) => Arc::new(s),
         Err(e) => {
-            error!("TURN could not bind a relay socket: {}", e);
-            let _ = ctx
-                .status_tx
-                .send(format!("✗ TURN could not bind a relay socket: {}", e));
+            Log::new(Some(&ctx.status_tx))
+                .error(format!("TURN could not bind a relay socket: {}", e));
             send_local_error(
                 ctx,
                 &msg.transaction_id,
@@ -936,14 +898,10 @@ async fn handle_allocate_request(
         .and_then(|v| v.as_str())
         .unwrap_or_default();
     if claimed != relay_addr.to_string() {
-        error!(
+        Log::new(Some(&ctx.status_tx)).warn(format!(
             "TURN refusing allocation for {}: action relay_address {:?} is not the reserved \
              address {} (use {{{{event.relay_address}}}})",
             peer_addr, claimed, relay_addr
-        );
-        let _ = ctx.status_tx.send(format!(
-            "✗ TURN refused allocation: relay_address {:?} is not the reserved address {}",
-            claimed, relay_addr
         ));
         send_local_error(
             ctx,
@@ -1005,12 +963,8 @@ async fn handle_allocate_request(
         allocations.insert(allocation_id.clone(), allocation);
     }
 
-    info!(
+    Log::new(Some(&ctx.status_tx)).info(format!(
         "TURN allocation {} for {} relaying on {} for {}s",
-        allocation_id, peer_addr, relay_addr, lifetime
-    );
-    let _ = ctx.status_tx.send(format!(
-        "→ TURN allocation {} for {} relaying on {} ({}s)",
         allocation_id, peer_addr, relay_addr, lifetime
     ));
 
@@ -1139,14 +1093,12 @@ async fn handle_create_permission_request(
             for ip in &chosen {
                 state.permit(*ip);
             }
-            info!(
-                "TURN allocation {} permits {:?} for {}",
-                id, chosen, peer_addr
-            );
-            let _ = ctx.status_tx.send(format!(
-                "→ TURN permitted {} peer(s) on allocation {}",
-                chosen.len(),
-                id
+            Log::new(Some(&ctx.status_tx)).info(format!(
+                "TURN allocation {} permits {:?} for {} ({} peer(s))",
+                id,
+                chosen,
+                peer_addr,
+                chosen.len()
             ));
         } else {
             warn!(
@@ -1217,13 +1169,9 @@ async fn handle_channel_bind_request(
     if find_action(&result, "send_turn_channel_bind_response").is_some() {
         if let Some((id, _, state)) = ctx.server.allocation_for_client(peer_addr).await {
             state.lock().await.bind_channel(channel_number, peer);
-            info!(
+            Log::new(Some(&ctx.status_tx)).info(format!(
                 "TURN allocation {} bound channel {} to {}",
                 id, channel_number, peer
-            );
-            let _ = ctx.status_tx.send(format!(
-                "→ TURN bound channel {} to {} on allocation {}",
-                channel_number, peer, id
             ));
         } else {
             warn!(
