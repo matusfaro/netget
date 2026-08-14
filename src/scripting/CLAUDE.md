@@ -40,12 +40,20 @@ it costs no model call, is reproducible, and returns in milliseconds.
 | `types.rs` | `ScriptLanguage`, `ScriptConfig`, `ScriptSource`, `ScriptInput`, `ScriptResponse`, response parsing |
 | `event_handler.rs` | `EventHandler` / `EventHandlerType` (`llm` \| `script` \| `static`) and pattern matching |
 | `environment.rs` | Startup detection of which interpreters are installed |
+| `resident.rs` | Long-lived (persistent) script processes — opt-in `"resident": true`, keeps in-process state across events |
 | `highlight.rs` | Syntax highlighting of script source for the TUI |
 
 ## Execution model
 
-One event → one fresh interpreter process. Nothing is cached, pooled, or reused
-between invocations; scripts are stateless by construction.
+**Default (stateless) mode:** one event → one fresh interpreter process. Nothing
+is cached, pooled, or reused between invocations. This is the default and remains
+unchanged; a per-event script keeps no state between events.
+
+**Resident (persistent) mode** (opt-in, `resident.rs`) is the exception: see
+[Resident scripts](#resident-persistent-scripts) below. A resident script is
+spawned once per scope and driven with one event per line, so module-level state
+does persist across events. The description of the stateless model in this
+section applies only to the default path.
 
 ```
 event  ──►  ScriptInput (JSON)  ──►  child stdin
@@ -224,10 +232,56 @@ script handler purely to copy one integer.
 - Go temp files are named `netget_script_<pid>_<seq>.go` with a process-global
   atomic sequence. The pid alone is *not* unique per invocation — several Go
   scripts can be in flight at once inside one netget process.
-- Scripts share nothing. There is no cross-invocation state, by design: per the
-  root `CLAUDE.md`, protocols must not implement storage. Durable state belongs
-  in server `memory`, which is passed in on every invocation via
-  `ScriptInput.server.memory`.
+- **Default (per-event) scripts share nothing.** There is no cross-invocation
+  state on that path, by design: per the root `CLAUDE.md`, protocols must not
+  implement storage. Durable state belongs in server `memory`, which is passed
+  in on every invocation via `ScriptInput.server.memory`. Note this is *process*
+  isolation, not the storage rule itself — a **resident** script (below) keeps
+  in-process state across events within one scope, and is the sanctioned way to
+  do so without a database.
+
+## Resident (persistent) scripts
+
+Opt-in with `"resident": true` on a `script` event handler. Instead of a fresh
+interpreter per event, one process is spawned **per scope** and driven with one
+JSON line in / one JSON line out per event, so module-level variables (counters,
+a parsed config, a connection map) persist across events. Implemented in
+`resident.rs`; the stateless per-event path is untouched and stays the default.
+
+- **Same trust boundary.** Resident mode adds no new capability to the script —
+  it only keeps the same unsandboxed interpreter alive between events. The banner
+  at the top of this file applies unchanged.
+- **Contract differs from per-event scripts.** The user code must define
+  `handle(event_type, event, message)` (a function/sub), not read stdin itself.
+  netget wraps it in a per-language harness (Python `python3 -u -c`, JavaScript
+  `node -e`, Perl `perl -e` using core `JSON::PP`) that runs the read-loop, calls
+  `handle`, and writes one JSON line of actions back. Return an actions list, a
+  `{"actions": [...]}` object, or `None`/`undefined` for no actions. A `handle`
+  that raises emits `{"error": ...}` — parsed as a failed event (→ falls back to
+  the LLM) while the **process stays alive** for the next event, so its state
+  survives.
+- **Language support.** Python, JavaScript, Perl only. **Go is not supported**
+  (compiled per `go run`, no cheap persistent form) and a resident Go handler
+  transparently falls back to the per-event executor. A resident handler for a
+  missing interpreter also falls back to the LLM rather than erroring per event.
+- **Scope** (`ResidentScope`, parsed from a scope string; default `Server`):
+  - `Server` — one process per server; every connection's events for this handler
+    share one process and its state (e.g. a server-wide counter). Connectionless
+    events use this.
+  - `Connection` — one process per connection; independent state each. Falls back
+    to server scope for connectionless events (no connection id to key on).
+  Two handlers with identical code + scope share a process (keyed by
+  `server_id` + optional `connection_id` + language + code hash); different code
+  or a different connection gets its own.
+- **Lifetime & robustness.** Each round-trip runs under the same
+  `DEFAULT_SCRIPT_TIMEOUT` (30s) budget. On timeout or EOF-on-stdout (the process
+  died) the round-trip returns `Err`, the process is killed and evicted, the
+  caller falls back to the LLM, and the next event respawns. Processes idle longer
+  than `IDLE_TTL` (300s) are evicted on the next registry access; `kill_on_drop`
+  ensures none leak. Explicit teardown via `ResidentScriptManager::shutdown_server`
+  / `shutdown_connection` / `shutdown_all`. One event round-trip at a time per
+  process (stdin is serialized by a mutex). Nothing parks an OS thread — spawned
+  and awaited via `tokio::process`.
 
 ## Testing
 
@@ -238,6 +292,12 @@ a child pre-filling its stderr pipe (the old deadlock), and a starvation test
 that runs 8 one-second scripts on a 2-worker runtime alongside a 10ms ticker.
 
 `tests/scripting_manager_test.rs` covers routing and config construction.
+
+`tests/scripting_resident_test.rs` covers resident mode: state persisting across
+dispatches, switch-on-`event_type`, shutdown resetting state, a hang timing out
+and recovering, process death detected and recovered, a `handle()` error keeping
+the process and its state alive, connection-scope isolation, targeted
+`shutdown_connection`, a JavaScript resident, and Go being unsupported.
 
 `tests/static_handler_interpolation_test.rs` covers `{{event.…}}` substitution: type
 preservation per JSON type, embedded splicing, nested and indexed paths, the error text for

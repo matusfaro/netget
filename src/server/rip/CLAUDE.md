@@ -2,8 +2,18 @@
 
 ## Overview
 
-Routing Information Protocol version 2 (RIPv2) server implementing RFC 2453. RIP is a distance-vector routing protocol
-where the LLM controls route advertisements, routing decisions, and authentication.
+Routing Information Protocol version 2 (RIPv2) server implementing RFC 2453. RIP is a distance-vector routing protocol.
+
+### Default behaviour: static (advertise nothing), no LLM
+
+A RIP response is **not wire-determined** — which routes to advertise (and their metrics, incl.
+16 = withdraw) is routing policy, like DNS/DHCP. So with **no operator policy** (no server
+instruction and no per-event handler), the server applies the spec-safe **static default of
+advertising nothing** and answers with **no LLM round-trip** (gated by `should_call_llm` in
+`mod.rs` = `has_instruction || has_handler`). There is no mechanical RIP reply to synthesise —
+RIP has no Hello/keepalive machinery. The LLM is consulted **only when the operator opts in** with
+the routing policy (an instruction or a handler); the LLM-driven route material below describes
+that opt-in path.
 
 **Status**: Experimental (fully implemented, needs testing)
 **Protocol Spec
@@ -183,8 +193,10 @@ Extracted from LLM-generated startup prompt.
 1. **Receive**: UDP datagram on port 520
 2. **Parse**: Extract command, version, and route entries
 3. **Register**: Create ConnectionId and add to ServerInstance
-4. **Process**: Call LLM with `rip_request` event
-5. **Build**: Construct RIP response packet
+4. **Process**:
+   - **Default (no operator policy)** → static default: advertise nothing / stay silent, **no LLM call**
+   - **Opt-in only** (instruction or handler) → call the handler/LLM with the `rip_request` event
+5. **Build**: Construct RIP response packet (opt-in path)
 6. **Respond**: Send UDP response
 7. **Track**: Connection remains in UI
 

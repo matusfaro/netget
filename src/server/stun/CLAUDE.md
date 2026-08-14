@@ -10,6 +10,18 @@ Provides NAT traversal assistance by informing clients of their public IP addres
 **Protocol Purpose**: STUN allows clients behind NAT to discover their external IP address and port mapping, essential
 for WebRTC, VoIP, and peer-to-peer applications.
 
+### Default behaviour: static, no LLM
+
+A Binding response is **fully determined by the request** — reflect the source into
+XOR-MAPPED-ADDRESS and echo the transaction ID — so **by default the server answers statically
+with no LLM round-trip.** The model is consulted only when the operator **opts in**: a non-empty
+server instruction, or a per-event handler configured for the binding event (gated by
+`should_call_llm` in `mod.rs`, which is `has_instruction || has_handler`). Opt-in is how you ask
+for non-standard behaviour such as lying about the mapped address. Even in opt-in mode, if the
+LLM call fails the server **falls back to the correct static Binding response** rather than
+erroring. See `send_static_binding_response` in `mod.rs`. The `## LLM Integration` section below
+therefore describes the opt-in path, not the default one.
+
 ## Library Choices
 
 **Manual Implementation** - Complete STUN protocol parsing implemented from scratch
@@ -77,7 +89,8 @@ for WebRTC, VoIP, and peer-to-peer applications.
 3. **Extract transaction ID** (12 bytes) → Must echo in response
 4. **Parse message type** → Determine method and class
 5. **Create event** → `STUN_BINDING_REQUEST_EVENT` with peer_addr, transaction_id
-6. **LLM consultation** → Generate STUN Binding Success Response
+6. **Static default (no operator policy)** → build the Binding Success Response directly, **no LLM call**.
+   **Opt-in only** (instruction or handler configured) → consult the handler/LLM to generate the response
 7. **Build response** → Copy transaction ID, add XOR-MAPPED-ADDRESS attribute
 8. **Send UDP response** → To client's IP:port
 
@@ -172,7 +185,7 @@ ID and its XOR-MAPPED-ADDRESS decodes to the client's real source address.
     - `transaction_id`: Hex-encoded transaction ID (for response matching)
     - `message_type`: "BindingRequest"
     - `bytes_received`: Request size
-- LLM decides: Generate Binding Success Response with XOR-MAPPED-ADDRESS
+- This event is only raised to the handler/LLM when the operator has opted in; the default path answers it statically before any handler is consulted
 
 **No filtering logic**: All valid STUN requests receive responses (STUN is inherently public).
 

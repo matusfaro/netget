@@ -3,7 +3,16 @@
 ## Overview
 
 IGMP (Internet Group Management Protocol) is used by IPv4 hosts and adjacent routers to establish multicast group
-memberships. This implementation provides LLM control over multicast group management and IGMP message handling.
+memberships. Handling is **not wire-determined** — which groups to report is membership policy, and an observed
+report/leave needs no reply.
+
+### Default behaviour: static, no LLM
+
+With **no operator policy** (no server instruction and no per-event handler), the server applies the spec-safe
+**static default: advertise no memberships and stay silent**, with **no LLM round-trip** per captured message
+(gated by `should_call_llm` in `mod.rs` = `has_instruction || has_handler`). The model is consulted **only when the
+operator opts in** by supplying the membership policy it should apply (an instruction or a handler). The
+`LLM Decision Making` material below therefore describes the opt-in path, not the default.
 
 ## Protocol Details
 
@@ -153,8 +162,9 @@ Server maintains `IgmpServerState`:
 4. Parse IGMP message (type, max_response_time, group_address, checksum)
 5. Create connection state with protocol info
 6. Determine event type based on message type
-7. Call LLM with event
-8. Execute actions:
+7. **Default (no operator policy)** → apply the static default (advertise nothing, stay silent), **no LLM call**.
+   **Opt-in only** (instruction or handler) → call the handler/LLM with the event
+8. Execute actions (opt-in path only):
     - Sync: Build and send IGMP response packet to multicast address
     - Async: Perform actual multicast join/leave via socket options
 

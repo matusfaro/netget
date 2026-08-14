@@ -2,8 +2,19 @@
 
 ## Overview
 
-NTP (Network Time Protocol) server implementing RFC 5905 for time synchronization. The LLM controls time responses with
-stratum levels, reference timestamps, and clock precision using structured actions.
+NTP (Network Time Protocol) server implementing RFC 5905 for time synchronization.
+
+### Default behaviour: static, no LLM
+
+A normal time response is **mechanical** — stratum 2, LOCL reference id, current-time timestamps,
+with the origin timestamp and version echoed from the request — so **by default the server answers
+statically with no LLM round-trip.** The model is consulted only when the operator **opts in**: a
+non-empty server instruction, or a per-event handler configured for the request event (gated by
+`should_call_llm` in `mod.rs` = `has_instruction || has_handler`). Opt-in is how you make the
+server skew or lie about the time. Even in opt-in mode, if the LLM call fails the server **falls
+back to the correct static time response** (`send_static_time_response` in `mod.rs`). The
+`Action-Based LLM Control` and `LLM Integration` material below describes that opt-in path; it is
+not invoked on the default path.
 
 **Status**: Beta (Core Protocol)
 **RFC**: RFC 5905 (NTPv4), RFC 1305 (NTPv3)
@@ -204,8 +215,10 @@ Don't send any response.
 1. **Request Received**: UDP datagram on port 123
 2. **Parse**: Extract client's transmit timestamp (bytes 40-47)
 3. **Register**: Create ConnectionId and add to ServerInstance
-4. **Process**: Call LLM with `ntp_request` event
-5. **Auto-Inject**: Add origin_timestamp if not provided by LLM
+4. **Process**:
+   - **Default (no operator policy)** → build the static time response directly, **no LLM call**
+   - **Opt-in only** (instruction or handler) → call the handler/LLM with the `ntp_request` event
+5. **Auto-Inject**: Echo origin_timestamp if not provided
 6. **Build**: Construct 48-byte NTP response packet
 7. **Respond**: Send UDP response
 8. **Update**: Track bytes/packets sent/received

@@ -149,10 +149,20 @@ None could reach a peer: an async action carries no connection, and this server 
 async action results. `transition_state` is gone for the same reason — it returned `NoAction` and
 changed nothing.
 
+### Static default when no operator policy is configured
+
+The OPEN handshake is mechanical (fully determined by the configured ASN/router-id/hold-time and a
+validated peer). So with **no operator policy** — no server instruction and no per-event handler
+(`should_call_llm` in `mod.rs` = `has_instruction || has_handler`) — the session completes on the
+configured OPEN with **no LLM round-trip at all**; `established`/`update` then advertise nothing,
+which is correct with no routing policy. KEEPALIVE cadence never consulted the LLM. The model is
+consulted **only when the operator opts in**.
+
 ### The bgp_open fallback is deliberate
 
-If the handler returns nothing usable — model outage, `wait_for_more`, a handler that produced
-no message — NetGet sends the OPEN configured at startup and the session proceeds.
+If the operator *has* opted in but the handler returns nothing usable — model outage,
+`wait_for_more`, a handler that produced no message — NetGet sends the OPEN configured at startup
+and the session proceeds.
 
 This is not the fail-open pattern the root CLAUDE.md warns about. Peering is not an
 authorisation decision: the operator opened this port with this ASN, and the peer has already

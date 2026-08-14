@@ -53,6 +53,21 @@ over the rx channel and the USB/IP session's `JoinHandle`; when the session ends
 breaks, `usb_serial_detached` is raised, the handler is dropped from the registry and the
 connection is closed in `AppState`.
 
+## Signalling dropped data (`SERIAL_STATE` overrun)
+
+When a host write raises `usb_serial_data_received` but the **LLM call fails**, those bytes are
+gone and there is no request/response framing to fail — silence would be indistinguishable from a
+port with nothing to send. So the server queues a CDC `SERIAL_STATE` notification with `bOverRun`
+set (CDC PSTN 1.2 §6.5.4, `bmRequestType 0xA1`, `bNotification 0x20`) on the interrupt IN
+endpoint; the host drains it, one whole notification per interrupt IN URB, from
+`UsbCdcAcmSerialHandler`'s notification queue.
+
+Only `data_received` earns one — attach has had nothing written to it, and by detach the port is
+gone. The mechanism is `SerialProtocol::signal_overrun` → `handler.queue_serial_state_overrun()`,
+raised from the connection task in `mod.rs` on the LLM-failure path. `pending_notifications()`
+exposes the queue depth for tests. This is currently the **only** serial-state bit the device
+ever sets.
+
 ## LLM Actions
 
 **send_data**: queue text for the host's next read.
@@ -92,8 +107,9 @@ wrong answers — and a serial port normally has exactly one host.
   root on the client; the E2E tests speak USB/IP directly over TCP instead.
 - **The host changing the baud rate raises no event.** `SET_LINE_CODING` from the host is
   recorded in the handler and logged, but a script or the model cannot react to it.
-- **No flow control and no serial-state notifications.** The interrupt IN endpoint exists but
-  never reports break, DCD, or framing errors.
+- **No flow control, and only the overrun serial-state notification.** The interrupt IN endpoint
+  now carries a real CDC `SERIAL_STATE` notification — but only `bOverRun` (see *Signalling
+  dropped data* below). Break, DCD, DSR, ring and framing errors are still never reported.
 - **`data` is text.** Bytes that are not valid UTF-8 are lossily converted before reaching the
   handler, per the project's no-raw-bytes rule for event data.
 

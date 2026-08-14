@@ -34,6 +34,14 @@ This is the part to understand before changing anything here.
 messages must also stay off `status_tx`, which is an unbounded channel with no backpressure —
 relay forwarding logs at `trace!` to the file log only.
 
+**Static default when no operator policy is configured.** Whether to grant is policy, not
+wire-determined. So with **no operator policy** — no server instruction and no per-event handler
+(`should_call_llm` in `mod.rs` = `has_instruction || has_handler`) — every control request
+(Allocate / Refresh / CreatePermission / ChannelBind) is **fail-closed (grant nothing) with no LLM
+round-trip at all**. The model (or a script / static handler) is consulted **only when the operator
+opts in** with the grant policy. `call_llm_for_event` returns `None` in the no-policy case, which is
+the same signal it uses for a refusal or an LLM failure — nothing is granted.
+
 ## Library choice
 
 Hand-rolled on top of the STUN message format, *not* `webrtc-turn`, even though the `turn`

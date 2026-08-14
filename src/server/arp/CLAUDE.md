@@ -6,6 +6,16 @@ Layer 2 Address Resolution Protocol (ARP) server that captures and responds to A
 Allows the LLM to respond to "who has" queries with custom MAC addresses, enabling ARP spoofing simulation, network
 mapping experiments, and honeypot operations.
 
+### Default behaviour: static (answer nothing), no LLM
+
+An ARP reply is **not wire-determined** — the MAC advertised is a policy choice
+(spoofing/honeypot/custom mapping), like DNS/DHCP. So with **no operator policy** (no server
+instruction and no per-event handler), the server **answers nothing** — it has no MAC to claim —
+and takes **no LLM round-trip per captured packet** (gated by `should_call_llm` in `mod.rs` =
+`has_instruction || has_handler`). The LLM is consulted **only when the operator opts in** with the
+mapping to serve (an instruction or a handler). The material below describing the model receiving
+ARP events and returning `send_arp_reply` therefore describes the opt-in path, not the default.
+
 **Status**: Experimental (Layer 2 Protocol)
 **Layer**: OSI Layer 2 (Data Link)
 **Interface**: Any network interface (eth0, en0, wlan0, etc.)
@@ -49,8 +59,8 @@ pcap has blocking API, Tokio is async:
 
 - Spawn packet capture in `tokio::task::spawn_blocking()`
 - Blocking task runs pcap capture loop with ARP filter
-- For each ARP packet, spawn async task via `runtime.spawn()` for LLM processing
-- LLM decides whether/how to respond
+- For each ARP packet, spawn async task for processing
+- **Default (no operator policy)**: answer nothing, **no LLM call**. **Opt-in only** (instruction or handler): the handler/LLM decides whether/how to respond
 - Responses injected via `cap.sendpacket()` (blocking call from async task)
 
 **Tradeoff**: Extra task spawning overhead, but necessary for pcap API compatibility.
@@ -320,8 +330,9 @@ pass a real NIC (`en0`, `eth0`) via the `interface` argument for anything useful
 
 ### 7. Performance Impact of LLM Processing
 
-- Each ARP packet triggers LLM call (~2-5s)
-- High ARP traffic (e.g., during network boot) may queue packets
+- **Only in opt-in mode** does an ARP packet trigger an LLM call (~2-5s). With no operator policy
+  configured there is no LLM call at all — captured packets are dropped statically
+- High ARP traffic (e.g., during network boot) may queue packets when opted in
 - Typically low volume: ARP cached, only sent when needed
 
 **Typical Volume**: <1 ARP/sec on normal networks (cached for 5-20 min).

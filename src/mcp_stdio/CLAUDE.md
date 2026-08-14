@@ -74,7 +74,9 @@ OllamaClient (3 backends)
 | `get_status` | Overall NetGet status | AppState model + server count |
 | `set_model` | Change LLM model | `AppState::set_ollama_model()` |
 | `get_protocol_docs` | MCP-shaped protocol documentation | `mcp_stdio::docs::render_protocol_docs()` |
-| `update_server_instruction` | Update server instruction | `AppState::with_server_mut()` |
+| `update_server_instruction` | Update just a running server's instruction | `AppState::with_server_mut()` |
+| `update_server` | Update a running server in place by id (supply only changed fields) — see below | `cli::management::update_server()` |
+| `update_client` | Update a running client in place by id (supply only changed fields) — see below | `cli::management::update_client()` |
 | `list_access_logs` | Recent request/response entries (newest first) | `AppState::list_access_logs()` |
 | `get_access_log` | Full request + response for one entry by id | `AppState::get_access_log()` |
 | `stop_all` | Stop all servers | Iterate + remove all |
@@ -126,6 +128,24 @@ Related: clients also carry a per-session LLM call budget
 `NETGET_CLIENT_LLM_CALL_LIMIT`, `0` = unlimited) so a non-converging client cannot
 loop forever.
 
+## In-place update (`update_server` / `update_client`)
+
+`update_server` / `update_client` amend a **running** server/client by id instead of starting a
+second one, and route through `cli::management::update_server` / `update_client` (the same code
+the TUI's management UI uses). Supply only the fields to change.
+
+- **Hot-applied without dropping connections/reconnecting**: `instruction`, `event_handlers`,
+  `initial_memory`, `feedback_instructions`, `scheduled_tasks`.
+- **Requires a clean stop+start / reconnect** (connections dropped, the entity gets a **new id**):
+  `port` / `host` for a server, `remote_addr` for a client, and `startup_params` for either.
+- An unknown id and invalid `startup_params` **error cleanly and leave the running entity
+  untouched** (validation happens before any restart). `scheduled_tasks` is parsed by the shared
+  `parse_scheduled_tasks` first, so a malformed task array errors without touching the server.
+
+Both tools re-sync `AppState`'s LLM client before applying, in case the update restarts the
+entity. Prefer `update_server` over a second `start_server` when a server already exists;
+`update_server_instruction` remains as the narrow "just the instruction" tool.
+
 ## Server teardown and state reaping
 
 `stop_server` / `stop_all` go through `AppState::remove_server()`, which owns the
@@ -149,13 +169,18 @@ test instead of shipping. It needs to see behind the tools — a tool result is 
 `NetGetMcpService::app_state()` exposes the service's `AppState` (a clone of the `Arc`,
 i.e. the live state the tools mutate).
 
-**Scheduled tasks are registered in MCP mode but never execute.** `execute_due_tasks`
-is driven only by the TUI event loop (`rolling_tui.rs`) and the non-interactive runner;
-`spawn_state_reaper` does not tick it. So `start_server`'s `scheduled_tasks` array and
-the `schedule_task` action both create tasks that sit at `Scheduled` forever. The leak
-above was therefore *accumulation* in MCP mode rather than repeated firing — but the
-tasks are equally wrong to keep, and the two halves are independent bugs. Do not read
-the cleanup fix as making `scheduled_tasks` work over MCP.
+**Scheduled tasks now fire in MCP mode.** A dedicated ticker (`spawn_task_ticker`, started from
+`create_shared_state` alongside the reaper) drives `execute_due_tasks_public` on a **1s** cadence
+(`TASK_TICK_INTERVAL_SECS`, matching the TUI event loop and the non-interactive runner, with
+`MissedTickBehavior::Skip` so a slow batch cannot stampede catch-up ticks). So `start_server`'s
+`scheduled_tasks` array and the `schedule_task` action now actually execute over both the STDIO and
+HTTP transports (which share the one `SharedState`). Scoping is not re-implemented in the ticker:
+`execute_due_tasks_public` reads the live task set from `AppState` each tick, so Global / Server /
+Connection scoping — and the removal of server-/connection-scoped tasks by `remove_server` on
+`stop_server`/`stop_all` — are honoured exactly as in the TUI; only Global tasks persist a server
+stop. (Historical note: this was a known gap — tasks used to sit at `Scheduled` forever because no
+loop ticked `execute_due_tasks` — and an in-code comment in `spawn_state_reaper` still says
+scheduled tasks are "TUI-only here". That comment is stale; `spawn_task_ticker` is the authority.)
 
 `register_server_task()` stores a `Vec` of handles per server, like the client side:
 a protocol with two long-lived loops (a UDP listener plus a TUN reader) gets both
@@ -266,7 +291,6 @@ All logging goes to stderr (stdout is JSON-RPC). Status messages from protocol s
 - **No elicitation yet**: Interactive config gathering not implemented
 - **No dynamic tool list**: All tools exposed from start (no `tools/list_changed`)
 - **No sampling**: protocol servers always use NetGet's own LLM backend, never the MCP client's model
-- **Scheduled tasks never fire**: accepted and stored, but nothing ticks them in MCP mode (see "Server teardown" above)
 
 ## Testing
 

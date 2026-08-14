@@ -173,8 +173,14 @@ a=rtpmap:0 PCMU/8000
 - `m=`: Media description (type, port, protocol, format)
 - `a=`: Attributes (codec mappings, etc.)
 
-**LLM Generation**: For honeypot/testing, LLM generates simplified SDP with plausible values. No actual RTP media
-streams created.
+**LLM Generation**: The LLM generates the SDP body with plausible values.
+
+**RTP media (with the `rtp` feature)**: SIP is signaling by default, but when NetGet is built
+with the `rtp` feature, a `sip_invite` accept action (200 OK) may carry an optional structured
+`rtp_audio` field and NetGet will stream **real RTP** to the `m=audio` target parsed from the
+caller's INVITE SDP — so the negotiated session actually carries media rather than a 200 OK whose
+SDP points at nothing. See [RTP media flow](#rtp-media-flow-rtp-feature) below. Without the `rtp`
+feature the field is ignored and SIP remains signaling-only.
 
 ## LLM Integration
 
@@ -232,6 +238,7 @@ streams created.
 - `reason_phrase`: Optional (defaults based on status code)
 - `expires`: For REGISTER responses (seconds)
 - `sdp`: For successful INVITE responses
+- `rtp_audio`: Optional media to actually stream on a 200 OK INVITE (`{content, tone_hz, payload_type, duration_ms}`); honored only with the `rtp` feature, ignored otherwise
 - `allow_methods`: For OPTIONS responses (array of method names)
 
 ### Event Types
@@ -370,6 +377,25 @@ Content-Length: 0
 - **Allow**: Supported methods (OPTIONS responses)
 - **Contact**: Server's URI (REGISTER responses)
 
+## RTP media flow (`rtp` feature)
+
+Built with the `rtp` feature, a SIP INVITE whose SDP is answered can result in **real RTP
+arriving** at the caller, not just a 200 OK whose SDP points at nothing.
+
+- **Trigger**: a `sip_invite` action with a 2xx `status_code` that also carries an `rtp_audio`
+  object. Guarded by `#[cfg(feature = "rtp")]` in `mod.rs`; without the feature the field is
+  accepted but ignored.
+- **Where it streams**: `parse_sdp_audio_target` reads the caller's INVITE SDP — the
+  `c=IN IP4 <ip>` connection line and the first `m=audio <port>` line — and streams there. If no
+  parseable target is present, it logs and streams nothing.
+- **What it streams**: `rtp_audio` is the same structured media description the RTP protocol
+  understands — `{content, tone_hz, payload_type, duration_ms}`. The shared media engine
+  (`crate::server::rtp::media`) synthesizes the samples (default: a 440 Hz tone) and does G.711
+  framing (`RtpPacketizer`), defaulting to PCMU. A **fresh ephemeral UDP socket** is used — RTP
+  must not share the SIP signaling port.
+- **One-directional**: NetGet sends media toward the caller's advertised address. There is no
+  inbound RTP handling, jitter buffer, or two-way media path.
+
 ## Limitations
 
 ### Current Implementation
@@ -388,10 +414,13 @@ Content-Length: 0
     - No 401 Unauthorized challenges
     - Accept/reject based on LLM decision only
 
-4. **Simplified SDP**
-    - No actual RTP media streams
-    - LLM generates plausible SDP strings
-    - No codec negotiation or media relay
+4. **SDP / media**
+    - The LLM generates the SDP body
+    - **RTP media is supported with the `rtp` feature**: a 200 OK INVITE carrying `rtp_audio`
+      streams real G.711 RTP (via the shared `crate::server::rtp::media` engine) from a fresh
+      ephemeral UDP socket to the caller's advertised `m=audio` address. Without the feature,
+      or without `rtp_audio`, SIP stays signaling-only (SDP promises media that never arrives)
+    - No two-way/interactive media, no codec negotiation beyond G.711, no media relay between parties
 
 5. **Stateless Server**
     - No persistent registration database (in-memory only)
@@ -415,6 +444,10 @@ Content-Length: 0
 - SIP over WebSocket (WebRTC)
 - Presence (SUBSCRIBE/NOTIFY)
 - Call transfer (REFER method)
+
+**Note**: outbound RTP media *is* implemented under the `rtp` feature (see
+[RTP media flow](#rtp-media-flow-rtp-feature)); only interactive/two-way media and codec
+negotiation beyond G.711 remain out of scope.
 
 **Impact**: Suitable for honeypot, testing, and basic call signaling. Not suitable for production VoIP service.
 

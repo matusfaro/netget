@@ -3,7 +3,18 @@
 ## Overview
 
 IS-IS (Intermediate System to Intermediate System) routing protocol server implementing ISO/IEC 10589 and RFC 1195 (
-IS-IS for IP). The LLM controls neighbor adjacencies, Hello PDU responses, and Link State PDU generation.
+IS-IS for IP).
+
+### Default behaviour: passive listener, no LLM
+
+Whether to respond is **policy**, not something a received PDU determines. So with **no operator
+policy** (no server instruction and no per-event handler), the server is a **passive listener — no
+response, no LLM call** per captured PDU (gated by `should_call_llm` in `mod.rs` =
+`has_instruction || has_handler`). The model is consulted **only when the operator opts in** with
+how the router should behave (an instruction or a handler). This passive default is
+compile-verified since the pcap path needs root and the E2E suite is `#[ignore]`d. LSP/CSNP/PSNP
+are parsed and logged but not handled; there is no LSP database or SPF. The `LLM Integration`
+material below (neighbor adjacencies, Hello responses, LSP generation) is the opt-in path.
 
 **Status**: Experimental
 **Protocol Spec

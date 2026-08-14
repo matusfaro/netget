@@ -9,10 +9,20 @@ routing logic.
 
 - ✅ Real OSPF protocol (IP 89)
 - ✅ Multicast support (224.0.0.5)
-- ✅ LLM generates responses
+- ✅ LLM generates responses **when the operator opts in** (see below)
 - ❌ NO real SPF calculation
 - ❌ NO real routing table
 - ❌ NO actual packet forwarding
+
+### Default behaviour: passive listener, no LLM
+
+Whether to respond at all is **policy**. So with **no operator policy** (no server instruction and
+no per-event handler), the server is a **passive listener — no response, no LLM call** per captured
+packet (gated by `should_call_llm` in `mod.rs` = `has_instruction || has_handler`). The model is
+consulted **only when the operator opts in** with how the router should behave (an instruction or a
+handler). This passive default is compile-verified since the raw-socket path needs root and the
+E2E suite never touches it. Everything below describing the LLM generating OSPF responses is the
+opt-in path.
 
 **Status**: Experimental (protocol simulator)
 **Spec**: [RFC 2328 (OSPFv2)](https://datatracker.ietf.org/doc/html/rfc2328)
@@ -127,7 +137,8 @@ Real Router → OSPF packet (IP proto 89) → NetGet
                                            ↓
                                Create structured JSON event
                                            ↓
-                               Send to LLM with context
+                   Opt-in only: send to handler/LLM with context
+                   Default (no policy): observe passively, no LLM call
 ```
 
 **Outgoing**:
@@ -158,7 +169,7 @@ and writes to the raw socket FD held in `OspfState`.
 - LSA aging timers
 - Proper LSDB synchronization
 
-**What LLM controls**:
+**What LLM controls** (opt-in mode only; the default is a passive listener that never calls the LLM):
 
 - Whether to respond to Hellos
 - What routes to advertise (fake or real)
