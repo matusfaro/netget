@@ -197,7 +197,7 @@ event = data["event"]
 if data["event_type_id"] == "wireguard_peer_connected":
     actions = [{"type": "authorize_peer",
                 "public_key": event.get("public_key", ""),
-                "allowed_ips": event.get("allowed_ips", "0.0.0.0/0")}]
+                "allowed_ips": event.get("allowed_ips", ["0.0.0.0/0"])}]
 else:
     actions = []
 print(json.dumps({"actions": actions}))"#;
