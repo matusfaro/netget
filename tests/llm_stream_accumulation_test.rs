@@ -160,3 +160,73 @@ fn long_unbroken_reasoning_is_flushed_incrementally() {
         lines.len()
     );
 }
+
+// --- OpenAI (SSE) accumulation ---
+
+use netget::llm::accumulate_openai_stream;
+
+fn drain(rx: &mut mpsc::UnboundedReceiver<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Ok(m) = rx.try_recv() {
+        out.push(m);
+    }
+    out
+}
+
+#[test]
+fn openai_sse_accumulates_content_and_forwards_reasoning() {
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    // Reasoning arrives first (as some OpenAI reasoning models do), then content,
+    // then a usage-only final frame, then [DONE].
+    let body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"reasoning\":\"Let me think.\\n\"}}]}\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"}}]}\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\", world\"}}]}\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3,\"total_tokens\":13}}\n",
+        "data: [DONE]\n"
+    );
+    let acc = accumulate_openai_stream(body, Some(&tx));
+    assert_eq!(acc.content, "Hello, world");
+    assert_eq!(acc.token_usage().total_tokens, 13);
+    let fwd = drain(&mut rx);
+    assert!(
+        fwd.iter()
+            .any(|m| m.starts_with("[REASONING] ") && m.contains("Let me think")),
+        "reasoning must be forwarded, got {fwd:?}"
+    );
+    assert!(
+        !fwd.iter().any(|m| m.contains("Hello")),
+        "content must not be streamed as reasoning"
+    );
+}
+
+#[test]
+fn openai_sse_merges_tool_call_fragments_by_index() {
+    // A tool call streamed piecewise: id+name first, then arguments in chunks.
+    let body = concat!(
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_1\",\"function\":{\"name\":\"open_server\",\"arguments\":\"\"}}]}}]}\n",
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"protocol\\\":\\\"http\\\",\"}}]}}]}\n",
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"port\\\":8123}\"}}]}}]}\n",
+        "data: [DONE]\n"
+    );
+    let acc = accumulate_openai_stream(body, None);
+    let calls = acc.into_tool_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].function_name, "open_server");
+    assert_eq!(calls[0].id, "call_1");
+    assert_eq!(calls[0].arguments["protocol"], "http");
+    assert_eq!(calls[0].arguments["port"], 8123);
+}
+
+#[test]
+fn openai_single_object_body_is_the_mock_fallback() {
+    // The non-streaming single-object shape the in-process mock returns.
+    let body = r#"{"choices":[{"message":{"content":"hi","tool_calls":[{"id":"c1","function":{"name":"show_message","arguments":"{\"message\":\"x\"}"}}]}}],"usage":{"prompt_tokens":2,"completion_tokens":1,"total_tokens":3}}"#;
+    let acc = accumulate_openai_stream(body, None);
+    assert_eq!(acc.content, "hi");
+    assert_eq!(acc.token_usage().total_tokens, 3);
+    let calls = acc.into_tool_calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].function_name, "show_message");
+    assert_eq!(calls[0].arguments["message"], "x");
+}

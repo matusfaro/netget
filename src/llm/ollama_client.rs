@@ -265,6 +265,180 @@ pub fn accumulate_ollama_stream(
     acc
 }
 
+// --- OpenAI (`/v1/chat/completions`) streaming ---
+//
+// OpenAI's stream is Server-Sent Events: each event is a `data: {json}` line,
+// terminated by `data: [DONE]`. Unlike Ollama's NDJSON, tool calls arrive as
+// fragments (an `index`, then `id`/`function.name`/`function.arguments` streamed
+// piecewise), so they must be merged by index. The same processor also handles a
+// non-SSE single-object body (the test mock and any non-streaming backend), where
+// each field arrives whole — merging into an empty accumulator yields the value.
+
+#[derive(Default, Clone)]
+struct OpenAiToolCallAcc {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// Accumulated OpenAI chat result (from an SSE stream or a single object).
+#[derive(Default)]
+pub struct OpenAiStreamAcc {
+    pub content: String,
+    pub reasoning: String,
+    tool_calls: std::collections::BTreeMap<u64, OpenAiToolCallAcc>,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub error: Option<String>,
+}
+
+impl OpenAiStreamAcc {
+    /// Finalize the merged tool-call fragments into `ToolCall`s, dropping any that
+    /// never received a function name and defaulting unparseable arguments to `{}`.
+    pub fn into_tool_calls(&self) -> Vec<ToolCall> {
+        self.tool_calls
+            .values()
+            .filter(|t| !t.name.is_empty())
+            .map(|t| ToolCall {
+                id: t.id.clone(),
+                function_name: t.name.clone(),
+                arguments: serde_json::from_str(&t.arguments)
+                    .unwrap_or_else(|_| serde_json::json!({})),
+            })
+            .collect()
+    }
+
+    pub fn token_usage(&self) -> TokenUsage {
+        TokenUsage {
+            prompt_tokens: self.prompt_tokens,
+            completion_tokens: self.completion_tokens,
+            total_tokens: if self.total_tokens > 0 {
+                self.total_tokens
+            } else {
+                self.prompt_tokens + self.completion_tokens
+            },
+        }
+    }
+}
+
+fn apply_openai_usage(acc: &mut OpenAiStreamAcc, usage: &serde_json::Value) {
+    if let Some(n) = usage.get("prompt_tokens").and_then(|v| v.as_u64()) {
+        acc.prompt_tokens = n;
+    }
+    if let Some(n) = usage.get("completion_tokens").and_then(|v| v.as_u64()) {
+        acc.completion_tokens = n;
+    }
+    if let Some(n) = usage.get("total_tokens").and_then(|v| v.as_u64()) {
+        acc.total_tokens = n;
+    }
+}
+
+/// Merge one `choices[0].delta` (streaming) or `choices[0].message` (single
+/// object) node into the accumulator, forwarding any reasoning delta.
+fn merge_openai_choice(
+    acc: &mut OpenAiStreamAcc,
+    node: &serde_json::Value,
+    fwd: &mut ReasoningForwarder,
+) {
+    if let Some(c) = node.get("content").and_then(|v| v.as_str()) {
+        acc.content.push_str(c);
+    }
+    // OpenAI reasoning models expose chain-of-thought as `reasoning` or, on some
+    // OpenAI-compatible endpoints, `reasoning_content`.
+    for key in ["reasoning", "reasoning_content"] {
+        if let Some(r) = node.get(key).and_then(|v| v.as_str()) {
+            acc.reasoning.push_str(r);
+            fwd.push(r);
+        }
+    }
+    if let Some(tcs) = node.get("tool_calls").and_then(|v| v.as_array()) {
+        for (i, tc) in tcs.iter().enumerate() {
+            let idx = tc.get("index").and_then(|v| v.as_u64()).unwrap_or(i as u64);
+            let e = acc.tool_calls.entry(idx).or_default();
+            if let Some(id) = tc.get("id").and_then(|v| v.as_str()) {
+                if !id.is_empty() {
+                    e.id = id.to_string();
+                }
+            }
+            if let Some(f) = tc.get("function") {
+                if let Some(n) = f.get("name").and_then(|v| v.as_str()) {
+                    e.name.push_str(n);
+                }
+                if let Some(a) = f.get("arguments").and_then(|v| v.as_str()) {
+                    e.arguments.push_str(a);
+                }
+            }
+        }
+    }
+}
+
+/// Process one line of an OpenAI response. Returns `true` if the line was an SSE
+/// `data:` frame (so the caller knows the body is a real stream, not a single
+/// object). `[DONE]` and unparseable frames count as frames but add nothing.
+fn process_openai_sse_line(
+    line: &str,
+    acc: &mut OpenAiStreamAcc,
+    fwd: &mut ReasoningForwarder,
+) -> bool {
+    let line = line.trim();
+    let data = match line.strip_prefix("data:") {
+        Some(d) => d.trim(),
+        None => return false,
+    };
+    if data == "[DONE]" {
+        return true;
+    }
+    let v: serde_json::Value = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(_) => return true,
+    };
+    if let Some(err) = v.pointer("/error/message").and_then(|e| e.as_str()) {
+        acc.error = Some(err.to_string());
+    }
+    if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
+        apply_openai_usage(acc, u);
+    }
+    if let Some(delta) = v.pointer("/choices/0/delta") {
+        merge_openai_choice(acc, delta, fwd);
+    }
+    true
+}
+
+/// Accumulate a whole OpenAI body — an SSE stream OR a single completion object —
+/// forwarding reasoning line by line. The synchronous core shared by the async
+/// reader and unit tests.
+pub fn accumulate_openai_stream(
+    body: &str,
+    status_tx: Option<&mpsc::UnboundedSender<String>>,
+) -> OpenAiStreamAcc {
+    let mut acc = OpenAiStreamAcc::default();
+    let mut fwd = ReasoningForwarder::new(status_tx);
+    let mut saw_sse = false;
+    for line in body.split('\n') {
+        if process_openai_sse_line(line, &mut acc, &mut fwd) {
+            saw_sse = true;
+        }
+    }
+    // Non-SSE single object (mock / non-streaming backend): parse the whole body
+    // and merge choices[0].message, which carries every field whole.
+    if !saw_sse {
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(body.trim()) {
+            if let Some(err) = v.pointer("/error/message").and_then(|e| e.as_str()) {
+                acc.error = Some(err.to_string());
+            }
+            if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
+                apply_openai_usage(&mut acc, u);
+            }
+            if let Some(msg) = v.pointer("/choices/0/message") {
+                merge_openai_choice(&mut acc, msg, &mut fwd);
+            }
+        }
+    }
+    fwd.flush();
+    acc
+}
+
 /// Message in a conversation with role (system/user/assistant/tool)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
@@ -826,6 +1000,81 @@ impl OllamaClient {
         Ok(acc)
     }
 
+    /// Read an OpenAI `/v1/chat/completions` response — an SSE stream or a single
+    /// completion object — into an [`OpenAiStreamAcc`], forwarding reasoning deltas
+    /// to this client's status channel as each `data:` frame arrives.
+    ///
+    /// Like the Ollama reader it uses `Response::chunk()` and splits on `\n`, so
+    /// reasoning appears live. It also buffers the raw body: if no SSE frame was
+    /// seen (a non-streaming backend, or the single-object test mock), the whole
+    /// body is parsed once as a completion object.
+    async fn read_openai_stream(
+        &self,
+        mut http_response: reqwest::Response,
+    ) -> Result<OpenAiStreamAcc> {
+        let mut acc = OpenAiStreamAcc::default();
+        let mut fwd = ReasoningForwarder::new(self.status_tx.as_ref());
+        let mut buf: Vec<u8> = Vec::new();
+        let mut raw = String::new();
+        let mut saw_sse = false;
+
+        let read = async {
+            while let Some(chunk) = http_response
+                .chunk()
+                .await
+                .context("reading OpenAI streaming response body")?
+            {
+                buf.extend_from_slice(&chunk);
+                while let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+                    let line: Vec<u8> = buf.drain(..=pos).collect();
+                    if let Ok(s) = std::str::from_utf8(&line) {
+                        raw.push_str(s);
+                        if process_openai_sse_line(s, &mut acc, &mut fwd) {
+                            saw_sse = true;
+                        }
+                    }
+                }
+            }
+            if !buf.is_empty() {
+                if let Ok(s) = std::str::from_utf8(&buf) {
+                    raw.push_str(s);
+                    if process_openai_sse_line(s, &mut acc, &mut fwd) {
+                        saw_sse = true;
+                    }
+                }
+            }
+            Ok::<(), anyhow::Error>(())
+        };
+
+        tokio::time::timeout(self.request_timeout, read)
+            .await
+            .with_context(|| {
+                format!(
+                    "OpenAI streaming response body timed out after {:?}",
+                    self.request_timeout
+                )
+            })??;
+
+        // Non-SSE single object (mock / non-streaming backend): parse the whole
+        // buffered body as a completion and merge choices[0].message.
+        if !saw_sse {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw.trim()) {
+                if let Some(err) = v.pointer("/error/message").and_then(|e| e.as_str()) {
+                    acc.error = Some(err.to_string());
+                }
+                if let Some(u) = v.get("usage").filter(|u| u.is_object()) {
+                    apply_openai_usage(&mut acc, u);
+                }
+                if let Some(msg) = v.pointer("/choices/0/message") {
+                    merge_openai_choice(&mut acc, msg, &mut fwd);
+                }
+            }
+        }
+
+        fwd.flush();
+        Ok(acc)
+    }
+
     /// Set the mock configuration file path (for testing)
     pub fn with_mock_config_file(mut self, path: Option<std::path::PathBuf>) -> Self {
         self.mock_config_file = path;
@@ -1055,6 +1304,9 @@ impl OllamaClient {
                     "model": model,
                     "messages": [{ "role": "user", "content": prompt }],
                     "max_tokens": 2048,
+                    // Stream so reasoning appears live; ask for usage in the final frame.
+                    "stream": true,
+                    "stream_options": { "include_usage": true },
                 });
 
                 if format.is_some() {
@@ -1079,15 +1331,12 @@ impl OllamaClient {
                 .context("OpenAI API request failed")?;
 
                 let status = http_response.status();
-                let response_body: serde_json::Value = http_response
-                    .json()
-                    .await
-                    .context("Failed to parse OpenAI API response")?;
-
                 if !status.is_success() {
+                    // Error responses are a single JSON object, not an SSE stream.
+                    let response_body: serde_json::Value =
+                        http_response.json().await.unwrap_or_default();
                     let error_msg = response_body
-                        .get("error")
-                        .and_then(|e| e.get("message"))
+                        .pointer("/error/message")
                         .and_then(|m| m.as_str())
                         .unwrap_or("Unknown error");
 
@@ -1109,22 +1358,11 @@ impl OllamaClient {
                     }
                 }
 
-                let text = response_body["choices"][0]["message"]["content"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
-
-                let usage = TokenUsage {
-                    prompt_tokens: response_body["usage"]["prompt_tokens"]
-                        .as_u64()
-                        .unwrap_or(0),
-                    completion_tokens: response_body["usage"]["completion_tokens"]
-                        .as_u64()
-                        .unwrap_or(0),
-                    total_tokens: response_body["usage"]["total_tokens"].as_u64().unwrap_or(0),
-                };
-
-                (text, usage)
+                let acc = self.read_openai_stream(http_response).await?;
+                if let Some(err) = &acc.error {
+                    anyhow::bail!("✗  OpenAI API error: {}", err);
+                }
+                (acc.content.clone(), acc.token_usage())
             }
 
             LlmBackend::Queue { queue, timeout } => {
@@ -1496,6 +1734,9 @@ impl OllamaClient {
             "model": request.model,
             "messages": messages,
             "max_tokens": 4096,
+            // Stream so reasoning appears live; ask for usage in the final frame.
+            "stream": true,
+            "stream_options": { "include_usage": true },
         });
 
         if !request.tools.is_empty() {
@@ -1519,61 +1760,25 @@ impl OllamaClient {
         .context("OpenAI chat API request failed")?;
 
         let status = http_response.status();
-        let response_body: serde_json::Value = http_response
-            .json()
-            .await
-            .context("Failed to parse OpenAI chat API response")?;
-
         if !status.is_success() {
+            // Error responses are a single JSON object, not an SSE stream.
+            let response_body: serde_json::Value = http_response.json().await.unwrap_or_default();
             let error_msg = response_body
-                .get("error")
-                .and_then(|e| e.get("message"))
+                .pointer("/error/message")
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown error");
             anyhow::bail!("OpenAI chat API error ({}): {}", status, error_msg);
         }
 
-        let message = &response_body["choices"][0]["message"];
-
-        let content = message["content"]
-            .as_str()
-            .map(|s| s.to_string())
-            .filter(|s| !s.is_empty());
-
-        let tool_calls = if let Some(calls) = message["tool_calls"].as_array() {
-            calls
-                .iter()
-                .filter_map(|tc| {
-                    let id = tc["id"].as_str()?.to_string();
-                    let function = tc.get("function")?;
-                    let name = function["name"].as_str()?.to_string();
-                    let arguments_str = function["arguments"].as_str().unwrap_or("{}");
-                    let arguments = serde_json::from_str(arguments_str).unwrap_or_default();
-                    Some(ToolCall {
-                        id,
-                        function_name: name,
-                        arguments,
-                    })
-                })
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let token_usage = TokenUsage {
-            prompt_tokens: response_body["usage"]["prompt_tokens"]
-                .as_u64()
-                .unwrap_or(0),
-            completion_tokens: response_body["usage"]["completion_tokens"]
-                .as_u64()
-                .unwrap_or(0),
-            total_tokens: response_body["usage"]["total_tokens"].as_u64().unwrap_or(0),
-        };
+        let acc = self.read_openai_stream(http_response).await?;
+        if let Some(err) = &acc.error {
+            anyhow::bail!("OpenAI chat API error: {}", err);
+        }
 
         Ok(ChatResponse {
-            content,
-            tool_calls,
-            token_usage,
+            content: Some(acc.content.clone()).filter(|s| !s.is_empty()),
+            tool_calls: acc.into_tool_calls(),
+            token_usage: acc.token_usage(),
         })
     }
 

@@ -387,6 +387,10 @@ pub async fn run_rolling_tui(
                     app.log_level >= LogLevel::Debug
                 } else if msg.starts_with("[TRACE]") {
                     app.log_level >= LogLevel::Trace
+                } else if msg.starts_with("[REASONING]") {
+                    // Streamed reasoning is shown at the default INFO level and above,
+                    // and hidden if the operator drops to WARN/ERROR to cut the noise.
+                    app.log_level >= LogLevel::Info
                 } else {
                     // Unprefixed messages always show
                     true
@@ -698,6 +702,16 @@ fn print_output_line(line: &str, footer: &mut StickyFooter, palette: &ColorPalet
                 ResetColor,
             )?;
         }
+    } else if line.starts_with("[REASONING]") {
+        // Streamed model chain-of-thought: its own colour and glyph so it reads as
+        // the model thinking out loud, distinct from action output.
+        execute!(
+            stdout,
+            SetForegroundColor(palette.reasoning),
+            Print("🧠 "),
+            Print(line.strip_prefix("[REASONING]").unwrap()),
+            ResetColor,
+        )?;
     } else if line.starts_with("[USER]") {
         execute!(
             stdout,

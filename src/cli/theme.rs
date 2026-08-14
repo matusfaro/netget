@@ -19,6 +19,8 @@ pub struct ColorPalette {
     pub info: Color,
     pub debug: Color,
     pub trace: Color,
+    /// Streamed model reasoning/chain-of-thought (`[REASONING]` lines).
+    pub reasoning: Color,
     pub user: Color,
 
     // Connection/server/client indicators
@@ -46,6 +48,7 @@ impl ColorPalette {
             info: Color::Blue,
             debug: Color::Cyan,
             trace: Color::DarkGrey,
+            reasoning: Color::Magenta,
             user: Color::Green,
             server: Color::Cyan,
             client: Color::Magenta,
@@ -67,6 +70,7 @@ impl ColorPalette {
             info: Color::DarkBlue,
             debug: Color::DarkCyan,
             trace: Color::DarkGrey,
+            reasoning: Color::DarkMagenta,
             user: Color::DarkGreen,
             server: Color::DarkCyan,
             client: Color::DarkMagenta,
@@ -89,6 +93,7 @@ impl ColorPalette {
             info: Color::Blue,
             debug: Color::DarkCyan,
             trace: Color::Grey,
+            reasoning: Color::Magenta,
             user: Color::DarkGreen,
             server: Color::DarkCyan,
             client: Color::DarkMagenta,
