@@ -86,6 +86,19 @@ impl Protocol for Http2Protocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: answer every HTTP/2 request with a fixed JSON body, no
+        // LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "http2_request":
+    actions = [{"type": "send_http2_response", "status": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": '{"message": "Hello from HTTP/2!"}'}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -102,7 +115,7 @@ impl Protocol for Http2Protocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<http2_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -212,6 +212,17 @@ impl Protocol for FtpProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: acknowledge every command with a 200 reply, no LLM
+        // call. The connect event arrives as command="CONNECTION_ESTABLISHED".
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "ftp_command":
+    actions = [{"type": "send_ftp_response", "code": 200, "message": "Command okay"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         // NOTE: no `send_first` here. The server always emits ftp_command with
         // command="CONNECTION_ESTABLISHED" on connect so the handler can produce the 220
         // greeting; passing send_first would only produce an "unsupported" warning.
@@ -233,7 +244,7 @@ impl Protocol for FtpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<ftp_handler>"
+                        "code": script
                     }
                 }]
             }),

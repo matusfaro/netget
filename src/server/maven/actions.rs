@@ -72,6 +72,19 @@ impl Protocol for MavenProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: serve fixed maven-metadata for every artifact request,
+        // no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "maven_artifact_request":
+    actions = [{"type": "send_maven_metadata", "group_id": "com.example",
+                "artifact_id": "hello-world", "versions": ["1.0.0"],
+                "latest": "1.0.0", "release": "1.0.0"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -90,7 +103,7 @@ impl Protocol for MavenProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<maven_handler>"
+                        "code": script
                     }
                 }]
             }),

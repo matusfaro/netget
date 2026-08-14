@@ -72,6 +72,18 @@ impl Protocol for SyslogProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: record every received syslog line into server memory,
+        // no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "syslog_message":
+    actions = [{"type": "store_syslog_message",
+                "message": str(event.get("message", ""))}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all syslog messages intelligently
             json!({
@@ -90,7 +102,7 @@ impl Protocol for SyslogProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<syslog_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -123,6 +123,19 @@ impl Protocol for RssProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: serve a fixed (empty) RSS feed for every request, no
+        // LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "rss_feed_requested":
+    actions = [{"type": "generate_rss_feed", "title": "NetGet Feed",
+                "link": "http://localhost:8080", "description": "NetGet RSS feed",
+                "items": []}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all RSS feed requests intelligently
             json!({
@@ -141,7 +154,7 @@ impl Protocol for RssProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<rss_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -130,6 +130,17 @@ impl Protocol for TelnetProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: echo each line back to the client, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "telnet_message_received":
+    actions = [{"type": "send_telnet_line",
+                "line": "you said: " + str(event.get("message", ""))}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all Telnet responses intelligently
             json!({
@@ -149,7 +160,7 @@ impl Protocol for TelnetProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<telnet_handler>"
+                        "code": script
                     }
                 }]
             }),

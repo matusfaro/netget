@@ -262,6 +262,19 @@ impl Protocol for LdapProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every search with an empty result set (echoing
+        // the request's message_id), no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "ldap_search":
+    actions = [{"type": "ldap_search_response",
+                "message_id": event.get("message_id", 1),
+                "entries": []}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all LDAP responses intelligently
             json!({
@@ -280,7 +293,7 @@ impl Protocol for LdapProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<ldap_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -113,6 +113,20 @@ impl Protocol for IppProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: report a fixed idle printer for every IPP request, no
+        // LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "ipp_request_received":
+    actions = [{"type": "ipp_printer_attributes",
+                "attributes": {"printer-name": "NetGet Printer",
+                               "printer-state": "idle",
+                               "printer-is-accepting-jobs": True}}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all IPP responses intelligently
             json!({
@@ -131,7 +145,7 @@ impl Protocol for IppProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<ipp_handler>"
+                        "code": script
                     }
                 }]
             }),
