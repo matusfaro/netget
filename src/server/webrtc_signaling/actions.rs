@@ -275,6 +275,27 @@ impl Protocol for WebRtcSignalingProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: welcome each new peer and forward every received
+        // message to its target peer, no LLM call. One script handles both
+        // events.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+et = data["event_type_id"]
+if et == "webrtc_signaling_peer_connected":
+    actions = [{"type": "send_signaling_message",
+                "target_peer": event.get("peer_id", ""),
+                "message": {"type": "relay", "from": "netget",
+                            "to": event.get("peer_id", ""),
+                            "data": {"welcome": True}}}]
+elif et == "webrtc_signaling_message_received":
+    actions = [{"type": "send_signaling_message",
+                "target_peer": event.get("target_peer", ""),
+                "message": event.get("message", {})}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -293,14 +314,14 @@ impl Protocol for WebRtcSignalingProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }, {
                     "event_pattern": "webrtc_signaling_message_received",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }]
             }),

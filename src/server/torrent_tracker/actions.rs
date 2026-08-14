@@ -74,6 +74,18 @@ impl Protocol for TorrentTrackerProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every announce with an empty peer list and a
+        // 30-minute interval, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "tracker_announce_request":
+    actions = [{"type": "send_announce_response", "interval": 1800,
+                "complete": 0, "incomplete": 0, "peers": []}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles BitTorrent tracker
             json!({
@@ -92,7 +104,7 @@ impl Protocol for TorrentTrackerProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<tracker_handler>"
+                        "code": script
                     }
                 }]
             }),

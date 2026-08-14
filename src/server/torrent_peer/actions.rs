@@ -83,6 +83,18 @@ impl Protocol for TorrentPeerProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: complete the BitTorrent handshake by echoing the info
+        // hash, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "peer_handshake":
+    actions = [{"type": "send_handshake",
+                "info_hash": event.get("info_hash", "")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles BitTorrent peer wire protocol
             json!({
@@ -101,7 +113,7 @@ impl Protocol for TorrentPeerProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<peer_handler>"
+                        "code": script
                     }
                 }]
             }),

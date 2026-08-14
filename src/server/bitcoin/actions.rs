@@ -90,6 +90,18 @@ impl Protocol for BitcoinProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: complete the version/verack handshake on connect, no
+        // LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "bitcoin_connection_opened":
+    actions = [{"type": "send_version", "user_agent": "/NetGet:0.1/"},
+               {"type": "send_verack"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles Bitcoin P2P protocol
             json!({
@@ -114,7 +126,7 @@ impl Protocol for BitcoinProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<bitcoin_server_handler>"
+                        "code": script
                     }
                 }]
             }),

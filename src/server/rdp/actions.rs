@@ -102,6 +102,17 @@ impl Protocol for RdpProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: select TLS security for every connection request, no
+        // LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "rdp_connection_request":
+    actions = [{"type": "send_rdp_negotiation_response", "selected_protocol": "TLS"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -120,7 +131,7 @@ impl Protocol for RdpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<rdp_handler>"
+                        "code": script
                     }
                 }]
             }),

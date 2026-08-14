@@ -93,6 +93,26 @@ impl Protocol for TurnProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: grant every allocation and refresh, echoing the
+        // server-reserved relay address and the client's transaction id, no LLM
+        // call. One script handles both events.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+et = data["event_type_id"]
+if et == "turn_allocate_request":
+    actions = [{"type": "send_turn_allocate_response",
+                "transaction_id": event.get("transaction_id"),
+                "relay_address": event.get("relay_address"),
+                "lifetime_seconds": 600}]
+elif et == "turn_refresh_request":
+    actions = [{"type": "send_turn_refresh_response",
+                "transaction_id": event.get("transaction_id"),
+                "lifetime_seconds": 600}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -111,14 +131,14 @@ impl Protocol for TurnProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }, {
                     "event_pattern": "turn_refresh_request",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }]
             }),

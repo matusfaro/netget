@@ -78,6 +78,16 @@ impl Protocol for TorrentDhtProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every DHT ping with a pong, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "dht_ping_query":
+    actions = [{"type": "send_ping_response"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles BitTorrent DHT
             json!({
@@ -96,7 +106,7 @@ impl Protocol for TorrentDhtProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<dht_handler>"
+                        "code": script
                     }
                 }]
             }),

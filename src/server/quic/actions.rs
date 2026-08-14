@@ -158,6 +158,19 @@ impl Protocol for QuicProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: echo received stream data back on the same stream, no
+        // LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "quic_data_received":
+    actions = [{"type": "send_quic_data",
+                "data": str(event.get("data", "")),
+                "stream_id": event.get("stream_id", 0)}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -174,7 +187,7 @@ impl Protocol for QuicProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<quic_handler>"
+                        "code": script
                     }
                 }]
             }),
