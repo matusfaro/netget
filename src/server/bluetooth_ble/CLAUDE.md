@@ -274,6 +274,51 @@ The LLM has full control over the BLE GATT server:
    → State: Processing → Idle
 ```
 
+### Shared radio (one `Peripheral` per process)
+
+`ble-peripheral-rust`'s CoreBluetooth backend routes **every** `Peripheral` through one
+process-global manager thread, guarded by its own `static PERIPHERAL_THREAD: OnceCell<()>`
+(`peripheral_manager.rs:50`). Only the *first* `Peripheral::new()` in a process actually spawns
+that thread and connects its command channel; every later `Peripheral::new()` gets a fresh
+`manager_tx` whose receiver is immediately dropped, so all of its commands — including
+`is_powered()` — silently fail. That is why starting a **second** BLE server used to burn ~10s
+and then falsely report "Bluetooth adapter failed to power on after 10 seconds": the adapter was
+fine, the peripheral was dead. (IMPROVEMENTS item 2.)
+
+Because CoreBluetooth is genuinely one-manager-per-process anyway (one GATT database, one
+advertising state, one radio), `spawn_with_llm_actions` no longer creates a `Peripheral` per
+start. It acquires a process-wide shared `BleHub` via `BluetoothBle::shared_hub` (a
+`tokio::sync::OnceCell`): the `Peripheral` is built and the adapter power-on wait happens **once**,
+on the first start; later starts reuse the live radio with no wait and no hang. On failure the
+`OnceCell` stays empty, so a later start retries rather than caching the failure.
+
+One shared radio means one shared `PeripheralEvent` stream (`Peripheral::new` takes a single
+sender for the whole process). A dispatcher task hands each event to a `BleRouter`, which:
+
+- routes a read/write/subscribe event to the server that added its characteristic
+  (`register_characteristic`), falling back to the newest live server if none owns it;
+- broadcasts adapter `StateUpdate`s to every live server;
+- skips closed channels, so a stopped server never captures traffic.
+
+`BleRouter` holds no `Peripheral` — only channels — specifically so its routing logic is testable
+without a Bluetooth adapter. It is `pub` for that reason (like `parse_ble_uuid` and
+`run_event_loop_without_radio`), since the project forbids `#[cfg(test)]` modules in `src/`.
+
+**Known limitation:** BLE has no real per-server stop path here (no `register_server_task`), so a
+server's channel is not actively removed from the router on close; the router prunes it lazily
+once the channel is observed closed. Concurrent BLE servers share the single radio's one GATT
+database and advertising state — that is a CoreBluetooth reality, not a NetGet choice.
+
+### Async read fallback (no `block_on`)
+
+When the LLM answers a `bluetooth_read_request` without a `respond_to_read` action, the read falls
+back to the characteristic's last stored value. That fallback used to acquire the lock with
+`futures::executor::block_on(server_data.lock())` inside a synchronous `unwrap_or_else` closure —
+a blocking call on a tokio worker thread, the exact antipattern the root `CLAUDE.md` documents
+(its panic is swallowed by the `tokio::spawn` running the event loop, so the server looks healthy
+while the read dies). The event loop is already async at that point, so the lock is now simply
+`.await`ed. (IMPROVEMENTS item 3.)
+
 ### Dual Logging
 
 All BLE events are logged to both `netget.log` (via `tracing`) and the TUI (via `status_tx`):
@@ -438,7 +483,9 @@ still related.
 
 ### Adapter Not Powered On
 
-- Server waits up to 10 seconds for adapter to power on
+- The **first** BLE server in the process waits up to 10 seconds for the adapter to power on, in
+  `shared_hub`; later starts reuse the already-powered shared radio and do not wait. (This is the
+  fix for the second-start hang — see "Shared radio" above.)
 - Error if not powered after timeout
 - User should check Bluetooth is enabled in system settings
 

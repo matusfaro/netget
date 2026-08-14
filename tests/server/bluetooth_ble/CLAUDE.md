@@ -2,13 +2,31 @@
 
 ## Test Approach
 
-### Unit Tests
+### Radio-free tests (no Bluetooth hardware)
 
-None currently. All tests are E2E due to the nature of BLE requiring real hardware.
+These run under the standard `--test-threads=100`, in milliseconds, and are the ones that
+actually gate CI-style verification since GitHub runners have no adapter:
+
+- `llm_failure_test.rs` — an LLM failure yields an ATT error (`UnlikelyError`), never a fabricated
+  value or a false write acknowledgement. Drives `BluetoothBle::run_event_loop_without_radio`.
+- `read_default_value_test.rs` — **DEFECT 1 (item 3)**: the read fallback that used to
+  `futures::executor::block_on(server_data.lock())` now `.await`s on the async path. A read the
+  LLM answers without a `respond_to_read` must return `Success` via the fallback rather than
+  hang/panic.
+- `shared_peripheral_routing_test.rs` — **DEFECT 2 (item 2)**: the `BleRouter` that fans the
+  single shared radio's events out to per-server channels — routing by characteristic, broadcast
+  of `StateUpdate`, newest-live-server fallback, and skipping a stopped (closed) owner. `BleRouter`
+  holds no `Peripheral`, so this needs no adapter.
+
+The **shared-`Peripheral` acquisition** itself (`shared_hub` / the `Peripheral::new` + power-on
+wait) is *not* covered here: it needs a real adapter and BLE permission. That path is only
+reachable through the `#[ignore]`d E2E tests below (and on a headless CI/dev box it cannot run).
 
 ### E2E Tests
 
-**3 test cases**, all requiring real Bluetooth adapters or simulators.
+**3 test cases**, all requiring real Bluetooth adapters or simulators, all `#[ignore]`d (they
+contend for the machine's single adapter under `--test-threads=100`). Also gated on
+`bluetooth-ble-client`, so a `--features bluetooth-ble`-only build compiles them to nothing.
 
 ## Test Environment Requirements
 

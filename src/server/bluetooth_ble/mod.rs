@@ -59,7 +59,11 @@ struct CharacteristicData {
 
 /// Server data for BLE peripheral
 struct ServerData {
-    peripheral: Option<Peripheral>,
+    /// The process-wide shared radio, or `None` in the radio-free test loop.
+    hub: Option<Arc<BleHub>>,
+    /// This server's own slice of the shared event stream, used to register characteristic
+    /// routes with the hub as services are added. `None` in the radio-free test loop.
+    event_tx: Option<mpsc::Sender<PeripheralEvent>>,
     state: ConnectionState,
     memory: String,
     characteristics: HashMap<String, CharacteristicData>,
@@ -102,6 +106,148 @@ pub fn parse_ble_uuid(s: &str) -> Result<Uuid> {
     })
 }
 
+/// Process-wide shared BLE radio.
+///
+/// `ble-peripheral-rust`'s CoreBluetooth backend funnels *every* `Peripheral` through a single
+/// process-global manager thread guarded by its own `static PERIPHERAL_THREAD: OnceCell<()>`
+/// (`peripheral_manager.rs:50`). Only the **first** `Peripheral::new()` in a process actually
+/// spawns that thread and wires up its command channel; every later `Peripheral::new()` builds a
+/// fresh `manager_tx` whose receiver is dropped on the spot, so all of its commands — including
+/// `is_powered()` — fail silently. The second BLE server start therefore saw `is_powered()`
+/// return `false` forever and bailed after the 20×500ms wait with a bogus "adapter failed to
+/// power on after 10 seconds", while the adapter was fine (IMPROVEMENTS item 2).
+///
+/// CoreBluetooth is genuinely one-manager-per-process anyway (one GATT database, one advertising
+/// state, one radio), so the correct model is a single shared `Peripheral` reused across every
+/// BLE server start. That is what `BleHub` is. It is created exactly once, on the first start,
+/// via [`BLE_HUB`]; the adapter power-on wait happens once there, so subsequent starts reuse the
+/// live radio with no wait and no hang.
+///
+/// The single shared radio also means a single shared event stream: `Peripheral::new` takes one
+/// `PeripheralEvent` sender for the whole process. The hub owns that stream and a dispatcher task
+/// hands each event to its [`BleRouter`], which fans it out to the owning server by characteristic
+/// UUID, falling back to the most-recently-started live server, and broadcasts adapter
+/// `StateUpdate`s to all of them.
+#[cfg(feature = "bluetooth-ble")]
+struct BleHub {
+    /// The one real radio. Its mutating methods take `&mut self`, so calls are serialised here.
+    peripheral: Mutex<Peripheral>,
+    /// Where the single event stream is fanned out to per-server channels.
+    router: BleRouter,
+}
+
+/// Routes one shared radio's events to the right per-server channel.
+///
+/// Split out of [`BleHub`] so it is exercisable without a Bluetooth adapter: it holds no
+/// `Peripheral`, only channels, so a test can register stub servers, dispatch events, and assert
+/// which server received what. It is `pub` for the same reason `run_event_loop_without_radio` and
+/// `parse_ble_uuid` are — the project forbids `#[cfg(test)]` modules in `src/`.
+#[cfg(feature = "bluetooth-ble")]
+#[derive(Default)]
+pub struct BleRouter {
+    /// characteristic UUID (lowercased) -> the event channel of the server that added it.
+    routes: std::sync::Mutex<HashMap<String, mpsc::Sender<PeripheralEvent>>>,
+    /// Every started server's event channel, for events with no characteristic (StateUpdate)
+    /// and as the routing fallback.
+    servers: std::sync::Mutex<Vec<mpsc::Sender<PeripheralEvent>>>,
+}
+
+#[cfg(feature = "bluetooth-ble")]
+static BLE_HUB: tokio::sync::OnceCell<Arc<BleHub>> = tokio::sync::OnceCell::const_new();
+
+#[cfg(feature = "bluetooth-ble")]
+impl BleRouter {
+    /// A router with no registered servers.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register a freshly started server so adapter-level events and unrouted requests can reach
+    /// it.
+    pub fn register_server(&self, tx: mpsc::Sender<PeripheralEvent>) {
+        self.servers.lock().unwrap().push(tx);
+    }
+
+    /// Point a characteristic's future read/write/subscribe events at the server that owns it.
+    pub fn register_characteristic(&self, char_uuid: &str, tx: mpsc::Sender<PeripheralEvent>) {
+        self.routes
+            .lock()
+            .unwrap()
+            .insert(char_uuid.to_lowercase(), tx);
+    }
+
+    /// Choose where a characteristic event goes: its registered owner, else the newest live
+    /// server. Closed channels (stopped servers) are skipped so a dead server never captures
+    /// traffic.
+    fn route_target(&self, char_uuid_lc: &str) -> Option<mpsc::Sender<PeripheralEvent>> {
+        if let Some(tx) = self.routes.lock().unwrap().get(char_uuid_lc) {
+            if !tx.is_closed() {
+                return Some(tx.clone());
+            }
+        }
+        self.servers
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|tx| !tx.is_closed())
+            .cloned()
+    }
+
+    /// Every still-open server channel.
+    fn live_servers(&self) -> Vec<mpsc::Sender<PeripheralEvent>> {
+        self.servers
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|tx| !tx.is_closed())
+            .cloned()
+            .collect()
+    }
+
+    /// Fan one radio event out to the owning server(s). Never holds a std lock across an await —
+    /// senders are cloned out first.
+    pub async fn dispatch(&self, event: PeripheralEvent) {
+        match event {
+            // No characteristic: an adapter state change concerns every server on the radio.
+            // `PeripheralEvent` is not `Clone` (read/write carry a `oneshot` responder), but
+            // `StateUpdate` is trivially rebuildable, so it can be fanned out.
+            PeripheralEvent::StateUpdate { is_powered } => {
+                for tx in self.live_servers() {
+                    let _ = tx.send(PeripheralEvent::StateUpdate { is_powered }).await;
+                }
+            }
+            // Everything else names a characteristic and carries at most one responder, so it
+            // goes to exactly one server.
+            ev => {
+                let char_uuid_lc = match &ev {
+                    PeripheralEvent::ReadRequest { request, .. }
+                    | PeripheralEvent::WriteRequest { request, .. }
+                    | PeripheralEvent::CharacteristicSubscriptionUpdate { request, .. } => {
+                        request.characteristic.to_string().to_lowercase()
+                    }
+                    PeripheralEvent::StateUpdate { .. } => unreachable!(),
+                };
+                match self.route_target(&char_uuid_lc) {
+                    Some(tx) => {
+                        let _ = tx.send(ev).await;
+                    }
+                    None => {
+                        // No live server owns this characteristic. A read/write responder is
+                        // dropped here, which the central surfaces as a failed operation — the
+                        // honest outcome when nothing is behind the GATT entry.
+                        warn!(
+                            "BLE event for characteristic {} has no live server to handle it; \
+                             dropping",
+                            char_uuid_lc
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Bluetooth Low Energy GATT server
 pub struct BluetoothBle;
 
@@ -116,41 +262,31 @@ impl BluetoothBle {
         server_id: crate::state::ServerId,
         instruction: String,
     ) -> Result<std::net::SocketAddr> {
-        // Create event channel for peripheral events
-        let (event_tx, event_rx) = mpsc::channel::<PeripheralEvent>(256);
-
-        // Create BLE peripheral
-        let mut peripheral = Peripheral::new(event_tx)
+        // Acquire the process-wide shared radio. It is created (and the adapter powered on)
+        // exactly once, on the first BLE server start; every later start reuses it with no
+        // wait. Creating a fresh `Peripheral` per start is what IMPROVEMENTS item 2 describes:
+        // the crate's global manager singleton leaves the second peripheral's command channel
+        // dead, so `is_powered()` never returns true and the start falsely times out. See
+        // [`BleHub`].
+        let hub = Self::shared_hub(&status_tx)
             .await
-            .context("Failed to create BLE peripheral")?;
+            .context("Failed to bring up the shared BLE radio")?;
 
-        info!("Bluetooth server created, waiting for adapter to power on");
+        info!("Bluetooth server created on shared radio, adapter powered on");
         let _ = status_tx.send(format!(
             "[INFO] Bluetooth server created for device '{}'",
             device_name
         ));
 
-        // Wait for Bluetooth adapter to be powered on
-        let mut retries = 0;
-        while !peripheral.is_powered().await.unwrap_or(false) {
-            if retries == 0 {
-                warn!("Bluetooth adapter is not powered on, waiting...");
-                let _ = status_tx
-                    .send("[WARN] Bluetooth adapter not powered on, waiting...".to_string());
-            }
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-            retries += 1;
-            if retries > 20 {
-                anyhow::bail!("Bluetooth adapter failed to power on after 10 seconds");
-            }
-        }
-
-        info!("Bluetooth adapter powered on");
-        let _ = status_tx.send("[INFO] Bluetooth adapter powered on".to_string());
+        // This server's slice of the shared event stream. The hub's dispatcher forwards this
+        // server's characteristic events here; adapter state changes are broadcast here too.
+        let (event_tx, event_rx) = mpsc::channel::<PeripheralEvent>(256);
+        hub.router.register_server(event_tx.clone());
 
         // Create server data
         let server_data = Arc::new(Mutex::new(ServerData {
-            peripheral: Some(peripheral),
+            hub: Some(hub.clone()),
+            event_tx: Some(event_tx.clone()),
             state: ConnectionState::Idle,
             memory: String::new(),
             characteristics: HashMap::new(),
@@ -254,6 +390,66 @@ impl BluetoothBle {
         )))
     }
 
+    /// Get (creating once) the process-wide shared BLE radio.
+    ///
+    /// The first call builds the single `Peripheral`, waits for the adapter to power on, and
+    /// spawns the dispatcher task that fans radio events out to per-server channels. Every later
+    /// call returns the same `Arc<BleHub>` immediately. On failure the `OnceCell` stays empty so
+    /// a subsequent start retries rather than caching the failure.
+    #[cfg(feature = "bluetooth-ble")]
+    async fn shared_hub(status_tx: &mpsc::UnboundedSender<String>) -> Result<Arc<BleHub>> {
+        let status_tx = status_tx.clone();
+        BLE_HUB
+            .get_or_try_init(move || async move {
+                info!("Creating shared BLE peripheral (first BLE server in this process)");
+
+                // The single process-wide event stream. `Peripheral::new` bakes this sender into
+                // the crate's global manager; the hub dispatcher owns the receiver.
+                let (event_tx, mut event_rx) = mpsc::channel::<PeripheralEvent>(256);
+                let mut peripheral = Peripheral::new(event_tx)
+                    .await
+                    .context("Failed to create BLE peripheral")?;
+
+                // Wait for the adapter to power on — once, here, not per server start.
+                let mut retries = 0;
+                while !peripheral.is_powered().await.unwrap_or(false) {
+                    if retries == 0 {
+                        warn!("Bluetooth adapter is not powered on, waiting...");
+                        let _ = status_tx.send(
+                            "[WARN] Bluetooth adapter not powered on, waiting...".to_string(),
+                        );
+                    }
+                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+                    retries += 1;
+                    if retries > 20 {
+                        anyhow::bail!("Bluetooth adapter failed to power on after 10 seconds");
+                    }
+                }
+
+                info!("Bluetooth adapter powered on (shared radio)");
+                let _ = status_tx.send("[INFO] Bluetooth adapter powered on".to_string());
+
+                let hub = Arc::new(BleHub {
+                    peripheral: Mutex::new(peripheral),
+                    router: BleRouter::new(),
+                });
+
+                // Single dispatcher for the whole process: route each radio event to the server
+                // that owns the characteristic (or broadcast, for adapter state).
+                let dispatch_hub = hub.clone();
+                tokio::spawn(async move {
+                    while let Some(event) = event_rx.recv().await {
+                        dispatch_hub.router.dispatch(event).await;
+                    }
+                    warn!("BLE shared radio event stream ended; no further events will be routed");
+                });
+
+                Ok::<Arc<BleHub>, anyhow::Error>(hub)
+            })
+            .await
+            .cloned()
+    }
+
     /// Execute a single LLM action
     #[cfg(feature = "bluetooth-ble")]
     async fn execute_action(
@@ -309,6 +505,7 @@ impl BluetoothBle {
             .context("add_service requires 'characteristics' array")?;
 
         let mut characteristics = Vec::new();
+        let mut char_uuids: Vec<String> = Vec::new();
         let mut server_data_guard = server_data.lock().await;
 
         for char_json in chars_json {
@@ -427,6 +624,21 @@ impl BluetoothBle {
                 value: cached_value,
                 descriptors: Vec::new(), // TODO: support descriptors if needed
             });
+            char_uuids.push(char_uuid_str.to_string());
+        }
+
+        // Capture the shared radio and this server's event channel, then drop the ServerData
+        // guard: the radio call below awaits I/O and must not be made holding that lock (and
+        // never with the two locks nested, to keep a consistent order).
+        let hub = server_data_guard.hub.clone();
+        let event_tx = server_data_guard.event_tx.clone();
+        drop(server_data_guard);
+
+        // Point this characteristic's future read/write/subscribe events at this server.
+        if let (Some(hub), Some(tx)) = (hub.as_ref(), event_tx.as_ref()) {
+            for cu in &char_uuids {
+                hub.router.register_characteristic(cu, tx.clone());
+            }
         }
 
         let service = Service {
@@ -435,8 +647,10 @@ impl BluetoothBle {
             characteristics,
         };
 
-        if let Some(ref mut peripheral) = server_data_guard.peripheral {
-            peripheral
+        if let Some(hub) = hub.as_ref() {
+            hub.peripheral
+                .lock()
+                .await
                 .add_service(&service)
                 .await
                 .context("Failed to add service to peripheral")?;
@@ -477,9 +691,11 @@ impl BluetoothBle {
             })
             .unwrap_or_else(Vec::new);
 
-        let mut server_data_guard = server_data.lock().await;
-        if let Some(ref mut peripheral) = server_data_guard.peripheral {
-            peripheral
+        let hub = server_data.lock().await.hub.clone();
+        if let Some(hub) = hub.as_ref() {
+            hub.peripheral
+                .lock()
+                .await
                 .start_advertising(name, &service_uuids)
                 .await
                 .context("Failed to start advertising")?;
@@ -501,9 +717,11 @@ impl BluetoothBle {
         server_data: &Arc<Mutex<ServerData>>,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let mut server_data_guard = server_data.lock().await;
-        if let Some(ref mut peripheral) = server_data_guard.peripheral {
-            peripheral
+        let hub = server_data.lock().await.hub.clone();
+        if let Some(hub) = hub.as_ref() {
+            hub.peripheral
+                .lock()
+                .await
                 .stop_advertising()
                 .await
                 .context("Failed to stop advertising")?;
@@ -533,15 +751,19 @@ impl BluetoothBle {
         let value_str = value_str.trim_start_matches("0x");
         let value = hex::decode(value_str).context("Value must be hex-encoded")?;
 
-        let mut server_data_guard = server_data.lock().await;
+        // Update stored value and capture the shared radio, then drop the guard before I/O.
+        let hub = {
+            let mut server_data_guard = server_data.lock().await;
+            if let Some(char_data) = server_data_guard.characteristics.get_mut(char_uuid_str) {
+                char_data.current_value = value.clone();
+            }
+            server_data_guard.hub.clone()
+        };
 
-        // Update stored value
-        if let Some(char_data) = server_data_guard.characteristics.get_mut(char_uuid_str) {
-            char_data.current_value = value.clone();
-        }
-
-        if let Some(ref mut peripheral) = server_data_guard.peripheral {
-            peripheral
+        if let Some(hub) = hub.as_ref() {
+            hub.peripheral
+                .lock()
+                .await
                 .update_characteristic(char_uuid, value.clone())
                 .await
                 .context("Failed to send notification")?;
@@ -581,7 +803,8 @@ impl BluetoothBle {
         status_tx: mpsc::UnboundedSender<String>,
     ) {
         let server_data = Arc::new(Mutex::new(ServerData {
-            peripheral: None,
+            hub: None,
+            event_tx: None,
             state: ConnectionState::Idle,
             memory: String::new(),
             characteristics: HashMap::new(),
@@ -699,8 +922,8 @@ impl BluetoothBle {
                             .await
                             {
                                 Ok(llm_result) => {
-                                    // Look for read response in actions
-                                    let value = llm_result
+                                    // Look for a read response the model produced.
+                                    let llm_value = llm_result
                                         .raw_actions
                                         .iter()
                                         .find(|a| {
@@ -714,17 +937,30 @@ impl BluetoothBle {
                                         .and_then(|s| {
                                             let s = s.trim_start_matches("0x");
                                             hex::decode(s).ok()
-                                        })
-                                        .unwrap_or_else(|| {
-                                            // Default: return current stored value
-                                            let guard =
-                                                futures::executor::block_on(server_data.lock());
+                                        });
+
+                                    // If the model gave no value, fall back to the
+                                    // characteristic's last stored value. This used to be a
+                                    // `futures::executor::block_on(server_data.lock())` inside a
+                                    // synchronous `unwrap_or_else` closure — a blocking lock
+                                    // acquired on a tokio worker thread. That is the exact
+                                    // antipattern the root CLAUDE.md documents: on a runtime
+                                    // thread it can panic ("Cannot block the current thread from
+                                    // within a runtime"), and the panic is swallowed by the
+                                    // `tokio::spawn` running this loop, so the server would look
+                                    // healthy while the read died. We are already on the async
+                                    // path here, so the lock is simply `.await`ed.
+                                    let value = match llm_value {
+                                        Some(v) => v,
+                                        None => {
+                                            let guard = server_data.lock().await;
                                             guard
                                                 .characteristics
                                                 .get(&char_uuid_str)
                                                 .map(|c| c.current_value.clone())
                                                 .unwrap_or_default()
-                                        });
+                                        }
+                                    };
 
                                     let _ = responder.send(ReadRequestResponse {
                                         value,
