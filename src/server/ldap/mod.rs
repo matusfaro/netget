@@ -22,15 +22,16 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
-use crate::console_error;
 #[cfg(feature = "ldap")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "ldap")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "ldap")]
 use crate::llm::ActionResult;
+#[cfg(feature = "ldap")]
+use crate::logging::emit::Log;
 #[cfg(feature = "ldap")]
 use crate::protocol::Event;
 #[cfg(feature = "ldap")]
@@ -59,8 +60,10 @@ impl LdapServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("LDAP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] LDAP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!(
+            "LDAP server (action-based) listening on {}",
+            local_addr
+        ));
 
         let protocol = Arc::new(LdapProtocol::new());
 
@@ -72,9 +75,8 @@ impl LdapServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await,
                         );
-                        debug!("LDAP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!(
-                            "→ LDAP connection {} from {}",
+                        Log::new(Some(&status_tx)).info(format!(
+                            "LDAP connection {} from {}",
                             connection_id, remote_addr
                         ));
 
@@ -98,18 +100,17 @@ impl LdapServer {
 
                             // Handle LDAP session
                             if let Err(e) = session.handle().await {
-                                error!("LDAP session error: {}", e);
-                                let _ =
-                                    status_clone.send(format!("[ERROR] LDAP session error: {}", e));
+                                Log::new(Some(&status_clone))
+                                    .error(format!("LDAP session error: {}", e));
                             }
 
-                            info!("LDAP connection {} closed", connection_id);
-                            let _ = status_clone
-                                .send(format!("✗ LDAP connection {} closed", connection_id));
+                            Log::new(Some(&status_clone))
+                                .info(format!("LDAP connection {} closed", connection_id));
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept LDAP connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept LDAP connection: {}", e));
                         break;
                     }
                 }
@@ -159,10 +160,7 @@ impl LdapSession {
                     Ok(Some(len)) => len,
                     Ok(None) => break, // need more bytes
                     Err(e) => {
-                        error!("LDAP framing error: {}", e);
-                        let _ = self
-                            .status_tx
-                            .send(format!("[ERROR] LDAP framing error: {}", e));
+                        Log::new(Some(&self.status_tx)).error(format!("LDAP framing error: {}", e));
                         return Ok(());
                     }
                 };
@@ -173,10 +171,7 @@ impl LdapSession {
                 let step = match self.handle_message(&message).await {
                     Ok(step) => step,
                     Err(e) => {
-                        error!("LDAP parse error: {}", e);
-                        let _ = self
-                            .status_tx
-                            .send(format!("[ERROR] LDAP parse error: {}", e));
+                        Log::new(Some(&self.status_tx)).error(format!("LDAP parse error: {}", e));
                         return Ok(());
                     }
                 };
@@ -188,10 +183,11 @@ impl LdapSession {
                 };
 
                 if let Some(response) = response {
-                    trace!("LDAP sending {} bytes: {:02x?}", response.len(), response);
-                    let _ = self
-                        .status_tx
-                        .send(format!("[TRACE] LDAP sending {} bytes", response.len()));
+                    Log::new(Some(&self.status_tx)).trace(format!(
+                        "LDAP sending {} bytes: {:02x?}",
+                        response.len(),
+                        response
+                    ));
                     self.stream.write_all(&response).await?;
                     self.stream.flush().await?;
                 }
@@ -212,16 +208,11 @@ impl LdapSession {
                 Ok(0) => break, // Connection closed
                 Ok(n) => n,
                 Err(e) => {
-                    error!("LDAP read error: {}", e);
-                    let _ = self
-                        .status_tx
-                        .send(format!("[ERROR] LDAP read error: {}", e));
+                    Log::new(Some(&self.status_tx)).error(format!("LDAP read error: {}", e));
                     break;
                 }
             };
-            let _ = self
-                .status_tx
-                .send(format!("[TRACE] LDAP received {} bytes", n));
+            Log::new(Some(&self.status_tx)).trace(format!("LDAP received {} bytes", n));
             buffer.extend_from_slice(&chunk[..n]);
         }
 
@@ -264,11 +255,8 @@ impl LdapSession {
             OP_DELETE_REQUEST => self.handle_delete_request(msg_id, op.value).await,
             OP_UNBIND_REQUEST => self.handle_unbind_request().await,
             other => {
-                debug!("LDAP unsupported operation: 0x{:02x}", other);
-                let _ = self.status_tx.send(format!(
-                    "[DEBUG] LDAP unsupported operation: 0x{:02x}",
-                    other
-                ));
+                Log::new(Some(&self.status_tx))
+                    .debug(format!("LDAP unsupported operation: 0x{:02x}", other));
                 // Answer with the response type that matches the request where we know it, so
                 // the client's decoder does not reject the reply outright. This used to always
                 // send a BindResponse, which an ldap3 client answering a search reports as a
@@ -314,13 +302,10 @@ impl LdapSession {
         {
             Ok(result) => result,
             Err(e) => {
-                error!(
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "LDAP LLM call failed on connection {} (msg_id {}): {}",
                     self.connection_id, msg_id, e
-                );
-                let _ = self
-                    .status_tx
-                    .send(format!("[ERROR] LDAP LLM call failed: {}", e));
+                ));
 
                 // busy (51) says "retry shortly", unavailable (52) says "I am down".
                 let (code, diagnostic) = if crate::llm::is_overload_error(&e) {
@@ -332,8 +317,8 @@ impl LdapSession {
                 } else {
                     (RESULT_UNAVAILABLE, "Server unavailable")
                 };
-                let _ = self.status_tx.send(format!(
-                    "→ LDAP result {} ({}) for msg_id {}",
+                Log::new(Some(&self.status_tx)).info(format!(
+                    "LDAP result {} ({}) for msg_id {}",
                     code, diagnostic, msg_id
                 ));
                 return SessionStep::Respond(encode_ldap_result(
@@ -364,10 +349,8 @@ impl LdapSession {
             (Some(data), true) => SessionStep::RespondAndClose(data),
             (None, true) => SessionStep::Close,
             (None, false) => {
-                warn!("LDAP: LLM returned no response action, sending default");
-                let _ = self.status_tx.send(
-                    "[WARN] LDAP: LLM returned no response action, sending default".to_string(),
-                );
+                Log::new(Some(&self.status_tx))
+                    .warn("LDAP: LLM returned no response action, sending default");
                 SessionStep::Respond(default)
             }
         }
@@ -401,16 +384,13 @@ impl LdapSession {
             }
         };
 
-        debug!(
+        Log::new(Some(&self.status_tx)).debug(format!(
             "LDAP Bind request: version={}, dn={}, auth={}, password_len={}",
             version,
             dn,
             auth_type,
             password.len()
-        );
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] LDAP Bind request: dn={}", dn));
+        ));
 
         let event = Event::new(
             &LDAP_BIND_EVENT,
@@ -437,12 +417,8 @@ impl LdapSession {
             if bind_succeeded(response) {
                 self.authenticated = true;
                 self.bind_dn = Some(dn.clone());
-                info!(
+                Log::new(Some(&self.status_tx)).info(format!(
                     "LDAP connection {} authenticated as {}",
-                    self.connection_id, dn
-                );
-                let _ = self.status_tx.send(format!(
-                    "✓ LDAP connection {} authenticated as {}",
                     self.connection_id, dn
                 ));
             }
@@ -501,13 +477,10 @@ impl LdapSession {
             Err(_) => Vec::new(),
         };
 
-        debug!(
+        Log::new(Some(&self.status_tx)).debug(format!(
             "LDAP Search request: base_dn={}, scope={}, filter={}",
             base_dn, scope, filter
-        );
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] LDAP Search request: base_dn={}", base_dn));
+        ));
 
         let event = Event::new(
             &LDAP_SEARCH_EVENT,
@@ -542,14 +515,11 @@ impl LdapSession {
             Err(_) => serde_json::Map::new(),
         };
 
-        debug!(
+        Log::new(Some(&self.status_tx)).debug(format!(
             "LDAP Add request: dn={}, {} attributes",
             dn,
             attributes.len()
-        );
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] LDAP Add request: dn={}", dn));
+        ));
 
         let event = Event::new(
             &LDAP_ADD_EVENT,
@@ -611,10 +581,11 @@ impl LdapSession {
             }
         }
 
-        debug!("LDAP Modify request: dn={}, {} changes", dn, changes.len());
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] LDAP Modify request: dn={}", dn));
+        Log::new(Some(&self.status_tx)).debug(format!(
+            "LDAP Modify request: dn={}, {} changes",
+            dn,
+            changes.len()
+        ));
 
         let event = Event::new(
             &LDAP_MODIFY_EVENT,
@@ -642,10 +613,7 @@ impl LdapSession {
         // DelRequest ::= [APPLICATION 10] LDAPDN - the DN is the primitive value itself.
         let dn = ber_string(data);
 
-        debug!("LDAP Delete request: dn={}", dn);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] LDAP Delete request: dn={}", dn));
+        Log::new(Some(&self.status_tx)).debug(format!("LDAP Delete request: dn={}", dn));
 
         let event = Event::new(
             &LDAP_DELETE_EVENT,
@@ -669,11 +637,8 @@ impl LdapSession {
     }
 
     async fn handle_unbind_request(&mut self) -> Result<SessionStep> {
-        debug!("LDAP Unbind request from {}", self.connection_id);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] LDAP Unbind request from {}",
-            self.connection_id
-        ));
+        Log::new(Some(&self.status_tx))
+            .debug(format!("LDAP Unbind request from {}", self.connection_id));
 
         // Informational. RFC 4511 forbids a response to an unbind, and the event type says so
         // with .with_no_actions(), so nothing here reads the result - it exists to let script

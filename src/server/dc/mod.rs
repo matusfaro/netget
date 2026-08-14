@@ -1,21 +1,20 @@
 //! DC (Direct Connect) server implementation
 pub mod actions;
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
+use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
+use crate::server::DcProtocol;
+use crate::state::app_state::AppState;
+use actions::DC_COMMAND_RECEIVED_EVENT;
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
-
-use crate::llm::action_helper::call_llm;
-use crate::llm::actions::protocol_trait::ActionResult;
-use crate::llm::ollama_client::OllamaClient;
-use crate::protocol::Event;
-use crate::server::DcProtocol;
-use crate::state::app_state::AppState;
-use actions::DC_COMMAND_RECEIVED_EVENT;
 
 /// DC server that forwards commands to LLM
 pub struct DcServer;
@@ -32,8 +31,10 @@ impl DcServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("DC server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] DC server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!(
+            "DC server (action-based) listening on {}",
+            local_addr
+        ));
 
         let protocol = Arc::new(DcProtocol::new());
 
@@ -84,18 +85,12 @@ impl DcServer {
                             {
                                 let mut writer = write_half_arc.lock().await;
                                 if let Err(e) = writer.write_all(lock_command.as_bytes()).await {
-                                    error!("Failed to send initial Lock: {}", e);
-                                    let _ = status_clone.send(format!(
-                                        "[ERROR] Failed to send initial Lock: {}",
-                                        e
-                                    ));
+                                    Log::new(Some(&status_clone))
+                                        .error(format!("Failed to send initial Lock: {}", e));
                                     return;
                                 }
-                                debug!("DC sent {} bytes (Lock)", lock_command.len());
-                                let _ = status_clone.send(format!(
-                                    "[DEBUG] DC sent {} bytes (Lock)",
-                                    lock_command.len()
-                                ));
+                                Log::new(Some(&status_clone))
+                                    .debug(format!("DC sent {} bytes (Lock)", lock_command.len()));
 
                                 // Update stats
                                 state_clone
@@ -130,11 +125,12 @@ impl DcServer {
                                                 match String::from_utf8(command_bytes.clone()) {
                                                     Ok(s) => s,
                                                     Err(e) => {
-                                                        error!("DC received non-UTF8 data: {}", e);
-                                                        let _ = status_clone.send(format!(
-                                                            "[ERROR] DC received non-UTF8 data: {}",
-                                                            e
-                                                        ));
+                                                        Log::new(Some(&status_clone)).warn(
+                                                            format!(
+                                                                "DC received non-UTF8 data: {}",
+                                                                e
+                                                            ),
+                                                        );
                                                         continue;
                                                     }
                                                 };
@@ -142,26 +138,17 @@ impl DcServer {
                                             // Remove trailing pipe
                                             let command = command_str.trim_end_matches('|');
 
-                                            // DEBUG: Log summary with text preview
+                                            // Byte-count summary and full command are FileOnly.
                                             let preview =
                                                 crate::utils::truncate_for_log(command, 100);
-                                            debug!(
+                                            let log = Log::new(Some(&status_clone));
+                                            log.debug(format!(
                                                 "DC received {} bytes on connection {}: {}",
                                                 command_bytes.len(),
                                                 connection_id,
                                                 preview
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] DC received {} bytes on connection {}: {}",
-                                                command_bytes.len(),
-                                                connection_id,
-                                                preview
                                             ));
-
-                                            // TRACE: Log full command
-                                            trace!("DC command: {:?}", command);
-                                            let _ = status_clone
-                                                .send(format!("[TRACE] DC command: {:?}", command));
+                                            log.trace(format!("DC command: {:?}", command));
 
                                             // Update receive stats
                                             state_clone
@@ -201,12 +188,8 @@ impl DcServer {
                                                 }),
                                             );
 
-                                            debug!(
+                                            Log::new(Some(&status_clone)).debug(format!(
                                                 "DC calling LLM for connection {}",
-                                                connection_id
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] DC calling LLM for connection {}",
                                                 connection_id
                                             ));
 
@@ -222,18 +205,13 @@ impl DcServer {
 
                                             match result {
                                                 Ok(execution_result) => {
+                                                    let log = Log::new(Some(&status_clone));
                                                     for message in &execution_result.messages {
-                                                        info!("{}", message);
-                                                        let _ = status_clone
-                                                            .send(format!("[INFO] {}", message));
+                                                        log.info(format!("{}", message));
                                                     }
 
-                                                    debug!(
+                                                    log.debug(format!(
                                                         "DC got {} protocol results",
-                                                        execution_result.protocol_results.len()
-                                                    );
-                                                    let _ = status_clone.send(format!(
-                                                        "[DEBUG] DC got {} protocol results",
                                                         execution_result.protocol_results.len()
                                                     ));
 
@@ -247,30 +225,22 @@ impl DcServer {
                                                                 if let Err(e) =
                                                                     write.write_all(&data).await
                                                                 {
-                                                                    error!("Failed to write DC response: {}", e);
-                                                                    let _ = status_clone.send(format!("[ERROR] Failed to write DC response: {}", e));
+                                                                    log.error(format!("Failed to write DC response: {}", e));
                                                                     break;
                                                                 }
                                                                 let _ = write.flush().await;
 
-                                                                debug!("DC sent {} bytes on connection {}", data.len(), connection_id);
-                                                                let _ = status_clone.send(format!("[DEBUG] DC sent {} bytes on connection {}", data.len(), connection_id));
-
-                                                                trace!(
+                                                                log.debug(format!("DC sent {} bytes on connection {}", data.len(), connection_id));
+                                                                log.trace(format!(
                                                                     "DC sent data: {:?}",
-                                                                    String::from_utf8_lossy(&data)
-                                                                );
-                                                                let _ = status_clone.send(format!(
-                                                                    "[TRACE] DC sent data: {:?}",
                                                                     String::from_utf8_lossy(&data)
                                                                 ));
                                                             }
                                                             ActionResult::CloseConnection => {
-                                                                debug!(
+                                                                log.debug(format!(
                                                                     "DC closing connection {}",
                                                                     connection_id
-                                                                );
-                                                                let _ = status_clone.send(format!("[DEBUG] DC closing connection {}", connection_id));
+                                                                ));
                                                                 break;
                                                             }
                                                             _ => {}
@@ -278,32 +248,21 @@ impl DcServer {
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    error!("LLM call failed: {}", e);
-                                                    let _ = status_clone.send(format!(
-                                                        "[ERROR] LLM call failed: {}",
-                                                        e
-                                                    ));
+                                                    Log::new(Some(&status_clone))
+                                                        .warn(format!("LLM call failed: {}", e));
                                                 }
                                             }
                                         }
                                     }
                                     Err(e) => {
                                         if e.kind() == std::io::ErrorKind::UnexpectedEof {
-                                            debug!(
+                                            Log::new(Some(&status_clone)).debug(format!(
                                                 "DC connection {} closed by client",
-                                                connection_id
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] DC connection {} closed by client",
                                                 connection_id
                                             ));
                                         } else {
-                                            error!(
+                                            Log::new(Some(&status_clone)).error(format!(
                                                 "DC read error on connection {}: {}",
-                                                connection_id, e
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[ERROR] DC read error on connection {}: {}",
                                                 connection_id, e
                                             ));
                                         }
@@ -321,7 +280,8 @@ impl DcServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept DC connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept DC connection: {}", e));
                     }
                 }
             }

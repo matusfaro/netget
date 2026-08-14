@@ -1,21 +1,19 @@
 //! XMPP server implementation
 pub mod actions;
 
+use crate::llm::action_helper::call_llm;
+use crate::llm::actions::protocol_trait::ActionResult;
+use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
+use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
+use crate::state::app_state::AppState;
+use actions::{XmppProtocol, XMPP_DATA_RECEIVED_EVENT};
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
-
-use crate::console_error;
-use crate::llm::action_helper::call_llm;
-use crate::llm::actions::protocol_trait::ActionResult;
-use crate::llm::ollama_client::OllamaClient;
-use crate::protocol::Event;
-use crate::state::app_state::AppState;
-use actions::{XmppProtocol, XMPP_DATA_RECEIVED_EVENT};
 
 /// Upper bound on the un-consumed XML a single connection may accumulate.
 ///
@@ -40,12 +38,8 @@ impl XmppServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!(
+        Log::new(Some(&status_tx)).info(format!(
             "XMPP server (action-based) listening on {} for domain {}",
-            local_addr, domain
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] XMPP server listening on {} (domain {})",
             local_addr, domain
         ));
 
@@ -64,9 +58,8 @@ impl XmppServer {
                         let status_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
 
-                        debug!("XMPP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_clone.send(format!(
-                            "[DEBUG] XMPP connection {} from {}",
+                        Log::new(Some(&status_clone)).debug(format!(
+                            "XMPP connection {} from {}",
                             connection_id, remote_addr
                         ));
 
@@ -106,12 +99,8 @@ impl XmppServer {
                             loop {
                                 match read_half.read(&mut temp_buf).await {
                                     Ok(0) => {
-                                        debug!(
+                                        Log::new(Some(&status_clone)).debug(format!(
                                             "XMPP connection {} closed by client",
-                                            connection_id
-                                        );
-                                        let _ = status_clone.send(format!(
-                                            "[DEBUG] XMPP connection {} closed",
                                             connection_id
                                         ));
                                         break;
@@ -120,36 +109,26 @@ impl XmppServer {
                                         buffer.extend_from_slice(&temp_buf[..n]);
 
                                         if buffer.len() > MAX_XMPP_BUFFER_BYTES {
-                                            error!(
+                                            Log::new(Some(&status_clone)).error(format!(
                                                 "XMPP connection {} buffered {} bytes without \
                                                  completing a stanza (limit {}), closing",
                                                 connection_id,
                                                 buffer.len(),
                                                 MAX_XMPP_BUFFER_BYTES
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[ERROR] XMPP connection {} exceeded {} byte \
-                                                 buffer limit, closing",
-                                                connection_id, MAX_XMPP_BUFFER_BYTES
                                             ));
                                             break;
                                         }
 
-                                        // DEBUG: Log summary
-                                        debug!(
+                                        // Byte-count summary and full XML are FileOnly.
+                                        let log = Log::new(Some(&status_clone));
+                                        log.debug(format!(
                                             "XMPP received {} bytes on connection {}",
                                             n, connection_id
-                                        );
-                                        let _ = status_clone.send(format!(
-                                            "[DEBUG] XMPP received {} bytes on connection {}",
-                                            n, connection_id
                                         ));
-
-                                        // TRACE: Log full XML data
-                                        let xml_str = String::from_utf8_lossy(&buffer);
-                                        trace!("XMPP data (XML): {}", xml_str);
-                                        let _ = status_clone
-                                            .send(format!("[TRACE] XMPP data (XML): {}", xml_str));
+                                        log.trace(format!(
+                                            "XMPP data (XML): {}",
+                                            String::from_utf8_lossy(&buffer)
+                                        ));
 
                                         // Try to parse XML stanzas from buffer
                                         // For simplicity, we'll pass the entire buffer to LLM for parsing
@@ -165,9 +144,8 @@ impl XmppServer {
                                             }),
                                         );
 
-                                        debug!("XMPP calling LLM for connection {}", connection_id);
-                                        let _ = status_clone.send(format!(
-                                            "[DEBUG] XMPP calling LLM for connection {}",
+                                        log.debug(format!(
+                                            "XMPP calling LLM for connection {}",
                                             connection_id
                                         ));
 
@@ -183,17 +161,11 @@ impl XmppServer {
                                         {
                                             Ok(execution_result) => {
                                                 for message in &execution_result.messages {
-                                                    info!("{}", message);
-                                                    let _ = status_clone
-                                                        .send(format!("[INFO] {}", message));
+                                                    log.info(format!("{}", message));
                                                 }
 
-                                                debug!(
+                                                log.debug(format!(
                                                     "XMPP got {} protocol results",
-                                                    execution_result.protocol_results.len()
-                                                );
-                                                let _ = status_clone.send(format!(
-                                                    "[DEBUG] XMPP got {} protocol results",
                                                     execution_result.protocol_results.len()
                                                 ));
 
@@ -213,14 +185,10 @@ impl XmppServer {
                                                             let _ = write.flush().await;
                                                             drop(write);
 
-                                                            // DEBUG: Log summary
-                                                            debug!("XMPP sent {} bytes on connection {}", data.len(), connection_id);
-                                                            let _ = status_clone.send(format!("[DEBUG] XMPP sent {} bytes on connection {}", data.len(), connection_id));
-
-                                                            // TRACE: Log full XML
-                                                            trace!("XMPP sent (XML): {}", xml_str);
-                                                            let _ = status_clone.send(format!(
-                                                                "[TRACE] XMPP sent (XML): {}",
+                                                            // Byte-count summary and full XML FileOnly.
+                                                            log.debug(format!("XMPP sent {} bytes on connection {}", data.len(), connection_id));
+                                                            log.trace(format!(
+                                                                "XMPP sent (XML): {}",
                                                                 xml_str
                                                             ));
                                                         }
@@ -230,8 +198,7 @@ impl XmppServer {
                                                         ActionResult::WaitForMore => {
                                                             // Keep buffer and wait for more data
                                                             wait_for_more = true;
-                                                            debug!("XMPP waiting for more data");
-                                                            let _ = status_clone.send("[DEBUG] XMPP waiting for more data".to_string());
+                                                            log.debug("XMPP waiting for more data");
                                                         }
                                                         _ => {}
                                                     }
@@ -254,19 +221,15 @@ impl XmppServer {
                                             Err(e) => {
                                                 // Keep the buffer: the model never saw this
                                                 // data, so dropping it would lose a stanza.
-                                                error!("XMPP LLM call failed: {}", e);
-                                                let _ = status_clone
-                                                    .send(format!("[ERROR] XMPP LLM error: {}", e));
+                                                log.warn(format!("XMPP LLM call failed: {}", e));
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        error!(
+                                        Log::new(Some(&status_clone)).error(format!(
                                             "XMPP read error on connection {}: {}",
                                             connection_id, e
-                                        );
-                                        let _ = status_clone
-                                            .send(format!("[ERROR] XMPP read error: {}", e));
+                                        ));
                                         break;
                                     }
                                 }
@@ -280,7 +243,8 @@ impl XmppServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept XMPP connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept XMPP connection: {}", e));
                         break;
                     }
                 }
