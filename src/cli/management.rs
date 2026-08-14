@@ -700,3 +700,621 @@ fn build_task(
         failure_count: 0,
     }
 }
+
+// ===========================================================================
+// Interactive form (TUI `/create` and `/edit`)
+// ===========================================================================
+//
+// The interactive create/update form walks one field at a time: the operator is
+// shown a field's name/type/required flag/help, the footer input is prefilled
+// with the field's default (create) or current value (update), they edit it, and
+// Enter advances to the next field. On the last field the collected values are
+// assembled into a [`ServerForm`]/[`ClientForm`] and handed to the existing
+// `.create()` / [`update_server`] / [`update_client`] executors — no create or
+// update logic is duplicated here, and startup params are validated by those
+// executors exactly as any other caller's would be.
+//
+// The field *model*, prefill, and the collected-values → form assembly all live
+// here (next to `ServerForm`/`ClientForm`, and unit-testable without a live TUI);
+// `rolling_tui` owns only the keystroke plumbing that drives it.
+
+/// Which operation an [`InteractiveForm`] will perform on submit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FormTarget {
+    /// Create a new server of `protocol`.
+    CreateServer,
+    /// Create a new client of `protocol`.
+    CreateClient,
+    /// Update the running server with this unified id.
+    UpdateServer(u32),
+    /// Update the running client with this unified id.
+    UpdateClient(u32),
+}
+
+/// How a filled-in [`FormField`] maps onto a `ServerForm`/`ClientForm`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FieldTarget {
+    Port,
+    RemoteAddr,
+    Instruction,
+    Memory,
+    EventHandlers,
+    FeedbackInstructions,
+    /// A protocol-declared startup parameter, carrying its declared type hint so
+    /// the entered text can be coerced to the right JSON shape.
+    StartupParam {
+        type_hint: String,
+    },
+}
+
+/// One editable field in an interactive form.
+#[derive(Debug, Clone)]
+pub struct FormField {
+    /// Field name — a common field label (`port`, `instruction`, …) or a startup
+    /// parameter's declared key.
+    pub name: String,
+    /// Type hint shown to the operator (`u16`, `string`, `json`, the declared
+    /// param type, …).
+    pub type_label: String,
+    /// Whether the field is required (only startup params are ever required; the
+    /// common fields all fall back to protocol defaults / current values).
+    pub required: bool,
+    /// Human-readable help.
+    pub help: String,
+    /// Text the footer input is prefilled with when this field becomes active.
+    pub prefill: String,
+    /// The value the operator submitted (trimmed). `None` until submitted; an
+    /// empty string means "unspecified" — protocol default on create, unchanged
+    /// on update.
+    pub value: Option<String>,
+    target: FieldTarget,
+}
+
+/// An in-progress interactive create/update form.
+#[derive(Debug, Clone)]
+pub struct InteractiveForm {
+    /// What the form will do on submit.
+    pub target: FormTarget,
+    /// The protocol name (immutable — not itself an editable field).
+    pub protocol: String,
+    /// The ordered fields.
+    pub fields: Vec<FormField>,
+    /// Index of the field currently being edited.
+    pub index: usize,
+}
+
+/// Current server config used to prefill an update form. A plain snapshot so the
+/// form builder stays decoupled from the live state types (and unit-testable).
+#[derive(Debug, Clone, Default)]
+pub struct ServerPrefill {
+    pub instruction: String,
+    pub memory: String,
+    pub port: u16,
+    pub startup_params: Option<Value>,
+    pub event_handlers: Option<Vec<Value>>,
+    pub feedback_instructions: Option<String>,
+}
+
+/// Current client config used to prefill an update form.
+#[derive(Debug, Clone, Default)]
+pub struct ClientPrefill {
+    pub remote_addr: String,
+    pub instruction: String,
+    pub memory: String,
+    pub startup_params: Option<Value>,
+    pub event_handlers: Option<Vec<Value>>,
+    pub feedback_instructions: Option<String>,
+}
+
+/// Render a startup-param value already present in a config back to the text an
+/// operator would edit: a JSON string yields its bare contents, everything else
+/// its compact JSON form.
+fn param_value_to_prefill(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+/// Turn a protocol's declared startup parameters into form fields, prefilling from
+/// `current` (an update's existing `startup_params`) when present, else from the
+/// declared example for a required param (so a required field is not left blank).
+fn startup_param_fields(schema: &[ParameterDefinition], current: Option<&Value>) -> Vec<FormField> {
+    let current_obj = current.and_then(|v| v.as_object());
+    schema
+        .iter()
+        .map(|p| {
+            let prefill = current_obj
+                .and_then(|o| o.get(&p.name))
+                .map(param_value_to_prefill)
+                .unwrap_or_default();
+            FormField {
+                name: p.name.clone(),
+                type_label: p.type_hint.clone(),
+                required: p.required,
+                help: p.description.clone(),
+                prefill,
+                value: None,
+                target: FieldTarget::StartupParam {
+                    type_hint: p.type_hint.clone(),
+                },
+            }
+        })
+        .collect()
+}
+
+fn field(name: &str, ty: &str, help: &str, prefill: String, target: FieldTarget) -> FormField {
+    FormField {
+        name: name.to_string(),
+        type_label: ty.to_string(),
+        required: false,
+        help: help.to_string(),
+        prefill,
+        value: None,
+        target,
+    }
+}
+
+/// Serialize existing event handlers to the compact JSON array text an operator
+/// edits. Empty / absent handlers prefill as empty.
+fn handlers_to_prefill(handlers: &Option<Vec<Value>>) -> String {
+    match handlers {
+        Some(h) if !h.is_empty() => serde_json::to_string(h).unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+impl InteractiveForm {
+    /// Build a create form for a server protocol from its declared startup params.
+    pub fn create_server(protocol: &str, schema: &[ParameterDefinition]) -> Self {
+        let mut fields = common_server_fields(&ServerPrefill::default(), false);
+        fields.extend(startup_param_fields(schema, None));
+        Self {
+            target: FormTarget::CreateServer,
+            protocol: protocol.to_string(),
+            fields,
+            index: 0,
+        }
+    }
+
+    /// Build a create form for a client protocol.
+    pub fn create_client(protocol: &str, schema: &[ParameterDefinition]) -> Self {
+        let mut fields = common_client_fields(&ClientPrefill::default(), false);
+        fields.extend(startup_param_fields(schema, None));
+        Self {
+            target: FormTarget::CreateClient,
+            protocol: protocol.to_string(),
+            fields,
+            index: 0,
+        }
+    }
+
+    /// Build an update form for a running server, prefilled from its current
+    /// config plus the current values of any declared startup params.
+    pub fn update_server(
+        id: u32,
+        protocol: &str,
+        schema: &[ParameterDefinition],
+        current: &ServerPrefill,
+    ) -> Self {
+        let mut fields = common_server_fields(current, true);
+        fields.extend(startup_param_fields(
+            schema,
+            current.startup_params.as_ref(),
+        ));
+        Self {
+            target: FormTarget::UpdateServer(id),
+            protocol: protocol.to_string(),
+            fields,
+            index: 0,
+        }
+    }
+
+    /// Build an update form for a running client.
+    pub fn update_client(
+        id: u32,
+        protocol: &str,
+        schema: &[ParameterDefinition],
+        current: &ClientPrefill,
+    ) -> Self {
+        let mut fields = common_client_fields(current, true);
+        fields.extend(startup_param_fields(
+            schema,
+            current.startup_params.as_ref(),
+        ));
+        Self {
+            target: FormTarget::UpdateClient(id),
+            protocol: protocol.to_string(),
+            fields,
+            index: 0,
+        }
+    }
+
+    /// The field currently being edited, if the form is not yet complete.
+    pub fn current_field(&self) -> Option<&FormField> {
+        self.fields.get(self.index)
+    }
+
+    /// A one-line prompt describing the current field.
+    pub fn prompt(&self) -> String {
+        match self.current_field() {
+            None => "Form complete.".to_string(),
+            Some(f) => {
+                let req = if f.required { ", required" } else { "" };
+                let hint = if f.required {
+                    "  (required)"
+                } else if matches!(
+                    self.target,
+                    FormTarget::CreateServer | FormTarget::CreateClient
+                ) {
+                    "  (empty = protocol default)"
+                } else {
+                    "  (empty = keep current)"
+                };
+                format!(
+                    "Field {}/{}: {} ({}{}) — {}{}",
+                    self.index + 1,
+                    self.fields.len(),
+                    f.name,
+                    f.type_label,
+                    req,
+                    f.help,
+                    hint,
+                )
+            }
+        }
+    }
+
+    /// A short title for the whole form, e.g. `Create http server`.
+    pub fn title(&self) -> String {
+        match self.target {
+            FormTarget::CreateServer => format!("Create {} server", self.protocol),
+            FormTarget::CreateClient => format!("Create {} client", self.protocol),
+            FormTarget::UpdateServer(id) => {
+                format!("Update {} server #{}", self.protocol, id)
+            }
+            FormTarget::UpdateClient(id) => {
+                format!("Update {} client #{}", self.protocol, id)
+            }
+        }
+    }
+
+    /// The prefill text for the current field (what the input should show).
+    pub fn current_prefill(&self) -> String {
+        self.current_field()
+            .map(|f| f.prefill.clone())
+            .unwrap_or_default()
+    }
+
+    /// Record `raw` as the current field's value (trimmed) and advance.
+    pub fn submit_current(&mut self, raw: &str) {
+        if let Some(f) = self.fields.get_mut(self.index) {
+            f.value = Some(raw.trim().to_string());
+        }
+        self.index += 1;
+    }
+
+    /// Directly set a field's value by name (used by tests and any non-sequential
+    /// caller). Returns false if no such field.
+    pub fn set_field_value(&mut self, name: &str, value: &str) -> bool {
+        if let Some(f) = self.fields.iter_mut().find(|f| f.name == name) {
+            f.value = Some(value.trim().to_string());
+            true
+        } else {
+            false
+        }
+    }
+
+    /// True once every field has been submitted.
+    pub fn is_complete(&self) -> bool {
+        self.index >= self.fields.len()
+    }
+
+    fn is_client(&self) -> bool {
+        matches!(
+            self.target,
+            FormTarget::CreateClient | FormTarget::UpdateClient(_)
+        )
+    }
+
+    fn is_update(&self) -> bool {
+        matches!(
+            self.target,
+            FormTarget::UpdateServer(_) | FormTarget::UpdateClient(_)
+        )
+    }
+
+    /// The value a field contributes to the built form, or `None` if it should be
+    /// left out.
+    ///
+    /// - **Create**: a non-empty submitted value is used; empty means "use the
+    ///   protocol default".
+    /// - **Update**: a non-empty value that *differs from the prefill* is used;
+    ///   an unchanged (equal to prefill) or empty value means "leave as-is". This
+    ///   is what keeps an update that only touches, say, the instruction from
+    ///   re-submitting the unchanged port and forcing a needless restart.
+    fn effective_value<'a>(&self, f: &'a FormField) -> Option<&'a str> {
+        let trimmed = f.value.as_deref().unwrap_or("").trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if self.is_update() && trimmed == f.prefill.trim() {
+            return None;
+        }
+        Some(trimmed)
+    }
+
+    /// Assemble the collected field values into a [`ServerForm`]. Errors (naming
+    /// the field) on an unparseable value; the executors do the schema validation.
+    pub fn into_server_form(&self) -> Result<ServerForm> {
+        if self.is_client() {
+            anyhow::bail!("into_server_form called on a client form");
+        }
+        let mut form = ServerForm {
+            protocol: self.protocol.clone(),
+            ..Default::default()
+        };
+        let mut params = serde_json::Map::new();
+        for f in &self.fields {
+            let v = match self.effective_value(f) {
+                Some(v) => v,
+                None => continue, // unspecified (create) / unchanged (update)
+            };
+            apply_common_field(f, v, &mut params, |t, val| match t {
+                FieldTarget::Port => {
+                    form.port = Some(parse_port(val, &f.name)?);
+                    Ok(())
+                }
+                FieldTarget::Instruction => {
+                    form.instruction = Some(val.to_string());
+                    Ok(())
+                }
+                FieldTarget::Memory => {
+                    form.initial_memory = Some(val.to_string());
+                    Ok(())
+                }
+                FieldTarget::EventHandlers => {
+                    form.event_handlers = Some(parse_handlers(val)?);
+                    Ok(())
+                }
+                FieldTarget::FeedbackInstructions => {
+                    form.feedback_instructions = Some(val.to_string());
+                    Ok(())
+                }
+                FieldTarget::RemoteAddr => Ok(()), // not a server field
+                FieldTarget::StartupParam { .. } => unreachable!(),
+            })?;
+        }
+        if !params.is_empty() {
+            form.startup_params = Some(Value::Object(params));
+        }
+        Ok(form)
+    }
+
+    /// Assemble the collected field values into a [`ClientForm`].
+    pub fn into_client_form(&self) -> Result<ClientForm> {
+        if !self.is_client() {
+            anyhow::bail!("into_client_form called on a server form");
+        }
+        let mut form = ClientForm {
+            protocol: self.protocol.clone(),
+            ..Default::default()
+        };
+        let mut params = serde_json::Map::new();
+        for f in &self.fields {
+            let v = match self.effective_value(f) {
+                Some(v) => v,
+                None => continue,
+            };
+            apply_common_field(f, v, &mut params, |t, val| match t {
+                FieldTarget::RemoteAddr => {
+                    form.remote_addr = Some(val.to_string());
+                    Ok(())
+                }
+                FieldTarget::Instruction => {
+                    form.instruction = Some(val.to_string());
+                    Ok(())
+                }
+                FieldTarget::Memory => {
+                    form.initial_memory = Some(val.to_string());
+                    Ok(())
+                }
+                FieldTarget::EventHandlers => {
+                    form.event_handlers = Some(parse_handlers(val)?);
+                    Ok(())
+                }
+                FieldTarget::FeedbackInstructions => {
+                    form.feedback_instructions = Some(val.to_string());
+                    Ok(())
+                }
+                FieldTarget::Port => Ok(()), // not a client field
+                FieldTarget::StartupParam { .. } => unreachable!(),
+            })?;
+        }
+        if !params.is_empty() {
+            form.startup_params = Some(Value::Object(params));
+        }
+        Ok(form)
+    }
+}
+
+/// The common (non-startup-param) fields of a server form, prefilled from
+/// `current` when `update` is true.
+fn common_server_fields(current: &ServerPrefill, update: bool) -> Vec<FormField> {
+    let (port, instr, mem, fb) = if update {
+        (
+            current.port.to_string(),
+            current.instruction.clone(),
+            current.memory.clone(),
+            current.feedback_instructions.clone().unwrap_or_default(),
+        )
+    } else {
+        ("0".to_string(), String::new(), String::new(), String::new())
+    };
+    vec![
+        field(
+            "port",
+            "u16",
+            "Port to bind (0 = OS-assigns a free port)",
+            port,
+            FieldTarget::Port,
+        ),
+        field(
+            "instruction",
+            "string",
+            "Natural-language LLM instruction (fallback handling path)",
+            instr,
+            FieldTarget::Instruction,
+        ),
+        field(
+            "initial_memory",
+            "string",
+            "Seed the instance's LLM memory",
+            mem,
+            FieldTarget::Memory,
+        ),
+        field(
+            "event_handlers",
+            "json array",
+            "Deterministic handlers, e.g. [{\"event_pattern\":\"http_request\",\"handler\":{\"type\":\"static\",...}}]",
+            if update { handlers_to_prefill(&current.event_handlers) } else { String::new() },
+            FieldTarget::EventHandlers,
+        ),
+        field(
+            "feedback_instructions",
+            "string",
+            "Instructions for the automatic feedback loop",
+            fb,
+            FieldTarget::FeedbackInstructions,
+        ),
+    ]
+}
+
+/// The common fields of a client form.
+fn common_client_fields(current: &ClientPrefill, update: bool) -> Vec<FormField> {
+    let (instr, mem, fb) = if update {
+        (
+            current.instruction.clone(),
+            current.memory.clone(),
+            current.feedback_instructions.clone().unwrap_or_default(),
+        )
+    } else {
+        (String::new(), String::new(), String::new())
+    };
+    let mut remote = field(
+        "remote_addr",
+        "string",
+        "Remote server address, host:port",
+        if update {
+            current.remote_addr.clone()
+        } else {
+            String::new()
+        },
+        FieldTarget::RemoteAddr,
+    );
+    // remote_addr is the one required common field on create.
+    remote.required = !update;
+    vec![
+        remote,
+        field(
+            "instruction",
+            "string",
+            "Natural-language LLM instruction (fallback handling path)",
+            instr,
+            FieldTarget::Instruction,
+        ),
+        field(
+            "initial_memory",
+            "string",
+            "Seed the instance's LLM memory",
+            mem,
+            FieldTarget::Memory,
+        ),
+        field(
+            "event_handlers",
+            "json array",
+            "Deterministic handlers (JSON array)",
+            if update {
+                handlers_to_prefill(&current.event_handlers)
+            } else {
+                String::new()
+            },
+            FieldTarget::EventHandlers,
+        ),
+        field(
+            "feedback_instructions",
+            "string",
+            "Instructions for the automatic feedback loop",
+            fb,
+            FieldTarget::FeedbackInstructions,
+        ),
+    ]
+}
+
+/// Dispatch a non-empty field value: startup params are coerced and inserted into
+/// `params`; everything else is handed to `set_common` (which writes the matching
+/// form field).
+fn apply_common_field(
+    f: &FormField,
+    v: &str,
+    params: &mut serde_json::Map<String, Value>,
+    set_common: impl FnOnce(&FieldTarget, &str) -> Result<()>,
+) -> Result<()> {
+    if let FieldTarget::StartupParam { type_hint } = &f.target {
+        params.insert(f.name.clone(), coerce_param_value(v, type_hint, &f.name)?);
+        Ok(())
+    } else {
+        set_common(&f.target, v)
+    }
+}
+
+fn parse_port(v: &str, name: &str) -> Result<u16> {
+    v.parse::<u16>().map_err(|_| {
+        anyhow::anyhow!(
+            "field '{}' must be a port number 0-65535, got '{}'",
+            name,
+            v
+        )
+    })
+}
+
+fn parse_handlers(v: &str) -> Result<Vec<Value>> {
+    let parsed: Value = serde_json::from_str(v)
+        .map_err(|e| anyhow::anyhow!("field 'event_handlers' is not valid JSON: {}", e))?;
+    parsed
+        .as_array()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("field 'event_handlers' must be a JSON array"))
+}
+
+/// Coerce entered text to a JSON value according to the declared type hint.
+/// Numbers/booleans/objects/arrays are parsed; anything else stays a string. On a
+/// declared numeric/boolean field that fails to parse, error (naming the field)
+/// rather than silently shipping a string the schema will reject.
+fn coerce_param_value(raw: &str, type_hint: &str, name: &str) -> Result<Value> {
+    let hint = type_hint.to_lowercase();
+    if hint.contains("bool") {
+        return raw
+            .parse::<bool>()
+            .map(Value::Bool)
+            .map_err(|_| anyhow::anyhow!("field '{}' must be true/false, got '{}'", name, raw));
+    }
+    if hint.contains("int")
+        || hint.contains("number")
+        || hint.contains("u16")
+        || hint.contains("u32")
+    {
+        if let Ok(n) = raw.parse::<i64>() {
+            return Ok(Value::from(n));
+        }
+        if let Ok(fl) = raw.parse::<f64>() {
+            return Ok(Value::from(fl));
+        }
+        anyhow::bail!("field '{}' must be a number, got '{}'", name, raw);
+    }
+    if hint.contains("object") || hint.contains("array") || hint.contains("json") {
+        return serde_json::from_str(raw)
+            .map_err(|e| anyhow::anyhow!("field '{}' must be valid JSON: {}", name, e));
+    }
+    Ok(Value::String(raw.to_string()))
+}

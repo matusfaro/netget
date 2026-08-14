@@ -1279,6 +1279,31 @@ async fn handle_key_event(
         }
     }
 
+    // If an interactive create/update form is active, drive it: plain Enter submits
+    // the current field and advances, Esc cancels. Every other key falls through to
+    // the normal input-editing keys below, so the operator edits the prefilled value
+    // exactly as they would any input line.
+    if app.active_form.is_some() {
+        match (key_code, modifiers) {
+            (KeyCode::Enter, m)
+                if !m.contains(KeyModifiers::SHIFT)
+                    && !m.contains(KeyModifiers::CONTROL)
+                    && !m.contains(KeyModifiers::ALT) =>
+            {
+                advance_form(app, state, event_handler, footer, &palette).await?;
+                update_ui_from_state(app, state, footer).await;
+                footer.render(&mut stdout())?;
+                return Ok(false);
+            }
+            (KeyCode::Esc, _) => {
+                cancel_form(app, footer, &palette)?;
+                footer.render(&mut stdout())?;
+                return Ok(false);
+            }
+            _ => {}
+        }
+    }
+
     // Handle special keys first
     match key_code {
         // Ctrl+C to quit
@@ -1454,6 +1479,17 @@ async fn handle_key_event(
 
                 if print_echo_before {
                     print_output_line(&format!("[USER] {}", text), footer, &palette)?;
+                }
+
+                // `/create` and `/edit` open an interactive prefilled form. They are
+                // handled here (not as `UserCommand` variants) so the form's field
+                // model lives entirely in `cli::management`; once a form is active the
+                // key interception above drives it.
+                if let Some(form_start) = parse_form_start(&text) {
+                    start_form(form_start, app, state, event_handler, footer, &palette).await?;
+                    update_ui_from_state(app, state, footer).await;
+                    footer.render(&mut stdout())?;
+                    return Ok(false);
                 }
 
                 // Handle command
@@ -2699,27 +2735,27 @@ async fn handle_manage(
 
     print_output_line("", footer, palette)?;
     print_output_line(
-        "Create:  describe it in plain language, or /simple <protocol>, or",
+        "Create:  /create <protocol> [--client]   interactive prefilled form, or",
         footer,
         palette,
     )?;
     print_output_line(
-        "         /load <file> with an {\"actions\":[{\"type\":\"open_server\",...}]} form.",
+        "         describe it in plain language, /simple <protocol>, or /load <file>.",
         footer,
         palette,
     )?;
     print_output_line(
-        "Update:  /update <id> <new instruction>   (hot-applies, keeps connections)",
+        "Update:  /edit <id>   interactive form prefilled with the current config, or",
         footer,
         palette,
     )?;
     print_output_line(
-        "         or the update_server / update_client action & MCP tool for full-form",
+        "         /update <id> <new instruction>   (hot instruction change), or the",
         footer,
         palette,
     )?;
     print_output_line(
-        "         changes (event_handlers, startup_params, port, memory, tasks).",
+        "         update_server / update_client action & MCP tool for full-form changes.",
         footer,
         palette,
     )?;
@@ -2775,6 +2811,328 @@ async fn handle_update(
         footer,
         palette,
     )?;
+    Ok(())
+}
+
+// ===========================================================================
+// Interactive create/update form driving (`/create`, `/edit`)
+// ===========================================================================
+
+/// What an operator asked to open with `/create` or `/edit`.
+enum FormStart {
+    /// `/create <protocol> [--client]`
+    Create { protocol: String, is_client: bool },
+    /// `/edit <id>`
+    Edit { id: u32 },
+}
+
+/// Recognise the two form-entry slash commands. Returns `None` for anything else
+/// (so normal command parsing continues). A malformed `/edit` (non-numeric id)
+/// falls through to `None` and is reported as an unknown command.
+fn parse_form_start(text: &str) -> Option<FormStart> {
+    let t = text.trim();
+    let lower = t.to_lowercase();
+
+    if lower == "/create" || lower.starts_with("/create ") {
+        let rest = t[7..].trim();
+        let mut is_client = false;
+        let mut protocol = String::new();
+        for tok in rest.split_whitespace() {
+            match tok {
+                "--client" | "-c" | "client" => is_client = true,
+                other if protocol.is_empty() => protocol = other.to_string(),
+                _ => {}
+            }
+        }
+        return Some(FormStart::Create {
+            protocol,
+            is_client,
+        });
+    }
+
+    if lower == "/edit" || lower.starts_with("/edit ") {
+        let rest = t[5..].trim();
+        if let Ok(id) = rest.parse::<u32>() {
+            return Some(FormStart::Edit { id });
+        }
+    }
+
+    None
+}
+
+/// Replace the footer input contents with `text` (used to prefill each field).
+fn set_input_text(footer: &mut StickyFooter, text: &str) {
+    footer.input_mut().clear();
+    for c in text.chars() {
+        if c == '\n' {
+            footer.input_mut().insert_newline();
+        } else {
+            footer.input_mut().insert_char(c);
+        }
+    }
+}
+
+/// Print the form title + the first field's prompt, prefill the input, and store
+/// the form as active.
+fn begin_form(
+    app: &mut App,
+    form: crate::cli::management::InteractiveForm,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    print_output_line(
+        &format!(
+            "=== {} — Enter submits each field, Esc cancels ===",
+            form.title()
+        ),
+        footer,
+        palette,
+    )?;
+    let prompt = form.prompt();
+    let prefill = form.current_prefill();
+    app.active_form = Some(form);
+    print_output_line(&prompt, footer, palette)?;
+    set_input_text(footer, &prefill);
+    Ok(())
+}
+
+/// Open a create or update form. Create forms read the protocol's declared startup
+/// params; edit forms prefill from the running instance's current config.
+async fn start_form(
+    fs: FormStart,
+    app: &mut App,
+    state: &AppState,
+    _event_handler: &mut EventHandler,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    use crate::cli::management::{
+        client_declared_params, server_declared_params, ClientPrefill, InteractiveForm,
+        ServerPrefill,
+    };
+    use crate::state::{ClientId, ServerId};
+
+    match fs {
+        FormStart::Create {
+            protocol,
+            is_client,
+        } => {
+            if protocol.is_empty() {
+                print_output_line("Usage: /create <protocol> [--client]", footer, palette)?;
+                return Ok(());
+            }
+            let form = if is_client {
+                match client_declared_params(&protocol) {
+                    Some(schema) => InteractiveForm::create_client(&protocol, &schema),
+                    None => {
+                        print_output_line(
+                            &format!(
+                                "[ERROR] Unknown or unavailable client protocol '{}'",
+                                protocol
+                            ),
+                            footer,
+                            palette,
+                        )?;
+                        return Ok(());
+                    }
+                }
+            } else {
+                match server_declared_params(&protocol) {
+                    Some(schema) => InteractiveForm::create_server(&protocol, &schema),
+                    None => {
+                        print_output_line(
+                            &format!(
+                                "[ERROR] Unknown or unavailable server protocol '{}'",
+                                protocol
+                            ),
+                            footer,
+                            palette,
+                        )?;
+                        return Ok(());
+                    }
+                }
+            };
+            begin_form(app, form, footer, palette)?;
+        }
+        FormStart::Edit { id } => {
+            if let Some(s) = state.get_server(ServerId::new(id)).await {
+                let schema = server_declared_params(&s.protocol_name).unwrap_or_default();
+                let prefill = ServerPrefill {
+                    instruction: s.instruction.clone(),
+                    memory: s.memory.clone(),
+                    port: s.port,
+                    startup_params: s.startup_params.clone(),
+                    event_handlers: s.event_handler_config.as_ref().and_then(|c| {
+                        serde_json::to_value(&c.handlers)
+                            .ok()
+                            .and_then(|v| v.as_array().cloned())
+                    }),
+                    feedback_instructions: s.feedback_instructions.clone(),
+                };
+                let form = InteractiveForm::update_server(id, &s.protocol_name, &schema, &prefill);
+                begin_form(app, form, footer, palette)?;
+                return Ok(());
+            }
+            if let Some(c) = state.get_client(ClientId::new(id)).await {
+                let schema = client_declared_params(&c.protocol_name).unwrap_or_default();
+                let prefill = ClientPrefill {
+                    remote_addr: c.remote_addr.clone(),
+                    instruction: c.instruction.clone(),
+                    memory: c.memory.clone(),
+                    startup_params: c.startup_params.clone(),
+                    event_handlers: c.event_handler_config.as_ref().and_then(|cc| {
+                        serde_json::to_value(&cc.handlers)
+                            .ok()
+                            .and_then(|v| v.as_array().cloned())
+                    }),
+                    feedback_instructions: c.feedback_instructions.clone(),
+                };
+                let form = InteractiveForm::update_client(id, &c.protocol_name, &schema, &prefill);
+                begin_form(app, form, footer, palette)?;
+                return Ok(());
+            }
+            print_output_line(
+                &format!("No server or client found with ID #{}", id),
+                footer,
+                palette,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// Submit the current field (the footer input's text) and either advance to the
+/// next field or, when complete, build the form and run create/update.
+async fn advance_form(
+    app: &mut App,
+    state: &AppState,
+    event_handler: &mut EventHandler,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    let raw = footer.input().text();
+
+    // Refuse to advance past a required field left blank.
+    if let Some(form) = app.active_form.as_ref() {
+        if let Some(f) = form.current_field() {
+            if f.required && raw.trim().is_empty() {
+                print_output_line(
+                    &format!("[WARN] '{}' is required — please enter a value.", f.name),
+                    footer,
+                    palette,
+                )?;
+                return Ok(());
+            }
+        }
+    }
+
+    let complete = {
+        let form = app.active_form.as_mut().expect("form active");
+        form.submit_current(&raw);
+        form.is_complete()
+    };
+
+    if complete {
+        finish_form(app, state, event_handler, footer, palette).await?;
+    } else {
+        let (prompt, prefill) = {
+            let form = app.active_form.as_ref().expect("form active");
+            (form.prompt(), form.current_prefill())
+        };
+        print_output_line(&prompt, footer, palette)?;
+        set_input_text(footer, &prefill);
+    }
+    Ok(())
+}
+
+/// Cancel the active form.
+fn cancel_form(app: &mut App, footer: &mut StickyFooter, palette: &ColorPalette) -> Result<()> {
+    app.active_form = None;
+    footer.input_mut().clear();
+    print_output_line("Form cancelled.", footer, palette)?;
+    Ok(())
+}
+
+/// Build the completed form into a `ServerForm`/`ClientForm` and drive it through
+/// the shared create / `update_server` / `update_client` executors.
+async fn finish_form(
+    app: &mut App,
+    state: &AppState,
+    event_handler: &mut EventHandler,
+    footer: &mut StickyFooter,
+    palette: &ColorPalette,
+) -> Result<()> {
+    use crate::cli::management::{self, FormTarget};
+    use crate::state::{ClientId, ServerId};
+
+    let form = app.active_form.take().expect("form active");
+    footer.input_mut().clear();
+    let (status_tx, _rx) = mpsc::unbounded_channel::<String>();
+
+    match form.target {
+        FormTarget::CreateServer => match form.into_server_form() {
+            Ok(sf) => {
+                let proto = sf.protocol.clone();
+                match sf.create(state, status_tx).await {
+                    Ok(id) => print_output_line(
+                        &format!("[SERVER] Created {} server #{}", proto, id.as_u32()),
+                        footer,
+                        palette,
+                    )?,
+                    Err(e) => print_output_line(
+                        &format!("[ERROR] Create failed: {}", e),
+                        footer,
+                        palette,
+                    )?,
+                }
+            }
+            Err(e) => print_output_line(&format!("[ERROR] {}", e), footer, palette)?,
+        },
+        FormTarget::CreateClient => {
+            let llm = event_handler.get_llm_client();
+            match form.into_client_form() {
+                Ok(cf) => {
+                    let proto = cf.protocol.clone();
+                    match cf.create(state, llm, status_tx).await {
+                        Ok(id) => print_output_line(
+                            &format!("[CLIENT] Created {} client #{}", proto, id.as_u32()),
+                            footer,
+                            palette,
+                        )?,
+                        Err(e) => print_output_line(
+                            &format!("[ERROR] Create failed: {}", e),
+                            footer,
+                            palette,
+                        )?,
+                    }
+                }
+                Err(e) => print_output_line(&format!("[ERROR] {}", e), footer, palette)?,
+            }
+        }
+        FormTarget::UpdateServer(id) => match form.into_server_form() {
+            Ok(sf) => {
+                match management::update_server(state, ServerId::new(id), sf, status_tx).await {
+                    Ok(o) => print_output_line(&o.summary, footer, palette)?,
+                    Err(e) => print_output_line(&format!("[ERROR] {}", e), footer, palette)?,
+                }
+            }
+            Err(e) => print_output_line(&format!("[ERROR] {}", e), footer, palette)?,
+        },
+        FormTarget::UpdateClient(id) => {
+            let llm = event_handler.get_llm_client();
+            match form.into_client_form() {
+                Ok(cf) => {
+                    match management::update_client(state, ClientId::new(id), cf, llm, status_tx)
+                        .await
+                    {
+                        Ok(o) => print_output_line(&o.summary, footer, palette)?,
+                        Err(e) => print_output_line(&format!("[ERROR] {}", e), footer, palette)?,
+                    }
+                }
+                Err(e) => print_output_line(&format!("[ERROR] {}", e), footer, palette)?,
+            }
+        }
+    }
     Ok(())
 }
 

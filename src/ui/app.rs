@@ -164,6 +164,10 @@ pub struct App {
     pub show_usage_stats: bool,
     /// Current system stats (CPU, memory, GPU)
     pub system_stats: crate::system_stats::SystemStats,
+    /// Active interactive create/update form (`/create`, `/edit`). When `Some`,
+    /// keystrokes drive the form (Enter submits the current field, Esc cancels)
+    /// instead of the normal command line.
+    pub active_form: Option<crate::cli::management::InteractiveForm>,
 }
 
 impl Default for App {
@@ -187,6 +191,7 @@ impl Default for App {
             conversations: Vec::new(),
             show_usage_stats: false,
             system_stats: crate::system_stats::SystemStats::default(),
+            active_form: None,
         }
     }
 }
@@ -344,6 +349,8 @@ impl App {
             "/docs [<protocol>] - Show protocol documentation",
             "/stability - List protocols grouped by development state",
             "/manage - List running servers/clients and show create/update shapes",
+            "/create <protocol> [--client] - Interactive prefilled create form",
+            "/edit <id> - Interactive form prefilled with a running instance's config",
             "/update <id> <instruction> - Update a running server/client in place",
         ];
 
