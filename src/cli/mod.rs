@@ -14,6 +14,11 @@ mod sticky_footer;
 mod terminal_cleanup;
 mod theme;
 
+// Re-exported so MCP mode (`src/mcp_stdio`) can drive the scheduled-task ticker on the
+// same code path the TUI and non-interactive runner use, without exposing the whole
+// private `rolling_tui` module.
+pub(crate) use rolling_tui::execute_due_tasks_public;
+
 use anyhow::Result;
 pub use args::Args;
 use clap::Parser;

@@ -470,6 +470,48 @@ fn spawn_state_reaper(
     });
 }
 
+/// How often the MCP-mode scheduled-task ticker fires. Matches the 1s cadence the
+/// TUI event loop and the non-interactive `run_server` runner use for their task
+/// timers, so a task's declared `interval_secs`/`delay_secs` are honoured to the
+/// same resolution in every mode.
+const TASK_TICK_INTERVAL_SECS: u64 = 1;
+
+/// Start the background scheduled-task ticker for MCP mode.
+///
+/// The TUI event loop and the non-interactive runner both drive
+/// `execute_due_tasks_public` from a 1s timer; MCP mode had no such loop, so tasks
+/// created by `start_server`'s `scheduled_tasks` array or the `schedule_task` action
+/// sat at `Scheduled` forever and never fired. This restores that timer for both the
+/// STDIO and HTTP transports (they share this one `SharedState`).
+///
+/// Scoping is not re-implemented here: `execute_due_tasks_public` reads the live task
+/// set from `AppState` on every tick, so Global / Server / Connection scoping — and
+/// the removal of server- and connection-scoped tasks by `remove_server` on
+/// `stop_server`/`stop_all` — are honoured exactly as the TUI honours them. A stopped
+/// server's tasks are gone from state before the next tick, so they cannot fire; only
+/// Global tasks (which the TUI also keeps) persist.
+///
+/// The handle is deliberately dropped, matching the reaper: the ticker lives for the
+/// life of the process and is torn down when the process exits (STDIO: stdin EOF;
+/// HTTP: server shutdown).
+fn spawn_task_ticker(
+    app_state: AppState,
+    llm_client: crate::llm::OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+) {
+    tokio::spawn(async move {
+        let mut ticker =
+            tokio::time::interval(std::time::Duration::from_secs(TASK_TICK_INTERVAL_SECS));
+        // A tick missed while a previous batch was executing should not stampede a
+        // burst of catch-up ticks, exactly as the TUI's task timer skips them.
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            ticker.tick().await;
+            crate::cli::execute_due_tasks_public(&app_state, &llm_client, &status_tx).await;
+        }
+    });
+}
+
 // === Tool implementations ===
 
 #[tool_router]
@@ -613,6 +655,11 @@ impl NetGetMcpService {
         // marks the server Stopped rather than removing it) left the entry — and its
         // scheduled tasks — in AppState for the life of the process.
         spawn_state_reaper(app_state.clone(), llm_client.clone(), status_tx.clone());
+
+        // Fire scheduled tasks. Without this, `start_server`'s `scheduled_tasks` and
+        // the `schedule_task` action create tasks that never execute in MCP mode —
+        // only the TUI and non-interactive runners ticked `execute_due_tasks`.
+        spawn_task_ticker(app_state.clone(), llm_client.clone(), status_tx.clone());
 
         let state = Arc::new(SharedState {
             app_state,
