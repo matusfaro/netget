@@ -74,6 +74,22 @@ impl Protocol for SipProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: answer REGISTER, INVITE and OPTIONS each with 200 OK,
+        // no LLM call. One script handles all three events.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+et = data["event_type_id"]
+if et == "sip_register":
+    actions = [{"type": "sip_register", "status_code": 200}]
+elif et == "sip_invite":
+    actions = [{"type": "sip_invite", "status_code": 200}]
+elif et == "sip_options":
+    actions = [{"type": "sip_options", "status_code": 200}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -92,21 +108,21 @@ impl Protocol for SipProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }, {
                     "event_pattern": "sip_invite",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }, {
                     "event_pattern": "sip_options",
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }]
             }),

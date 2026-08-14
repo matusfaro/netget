@@ -104,6 +104,18 @@ impl Protocol for NfsProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: answer every operation as a getattr on a directory,
+        // no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "nfs_operation":
+    actions = [{"type": "nfs_getattr_response",
+                "file_type": "directory", "mode": 493, "size": 4096}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -122,7 +134,7 @@ impl Protocol for NfsProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }]
             }),

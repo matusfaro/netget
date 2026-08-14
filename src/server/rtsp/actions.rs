@@ -101,6 +101,18 @@ impl Protocol for RtspProtocol {
     }
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
+
+        // Deterministic: answer DESCRIBE with a fixed audio SDP, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "rtsp_describe":
+    actions = [{"type": "rtsp_describe_response",
+                "sdp": "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=NetGet Stream\r\nt=0 0\r\nm=audio 0 RTP/AVP 0\r\n"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -114,7 +126,7 @@ impl Protocol for RtspProtocol {
                 "base_stack": "rtsp",
                 "event_handlers": [{
                     "event_pattern": "rtsp_describe",
-                    "handler": {"type": "script", "language": "python", "code": "<protocol_handler>"}
+                    "handler": {"type": "script", "language": "python", "code": script}
                 }]
             }),
             json!({

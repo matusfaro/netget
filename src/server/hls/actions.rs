@@ -85,6 +85,19 @@ impl Protocol for HlsProtocol {
     }
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
+
+        // Deterministic: serve a fixed single-segment VOD playlist for every
+        // request, no LLM call.
+        let script = r##"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "hls_playlist_request":
+    actions = [{"type": "hls_playlist_response",
+                "playlist": "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:10\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:10.0,\nsegment0.ts\n#EXT-X-ENDLIST\n"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"##;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -98,7 +111,7 @@ impl Protocol for HlsProtocol {
                 "base_stack": "hls",
                 "event_handlers": [{
                     "event_pattern": "hls_playlist_request",
-                    "handler": {"type": "script", "language": "python", "code": "<protocol_handler>"}
+                    "handler": {"type": "script", "language": "python", "code": script}
                 }]
             }),
             json!({

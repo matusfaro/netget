@@ -89,6 +89,18 @@ impl Protocol for RtpProtocol {
     }
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
+
+        // Deterministic: play a 440 Hz tone in response to every received RTP
+        // packet, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "rtp_packet_received":
+    actions = [{"type": "send_rtp_audio", "tone_hz": 440, "duration_ms": 200}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -102,7 +114,7 @@ impl Protocol for RtpProtocol {
                 "base_stack": "rtp",
                 "event_handlers": [{
                     "event_pattern": "rtp_packet_received",
-                    "handler": {"type": "script", "language": "python", "code": "<protocol_handler>"}
+                    "handler": {"type": "script", "language": "python", "code": script}
                 }]
             }),
             json!({

@@ -89,6 +89,20 @@ impl Protocol for OAuth2Protocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: issue a fixed authorization code, echoing the client's
+        // state parameter, no LLM call. This is an explicit operator decision to
+        // always approve — the LLM path must instead default to refusal.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "oauth2_authorize":
+    actions = [{"type": "oauth2_authorize_response",
+                "code": "AUTH_CODE_xyz123",
+                "state": event.get("state", "")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles OAuth2 authorization
             json!({
@@ -107,7 +121,7 @@ impl Protocol for OAuth2Protocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<oauth2_handler>"
+                        "code": script
                     }
                 }]
             }),

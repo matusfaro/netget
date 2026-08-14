@@ -466,6 +466,19 @@ impl Protocol for YarnProtocol {
 
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
+
+        // Deterministic: report fixed cluster metrics for every request, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "yarn_request":
+    actions = [{"type": "send_yarn_metrics",
+                "metrics": {"appsRunning": 0, "availableMB": 8192}}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -479,7 +492,7 @@ impl Protocol for YarnProtocol {
                 "base_stack": "yarn",
                 "event_handlers": [{
                     "event_pattern": "yarn_request",
-                    "handler": { "type": "script", "language": "python", "code": "<yarn_handler>" }
+                    "handler": { "type": "script", "language": "python", "code": script }
                 }]
             }),
             json!({

@@ -87,6 +87,17 @@ impl Protocol for SamlSpProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: serve SP metadata for every request, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "saml_sp_request":
+    actions = [{"type": "send_metadata",
+                "metadata_xml": '<EntityDescriptor entityID="netget-sp"/>'}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles SAML SP authorization
             json!({
@@ -105,7 +116,7 @@ impl Protocol for SamlSpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<saml_sp_handler>"
+                        "code": script
                     }
                 }]
             }),
