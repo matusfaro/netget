@@ -189,6 +189,19 @@ impl Protocol for WireguardProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: authorize every peer that connects, echoing its public
+        // key and allowed IPs, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "wireguard_peer_connected":
+    actions = [{"type": "authorize_peer",
+                "public_key": event.get("public_key", ""),
+                "allowed_ips": event.get("allowed_ips", "0.0.0.0/0")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM controls peer authorization
             json!({
@@ -207,7 +220,7 @@ impl Protocol for WireguardProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<wireguard_server_handler>"
+                        "code": script
                     }
                 }]
             }),
@@ -295,9 +308,8 @@ impl Server for WireguardProtocol {
         action: serde_json::Value,
         state: AppState,
         server_id: Option<crate::state::ServerId>,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<ActionResult>> + Send + 'a>,
-    > {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ActionResult>> + Send + 'a>>
+    {
         Box::pin(async move {
             let action_type = action
                 .get("type")
@@ -338,10 +350,8 @@ impl Server for WireguardProtocol {
                 "wireguard_add_peer is server-scoped and cannot run without a server id",
             )?;
 
-            let server: std::sync::Arc<crate::server::wireguard::WireguardServer> = state
-                .server_handle(server_id)
-                .await
-                .ok_or_else(|| {
+            let server: std::sync::Arc<crate::server::wireguard::WireguardServer> =
+                state.server_handle(server_id).await.ok_or_else(|| {
                     anyhow::anyhow!("no running WireGuard server for id {server_id:?}")
                 })?;
 

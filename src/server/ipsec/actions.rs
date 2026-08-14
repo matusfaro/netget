@@ -142,6 +142,16 @@ impl Protocol for IpsecProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: log every IKE handshake attempt, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "ipsec_handshake":
+    actions = [{"type": "log_handshake", "details": "IKE handshake observed"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM analyzes IKE reconnaissance attempts
             json!({
@@ -160,7 +170,7 @@ impl Protocol for IpsecProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }]
             }),

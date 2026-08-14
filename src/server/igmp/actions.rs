@@ -84,6 +84,18 @@ impl Protocol for IgmpProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every membership query with a report for the
+        // queried group, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "igmp_query_received":
+    actions = [{"type": "send_membership_report",
+                "group_address": event.get("group_address", "224.0.0.1")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all IGMP messages intelligently
             json!({
@@ -102,7 +114,7 @@ impl Protocol for IgmpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<igmp_handler>"
+                        "code": script
                     }
                 }]
             }),

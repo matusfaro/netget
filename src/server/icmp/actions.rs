@@ -125,6 +125,22 @@ impl Protocol for IcmpProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: reply to every echo request, swapping source/dest and
+        // echoing the id/sequence/payload, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "icmp_echo_request":
+    actions = [{"type": "send_echo_reply",
+                "source_ip": event.get("destination_ip", ""),
+                "destination_ip": event.get("source_ip", ""),
+                "identifier": event.get("identifier", 0),
+                "sequence": event.get("sequence", 0),
+                "payload_hex": event.get("payload_hex", "")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -141,7 +157,7 @@ impl Protocol for IcmpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<icmp_handler>"
+                        "code": script
                     }
                 }]
             }),

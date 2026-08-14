@@ -132,6 +132,16 @@ impl Protocol for TorRelayProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: note every relay cell seen on a circuit, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "tor_relay_relay_cell":
+    actions = [{"type": "detect_relay_cell", "message": "relay cell observed"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles Tor relay operations
             json!({
@@ -150,7 +160,7 @@ impl Protocol for TorRelayProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<tor_relay_handler>"
+                        "code": script
                     }
                 }]
             }),

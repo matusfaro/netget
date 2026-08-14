@@ -532,23 +532,15 @@ const KNOWN_BROKEN: &[(&str, &[&str])] = &[
     // placeholder with real Python (see tcp/http/dns/redis/mysql/postgresql/s3/sqs/dynamo/smtp
     // for worked examples) and delete the entry.
     ("ARP", &["SCRIPT_PLACEHOLDER"]),
-    ("BGP", &["SCRIPT_PLACEHOLDER"]),
     ("BLUETOOTH_BLE", &["SCRIPT_PLACEHOLDER"]),
     ("DataLink", &["SCRIPT_PLACEHOLDER"]),
     ("etcd", &["SCRIPT_PLACEHOLDER"]),
-    ("ICMP", &["SCRIPT_PLACEHOLDER"]),
-    ("IGMP", &["SCRIPT_PLACEHOLDER"]),
-    ("IPSec/IKEv2", &["SCRIPT_PLACEHOLDER"]),
     ("ISIS", &["SCRIPT_PLACEHOLDER"]),
     ("nfc", &["SCRIPT_PLACEHOLDER"]),
-    ("SMB", &["SCRIPT_PLACEHOLDER"]),
-    ("Tor Relay", &["SCRIPT_PLACEHOLDER"]),
     ("USB-Keyboard", &["SCRIPT_PLACEHOLDER"]),
     ("USB-Mouse", &["SCRIPT_PLACEHOLDER"]),
     ("USB-Serial", &["SCRIPT_PLACEHOLDER"]),
     ("usb-smartcard", &["SCRIPT_PLACEHOLDER"]),
-    ("WebRTC", &["SCRIPT_PLACEHOLDER"]),
-    ("WireGuard", &["SCRIPT_PLACEHOLDER"]),
     ("ZooKeeper", &["SCRIPT_PLACEHOLDER"]),
 ];
 

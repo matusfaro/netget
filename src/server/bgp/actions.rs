@@ -656,6 +656,16 @@ impl Protocol for BgpProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: acknowledge every UPDATE with a KEEPALIVE, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "bgp_update":
+    actions = [{"type": "send_bgp_keepalive"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: the model decides who to peer with and what to advertise.
             json!({
@@ -682,7 +692,7 @@ impl Protocol for BgpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<bgp_update_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -373,6 +373,17 @@ impl Protocol for WebRtcProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: echo each data-channel message back to the peer, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "webrtc_message_received":
+    actions = [{"type": "send_message", "message": event.get("message", "")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -391,7 +402,7 @@ impl Protocol for WebRtcProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<webrtc_handler>"
+                        "code": script
                     }
                 }]
             }),
