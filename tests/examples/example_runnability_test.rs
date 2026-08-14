@@ -527,14 +527,11 @@ fn example_runnability_report() {
 /// ```
 /// then paste the "allowlist seed" section here.
 const KNOWN_BROKEN: &[(&str, &[&str])] = &[
-    // Generated 2026-08 from `--all-features`. All 67 carry a `<..._handler>` placeholder as
-    // their script_mode `code`, so the script handler cannot run. Fix = replace the
-    // placeholder with real Python (see tcp/http/dns/redis/mysql/postgresql/s3/sqs/dynamo/smtp
-    // for worked examples) and delete the entry.
-    ("USB-Keyboard", &["SCRIPT_PLACEHOLDER"]),
-    ("USB-Mouse", &["SCRIPT_PLACEHOLDER"]),
-    ("USB-Serial", &["SCRIPT_PLACEHOLDER"]),
-    ("usb-smartcard", &["SCRIPT_PLACEHOLDER"]),
+    // Empty: the `<..._handler>` placeholder epidemic is cleared — every registered protocol's
+    // script_mode `code` is now real, runnable Python that emits `{"actions": [...]}`. The
+    // originally allowlisted 67 were fixed batch by batch (see tcp/http/dns/redis for the
+    // worked-example shape). This list is shrink-only: a new placeholder or an unknown static
+    // action fails the build rather than being silently re-added here.
 ];
 
 fn expected_categories(name: &str) -> Option<BTreeSet<String>> {

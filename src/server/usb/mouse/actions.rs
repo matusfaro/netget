@@ -300,6 +300,17 @@ impl Protocol for UsbMouseProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: nudge the pointer once the emulated mouse is attached,
+        // no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "usb_mouse_attached":
+    actions = [{"type": "move_relative", "x": 10, "y": -5}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles USB mouse device
             json!({
@@ -318,7 +329,7 @@ impl Protocol for UsbMouseProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<mouse_handler>"
+                        "code": script
                     }
                 }]
             }),

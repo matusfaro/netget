@@ -490,6 +490,17 @@ impl Protocol for UsbSmartCardProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: answer every APDU with a 90 00 success status, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "usb_smartcard_apdu_received":
+    actions = [{"type": "respond_to_apdu", "sw1": "90", "sw2": "00"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: the model answers every APDU.
             json!({
@@ -515,7 +526,7 @@ impl Protocol for UsbSmartCardProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<smartcard_apdu_handler>"
+                        "code": script
                     }
                 }]
             }),

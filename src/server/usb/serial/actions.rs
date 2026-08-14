@@ -394,6 +394,17 @@ impl Protocol for UsbSerialProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: echo received serial data back to the host, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "usb_serial_data_received":
+    actions = [{"type": "send_data", "data": str(event.get("data", ""))}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles USB serial device
             json!({
@@ -412,7 +423,7 @@ impl Protocol for UsbSerialProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<serial_handler>"
+                        "code": script
                     }
                 }]
             }),

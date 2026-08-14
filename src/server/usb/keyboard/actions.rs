@@ -318,6 +318,17 @@ impl Protocol for UsbKeyboardProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: type a fixed string once the emulated keyboard is
+        // attached, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "usb_keyboard_attached":
+    actions = [{"type": "type_text", "text": "hello from netget"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles USB keyboard device
             json!({
@@ -336,7 +347,7 @@ impl Protocol for UsbKeyboardProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<keyboard_handler>"
+                        "code": script
                     }
                 }]
             }),
