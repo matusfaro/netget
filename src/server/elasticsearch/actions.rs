@@ -462,6 +462,23 @@ impl Protocol for ElasticsearchProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic routing: cluster info for GET /, a canned acknowledged
+        // response for every other path, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "elasticsearch_request":
+    if event.get("path", "/") == "/":
+        actions = [{"type": "send_cluster_info",
+                    "cluster_name": "netget-elasticsearch",
+                    "status": "green", "version": "8.0.0"}]
+    else:
+        actions = [{"type": "send_elasticsearch_response", "status_code": 200,
+                    "body": '{"acknowledged": true}'}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all Elasticsearch responses intelligently
             json!({
@@ -480,7 +497,7 @@ impl Protocol for ElasticsearchProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<elasticsearch_handler>"
+                        "code": script
                     }
                 }]
             }),

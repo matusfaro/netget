@@ -102,6 +102,18 @@ impl Protocol for MssqlProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every T-SQL query with a single-column result
+        // set (one INT column, value 1), no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+if data["event_type_id"] == "mssql_query":
+    actions = [{"type": "mssql_query_response",
+                "columns": [{"name": "result", "type": "INT"}],
+                "rows": [[1]]}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all MSSQL responses intelligently
             json!({
@@ -120,7 +132,7 @@ impl Protocol for MssqlProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<mssql_handler>"
+                        "code": script
                     }
                 }]
             }),

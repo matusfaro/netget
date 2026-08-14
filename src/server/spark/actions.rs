@@ -340,6 +340,19 @@ impl Protocol for SparkProtocol {
 
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
+
+        // Deterministic: report one running application for every monitoring
+        // API request, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+if data["event_type_id"] == "spark_request":
+    actions = [{"type": "send_spark_applications",
+                "applications": [{"id": "app-netget-0000", "name": "netget-app",
+                    "attempts": [{"completed": False, "appSparkVersion": "3.5.1"}]}]}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -353,7 +366,7 @@ impl Protocol for SparkProtocol {
                 "base_stack": "spark",
                 "event_handlers": [{
                     "event_pattern": "spark_request",
-                    "handler": { "type": "script", "language": "python", "code": "<spark_handler>" }
+                    "handler": { "type": "script", "language": "python", "code": script }
                 }]
             }),
             json!({

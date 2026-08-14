@@ -202,6 +202,16 @@ impl Protocol for MongodbProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every command with an empty find result, no
+        // LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+if data["event_type_id"] == "mongodb_command":
+    actions = [{"type": "find_response", "documents": []}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all MongoDB responses intelligently
             json!({
@@ -220,7 +230,7 @@ impl Protocol for MongodbProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<mongodb_handler>"
+                        "code": script
                     }
                 }]
             }),

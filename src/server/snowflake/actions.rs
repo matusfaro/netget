@@ -122,6 +122,18 @@ impl Protocol for SnowflakeProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: answer every SQL query with a single-column "OK"
+        // rowset, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+if data["event_type_id"] == "snowflake_query":
+    actions = [{"type": "snowflake_query_response",
+                "rowtype": [{"name": "STATUS", "type": "text"}],
+                "rowset": [["OK"]]}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -140,7 +152,7 @@ impl Protocol for SnowflakeProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<snowflake_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -618,6 +618,21 @@ impl Protocol for CouchDbProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic routing: welcome/version info for GET /, a canned
+        // {"ok": true} for everything else, with no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "couchdb_request":
+    if event.get("path", "/") == "/":
+        actions = [{"type": "send_server_info", "version": "3.5.1"}]
+    else:
+        actions = [{"type": "send_couchdb_response", "status_code": 200,
+                    "body": '{"ok": true}'}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all CouchDB responses intelligently
             json!({
@@ -636,7 +651,7 @@ impl Protocol for CouchDbProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<couchdb_handler>"
+                        "code": script
                     }
                 }]
             }),

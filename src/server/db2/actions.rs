@@ -119,6 +119,16 @@ impl Protocol for Db2Protocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: acknowledge every statement with a success SQLCA
+        // (zero rows affected), no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+if data["event_type_id"] == "db2_query":
+    actions = [{"type": "db2_query_ok", "rows_affected": 0}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -137,7 +147,7 @@ impl Protocol for Db2Protocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<db2_handler>"
+                        "code": script
                     }
                 }]
             }),

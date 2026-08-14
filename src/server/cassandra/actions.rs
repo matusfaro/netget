@@ -114,6 +114,18 @@ impl Protocol for CassandraProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every CQL query with a single-column "OK"
+        // rowset, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+if data["event_type_id"] == "cassandra_query":
+    actions = [{"type": "cassandra_result_rows",
+                "columns": [{"name": "result", "type": "varchar"}],
+                "rows": [["OK"]]}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all Cassandra responses intelligently
             json!({
@@ -132,7 +144,7 @@ impl Protocol for CassandraProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<cassandra_handler>"
+                        "code": script
                     }
                 }]
             }),
