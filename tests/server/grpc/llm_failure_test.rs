@@ -21,11 +21,17 @@
 //!   129 requests in flight against a mock that answers instantly. So the classification is
 //!   exercised directly rather than faked with an assertion that proves nothing.
 //!
-//! The empty-body assertion matters as much as the code. `handle_unary` falls back to encoding
-//! an empty `DynamicMessage` when the handler produced no response action, and an empty protobuf
-//! message is zero bytes — so `grpc-status: 0` plus a five-byte frame and `grpc-status: 13` plus
-//! nothing are the only two things distinguishing "the model said nothing" from "the model could
-//! not be reached".
+//! A third case is covered by `test_grpc_answers_internal_when_handler_returns_no_usable_action`:
+//! the handler *succeeds* but returns an action that is neither `grpc_unary_response` nor
+//! `grpc_error`. `handle_unary` used to fall back to encoding an empty `DynamicMessage` and ship it
+//! as `grpc-status: 0` — indistinguishable from a deliberate empty response — which is the
+//! fail-open this sweep exists to close. It now answers `13 INTERNAL` with an empty body, so the
+//! only reply carrying `grpc-status: 0` is one the handler actually produced.
+//!
+//! The empty-body assertion matters as much as the code: a gRPC failure carries no message frame,
+//! so `grpc-status: 0` plus a five-byte frame and `grpc-status: 13` plus nothing are what
+//! distinguish "the model answered" from "the model said nothing usable" or "the model could not
+//! be reached".
 
 #![cfg(all(test, feature = "grpc"))]
 
@@ -153,6 +159,131 @@ async fn test_grpc_answers_internal_when_llm_fails() -> E2EResult<()> {
     assert!(
         grpc_message.contains("netget"),
         "the status message should name the source of the failure: {grpc_message:?}"
+    );
+
+    let body = response.bytes().await?;
+    assert!(
+        body.is_empty(),
+        "a gRPC failure carries no message frame, got {} bytes",
+        body.len()
+    );
+
+    server.verify_mocks().await?;
+    server.stop().await?;
+    Ok(())
+}
+
+/// The handler *ran and answered*, but produced no usable action — the fail-open trap.
+///
+/// This is a different path from `test_grpc_answers_internal_when_llm_fails`: there the backend
+/// was unreachable and `call_llm` returned `Err`. Here `call_llm` **succeeds** — the mock answers
+/// HTTP 200 with a perfectly valid action — but the action is neither `grpc_unary_response` nor
+/// `grpc_error`, so `handle_unary` matches nothing. The old code fell through to encoding an empty
+/// `DynamicMessage` and shipping it as `grpc-status: 0`, which is byte-for-byte what a handler that
+/// *deliberately* returned an empty `grpc_unary_response { }` produces. A model that never gave a
+/// usable answer was therefore indistinguishable, on the wire, from one that succeeded with an
+/// empty reply — exactly the fail-open the root CLAUDE.md warns against (OAuth2's "no answer became
+/// approval"). The fix reports `13 INTERNAL` here so the two are structurally distinct: a real
+/// empty response still travels through `grpc_unary_response` and reaches the wire as `grpc-status: 0`.
+#[tokio::test]
+async fn test_grpc_answers_internal_when_handler_returns_no_usable_action() -> E2EResult<()> {
+    if std::process::Command::new("protoc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        panic!(
+            "protoc not found in PATH. Install it with `brew install protobuf` (macOS) or \
+             `apt-get install protobuf-compiler` (Linux)."
+        );
+    }
+
+    let prompt = format!(
+        "Start a gRPC server on port {{AVAILABLE_PORT}} with this schema:\n{PROTO_SCHEMA}\n\
+         Echo back whatever text you are sent."
+    );
+
+    let config = NetGetConfig::new_no_scripts(prompt).with_mock(|mock| {
+        mock.on_instruction_containing("gRPC server")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "open_server",
+                    "port": 0,
+                    "base_stack": "gRPC",
+                    "instruction": "Echo back whatever text you are sent",
+                    "startup_params": { "proto_schema": PROTO_SCHEMA }
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            // The handler answers successfully, but with an action that is NOT a gRPC response:
+            // `show_message` executes cleanly and leaves `handle_unary` with nothing to send. This
+            // is the "model returned nothing usable" case, distinct from the backend being down.
+            .on_event("grpc_unary_request")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "show_message",
+                    "message": "I looked at the request but produced no gRPC response for it"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+    });
+
+    let server = start_netget_server(config).await?;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let client = reqwest::Client::builder().http2_prior_knowledge().build()?;
+    let url = format!("http://127.0.0.1:{}/failtest.EchoService/Echo", server.port);
+
+    let response = tokio::time::timeout(
+        Duration::from_secs(25),
+        client
+            .post(&url)
+            .header("content-type", "application/grpc")
+            .body(echo_request_frame("hello"))
+            .send(),
+    )
+    .await
+    .map_err(|_| {
+        "No gRPC response within 25s - the server went silent when the handler produced no usable \
+         action, which would itself be a regression"
+    })??;
+
+    assert_eq!(
+        response.status(),
+        reqwest::StatusCode::OK,
+        "a gRPC status must travel over HTTP 200; a non-200 makes a conformant client discard \
+         the code and synthesise one of its own"
+    );
+
+    let grpc_status = response
+        .headers()
+        .get("grpc-status")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("missing")
+        .to_string();
+    let grpc_message = response
+        .headers()
+        .get("grpc-message")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    assert_ne!(
+        grpc_status, "0",
+        "a handler that produced no usable action must NOT be reported as OK - an empty-OK reply \
+         is indistinguishable from a deliberate empty response, which is the fail-open defect"
+    );
+    assert_eq!(
+        grpc_status, "13",
+        "a handler that ran but produced no usable response is a genuine (non-retryable) INTERNAL \
+         error, not a transient UNAVAILABLE; got {grpc_status} (grpc-message: {grpc_message:?})"
+    );
+    assert!(
+        grpc_message.contains("no usable response"),
+        "the status message should say the handler produced no usable response, distinguishing it \
+         from a backend outage: {grpc_message:?}"
     );
 
     let body = response.bytes().await?;

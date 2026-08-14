@@ -940,12 +940,32 @@ impl DynamicGrpcService {
             }
         }
 
-        // If no response was returned, return empty message
-        debug!("No response from LLM, returning empty message");
-        let response_msg = DynamicMessage::new(output_desc.clone());
-        let mut response_bytes = Vec::new();
-        response_msg.encode(&mut response_bytes)?;
-        Ok(response_bytes)
+        // The handler ran but produced no usable action — neither `grpc_unary_response` nor
+        // `grpc_error`. This is the fail-open trap: returning an empty message with
+        // `grpc-status: 0` here is indistinguishable, to the caller, from a handler that
+        // *deliberately* returned an empty response (`grpc_unary_response` with `{}`). A model
+        // that never answered would then look like a successful empty reply.
+        //
+        // Answer it as a failure instead. `INTERNAL` (13), not `UNAVAILABLE`: the backend was
+        // reachable and did respond — the response was simply unusable — so this is a genuine
+        // application error, not a transient condition a retry policy should hammer. The
+        // deliberate-empty case stays structurally distinct: it travels through
+        // `grpc_unary_response` above and reaches the wire as `grpc-status: 0`.
+        console_error!(
+            self.status_tx,
+            "gRPC {}/{} could not be answered: the handler returned no usable action \
+             (no grpc_unary_response, no grpc_error). Replying grpc-status 13 (INTERNAL); no \
+             empty response is being invented.",
+            service_name,
+            method_name
+        );
+        Err(GrpcFailure::new(
+            GrpcStatus::Internal,
+            format!(
+                "netget gRPC: handler produced no usable response for {}/{}",
+                service_name, method_name
+            ),
+        ))
     }
 
     /// Convert DynamicMessage to JSON
