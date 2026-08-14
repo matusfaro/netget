@@ -108,15 +108,23 @@ fn example_test_all_event_types_have_examples() {
         for event_type in protocol.get_event_types() {
             total_event_types += 1;
 
-            // Check that response_example is not null and has a type field
-            if event_type.response_example.is_null() {
+            // Check that response_example is not null and carries a type field.
+            // A response_example is either a single action object or an array of
+            // them; for an array we check the first element, matching
+            // validate_response_example in protocol_examples_test.rs.
+            let ex = &event_type.response_example;
+            let type_bearer = if ex.is_array() {
+                ex.as_array().and_then(|a| a.first())
+            } else {
+                Some(ex)
+            };
+            if ex.is_null() {
                 missing_examples.push(format!(
                     "{}.{}: null response_example",
                     protocol_name, event_type.id
                 ));
-            } else if event_type
-                .response_example
-                .as_object()
+            } else if type_bearer
+                .and_then(|v| v.as_object())
                 .map(|o| o.get("type").is_none())
                 .unwrap_or(true)
             {

@@ -314,7 +314,9 @@ pub static JSONRPC_METHOD_CALL_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "jsonrpc_method_call",
         "JSON-RPC 2.0 method call received",
-        json!({"actions": [{"type": "jsonrpc_success", "result": 8}]}),
+        // A bare action, not a {"actions": [...]} wrapper — a response_example is a
+        // single action object or an array of them, never the outer envelope.
+        json!({"type": "jsonrpc_success", "result": 8}),
     )
     .with_parameters(vec![
         Parameter {
