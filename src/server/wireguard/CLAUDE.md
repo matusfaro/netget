@@ -26,15 +26,27 @@ against a real client**", and this protocol has **never** been validated end-to-
 It cannot be, in CI or unprivileged: creating the interface needs root, and on macOS also `wireguard-go` installed.
 That is the same defect that got `tor_relay` and `openvpn` demoted - claiming a rating the evidence doesn't support.
 
-**Known design bug (not yet fixed): the reactive authorization model is backwards for WireGuard.** A WireGuard
+**Design defect (addressed): the reactive-only authorization model was backwards for WireGuard.** A WireGuard
 responder decrypts the initiator's static public key from the handshake and **drops the handshake if that key is not
 already a configured peer**. But NetGet only learns of a peer by polling `read_interface_data()` *after* it appears -
-and an unconfigured peer never appears. There is also no user-triggered action to pre-add a peer
-(`get_async_actions()` is empty). So `wireguard_peer_connected` can effectively never fire for a genuinely new peer,
-and the entire LLM authorize/reject flow is unreachable in practice; it only works for peers configured out-of-band.
-Earning `Stable` requires fixing this (accept the peer's public key ahead of the handshake, e.g. via a startup
-parameter or an "expected peers" list) and then proving a real client completes a handshake and exchanges a transport
-packet. See `tests/server/wireguard/`.
+and an unconfigured peer never appears. With no user-triggered action to pre-add a peer, `wireguard_peer_connected`
+could effectively never fire for a genuinely new peer, so the entire LLM authorize/reject flow was unreachable in
+practice; it worked only for peers configured out-of-band.
+
+**Fix:** the `wireguard_add_peer` user-triggered (async) action pre-authorizes a peer's public key + allowed IPs on the
+live interface *before* it connects, so a subsequent handshake from that key is accepted and the peer then appears /
+`wireguard_peer_connected` fires. It reaches the running `WireguardServer` through `execute_action_with_state` + a
+handle registered in `spawn` (the same live-instance pattern `usb-fido2` uses; see `src/state/server_handles.rs`).
+Fail-closed: with no `wireguard_add_peer` call, no peer is configured and the handshake is dropped by the backend - the
+existing safe default is unchanged, this is not accept-all.
+
+**Still unverified (why this stays Beta, not Stable).** The pre-add path's config mutation and executor wiring are
+unit-tested without a backend (`build_peer_config`, the `wireguard_add_peer` executor). What has NOT been run here - no
+root, and macOS lacks the external `wireguard-go` binary - is a real client actually completing a handshake against a
+pre-added key, `wireguard_peer_connected` firing for it, and the event's exact timing relative to config-vs-handshake
+(defguard may surface a configured-but-not-yet-handshaked peer). Earning `Stable` requires proving that end to end
+(a `boringtun` in-process initiator is the recommended driver) plus a transport-packet exchange. See
+`tests/server/wireguard/`.
 
 ## Library Choices
 
@@ -120,13 +132,17 @@ The returned `raw_actions` are applied to the live interface in `handle_peer_con
 
 ### Async Actions (User-triggered)
 
-**None.** `get_async_actions()` returns an empty list.
+**`wireguard_add_peer`** - pre-authorize a peer by adding its public key + allowed IPs (optional endpoint) to the live
+interface *before* it connects. This is the action that makes the authorize flow reachable (see the design-defect note
+above). Parameters: `public_key` (required), `allowed_ips` (required, CIDR list), `endpoint` (optional). It reaches the
+running server via `Server::execute_action_with_state`, which looks up the `Arc<WireguardServer>` registered in `spawn`
+with `AppState::register_server_handle` and calls `add_peer()`. Fail-closed: a malformed key, an invalid/empty
+`allowed_ips`, or a missing server all return `Err` rather than configuring anything. On the stateless path
+(`execute_action`, no server context) it errors rather than silently succeeding.
 
-`list_peers` / `remove_peer` / `get_server_info` were previously advertised, but the action executor calls
-`Server::execute_action()` on a *stateless* `WireguardProtocol` struct that holds no handle to the running
-`WireguardServer`, so those actions could never return peer data or reconfigure the interface. They are still accepted
-by `execute_action` as no-ops for backwards compatibility but are no longer offered to the LLM. Re-enabling them needs
-a server-instance registry in `llm/actions/protocol_trait.rs` or `state/`, which is outside this module.
+`list_peers` / `remove_peer` / `get_server_info` are still **not** advertised: the same live-instance pattern could now
+carry them, but they were dead no-ops (they returned `NoAction` with no data) and are left unadvertised rather than
+half-built.
 
 ### Sync Actions (raised by `wireguard_peer_connected`)
 

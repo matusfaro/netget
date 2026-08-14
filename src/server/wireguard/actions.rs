@@ -74,16 +74,21 @@ impl WireguardProtocol {
 
 // Implement Protocol trait (base trait for all protocols)
 impl Protocol for WireguardProtocol {
-    /// No user-triggered actions are advertised.
+    /// One user-triggered action: `wireguard_add_peer`.
     ///
-    /// `list_peers`, `remove_peer` and `get_server_info` used to be listed here,
-    /// but the action executor calls [`Server::execute_action`] on a *stateless*
-    /// protocol struct that has no handle to the running `WireguardServer`, so
-    /// they could never return peer data or touch the interface. They are still
-    /// accepted by `execute_action` (as no-ops) for backwards compatibility, but
-    /// advertising them to the LLM would promise data that never arrives.
+    /// This is what makes the authorize/reject flow reachable at all. A WireGuard
+    /// responder drops a handshake whose static public key is not ALREADY a
+    /// configured peer, and NetGet otherwise only learns of a peer by polling
+    /// *after* it appears - so an unconfigured peer never appears and
+    /// `wireguard_peer_connected` never fires for a genuinely new key. Pre-adding
+    /// the key up front (via this action) is what lets the subsequent handshake
+    /// succeed and the event fire. It reaches the running server through
+    /// [`Server::execute_action_with_state`] + the handle registered in `spawn`.
+    ///
+    /// `list_peers`, `remove_peer` and `get_server_info` are still NOT advertised:
+    /// they were dead no-ops that promised data the stateless executor never had.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![]
+        vec![add_peer_action()]
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
@@ -130,32 +135,40 @@ impl Protocol for WireguardProtocol {
                  macOS (defguard shells out to `wireguard-go`, which must be installed).",
             )
             .llm_control(
-                "Post-handshake peer policy: on wireguard_peer_connected the LLM can \
-                 set allowed IPs (authorize_peer) or remove the peer \
-                 (disconnect_peer/reject_peer). The handshake itself happens inside the \
-                 backend and cannot be gated.",
+                "Two levers. Up front: wireguard_add_peer (user-triggered async action) \
+                 pre-authorizes a peer's public key + allowed IPs on the live interface, so a \
+                 subsequent handshake from that key is accepted - this is what makes the \
+                 authorize decision reachable, since a WireGuard responder drops a handshake \
+                 from an unconfigured key. Post-handshake: on wireguard_peer_connected the LLM \
+                 can (re)set allowed IPs (authorize_peer) or remove the peer \
+                 (disconnect_peer/reject_peer). The handshake crypto itself happens inside the \
+                 backend and cannot be gated; fail-closed - with no pre-add, an unknown peer's \
+                 handshake is dropped.",
             )
             .e2e_testing(
-                "Non-root tests exercise NetGet's own logic (the authorize/reject/disconnect \
-                 action executors and the event's action declarations). A real handshake \
-                 needs root + a WireGuard backend (kernel, or wireguard-go on macOS) and has \
-                 never been run; it is a root-gated #[ignore]d harness only.",
+                "Non-root tests exercise NetGet's own logic: the pre-add config-mutation path \
+                 (build_peer_config - right key + allowed IPs, malformed key rejected), the \
+                 wireguard_add_peer executor wiring through execute_action_with_state \
+                 (fail-closed with no server/no ips), the authorize/reject/disconnect executors, \
+                 and the event/action declarations. A real handshake needs root + a WireGuard \
+                 backend (kernel, or wireguard-go on macOS) and has never been run; it is a \
+                 root-gated #[ignore]d harness only.",
             )
             .notes(
                 "Real data plane (via the platform backend), but Beta because it has never \
                  been validated against a real client and cannot be in CI: creating the \
                  interface needs root, and on macOS also the external wireguard-go binary. \
-                 Two substantive caveats found while resolving the rating: (1) The reactive \
-                 authorization model is backwards for WireGuard. A responder drops a handshake \
-                 whose static public key is not ALREADY a configured peer, but NetGet only \
-                 learns of a peer by polling read_interface_data() AFTER it appears - and an \
-                 unconfigured peer never appears. There is also no user-triggered action to \
-                 pre-add a peer (get_async_actions is empty). So wireguard_peer_connected can \
-                 effectively never fire for a genuinely new peer, leaving the LLM \
-                 authorize/reject flow unreachable in practice; it works only for peers \
-                 configured out-of-band. (2) set_peer_traffic_limit is recorded but NOT \
-                 enforced (no tc/iptables). Still the closest thing to a working tunnel in \
-                 NetGet - openvpn/ipsec do not carry traffic at all.",
+                 Caveat (1) - the reactive-only authorize flow being unreachable for a \
+                 genuinely new peer - is now ADDRESSED: wireguard_add_peer lets the operator/LLM \
+                 pre-authorize a peer's public key before it handshakes, which is what a \
+                 WireGuard responder requires (it drops a handshake from an unconfigured key). \
+                 The pre-add path (validation + configure_peer wiring) is unit-tested; what is \
+                 STILL UNVERIFIED here - no root, no wireguard-go - is that a real client then \
+                 completes a handshake, that wireguard_peer_connected fires for the pre-added \
+                 key, and the exact timing of the event relative to config vs handshake. (2) \
+                 set_peer_traffic_limit is recorded but NOT enforced (no tc/iptables). Still the \
+                 closest thing to a working tunnel in NetGet - openvpn/ipsec do not carry \
+                 traffic at all.",
             )
             .build()
     }
@@ -258,8 +271,96 @@ impl Server for WireguardProtocol {
             "list_peers" => Ok(ActionResult::NoAction), // Handled by async action executor
             "remove_peer" => Ok(ActionResult::NoAction), // Handled by async action executor
             "get_server_info" => Ok(ActionResult::NoAction), // Handled by async action executor
+            // wireguard_add_peer needs the running server instance; it is dispatched
+            // through execute_action_with_state, never here. If it lands here there is
+            // no server context, so say so rather than silently succeeding.
+            "wireguard_add_peer" => Err(anyhow::anyhow!(
+                "wireguard_add_peer is server-scoped and must be dispatched through \
+                 execute_action_with_state (no running server in context)"
+            )),
             _ => Err(anyhow::anyhow!("Unknown WireGuard action: {}", action_type)),
         }
+    }
+
+    /// Reach the live server for `wireguard_add_peer`; delegate everything else.
+    ///
+    /// `wireguard_add_peer` pre-authorizes a peer's public key on the live interface
+    /// so a subsequent handshake from that key is accepted (WireGuard drops a
+    /// handshake from an unconfigured key). This is the action that turns the
+    /// reactive-only model into one where the operator/LLM can authorize a key up
+    /// front. It stays FAIL-CLOSED: it adds exactly the key it was given and nothing
+    /// else, and with no such call no peer is added and the handshake is dropped.
+    fn execute_action_with_state<'a>(
+        &'a self,
+        action: serde_json::Value,
+        state: AppState,
+        server_id: Option<crate::state::ServerId>,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<ActionResult>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            let action_type = action
+                .get("type")
+                .and_then(|v| v.as_str())
+                .context("Missing 'type' field in action")?;
+
+            if action_type != "wireguard_add_peer" {
+                // Not live-state; the stateless executor handles it verbatim.
+                return self.execute_action(action);
+            }
+
+            let public_key = action
+                .get("public_key")
+                .and_then(|v| v.as_str())
+                .context("Missing public_key in wireguard_add_peer")?
+                .to_string();
+
+            let allowed_ips = action
+                .get("allowed_ips")
+                .and_then(|v| v.as_array())
+                .context("Missing allowed_ips in wireguard_add_peer")?
+                .iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect::<Vec<String>>();
+
+            if allowed_ips.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "allowed_ips must not be empty - a peer with no allowed IPs can route nothing"
+                ));
+            }
+
+            let endpoint = action
+                .get("endpoint")
+                .and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<std::net::SocketAddr>().ok());
+
+            let server_id = server_id.context(
+                "wireguard_add_peer is server-scoped and cannot run without a server id",
+            )?;
+
+            let server: std::sync::Arc<crate::server::wireguard::WireguardServer> = state
+                .server_handle(server_id)
+                .await
+                .ok_or_else(|| {
+                    anyhow::anyhow!("no running WireGuard server for id {server_id:?}")
+                })?;
+
+            // build_peer_config (inside add_peer) fail-closes on a malformed key or
+            // bad/empty allowed IPs, so a bad key returns Err rather than touching
+            // the interface.
+            server
+                .add_peer(public_key.clone(), allowed_ips.clone(), endpoint)
+                .await?;
+
+            Ok(ActionResult::Custom {
+                name: "wireguard_peer_added".to_string(),
+                data: json!({
+                    "public_key": public_key,
+                    "allowed_ips": allowed_ips,
+                    "endpoint": endpoint.map(|e| e.to_string()),
+                }),
+            })
+        })
     }
 }
 
@@ -354,6 +455,58 @@ impl WireguardProtocol {
             "public_key": public_key,
             "reason": reason,
         }))?))
+    }
+}
+
+/// Action: Pre-authorize (add) a peer up front, before it handshakes.
+///
+/// User-triggered (async). This is the action that makes the WireGuard
+/// authorize/reject flow reachable: a responder drops a handshake whose static
+/// public key is not already configured, so the operator/LLM must add the key
+/// first for the handshake to succeed and `wireguard_peer_connected` to fire.
+fn add_peer_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "wireguard_add_peer".to_string(),
+        description: "Pre-authorize a WireGuard peer by adding its public key and allowed IPs to \
+                      the live interface BEFORE it connects. WireGuard drops any handshake from a \
+                      key that is not already configured, so use this to authorize a client up \
+                      front; the peer's subsequent handshake will then be accepted and raise \
+                      wireguard_peer_connected. Fail-closed: without this, an unknown peer's \
+                      handshake is dropped and it never appears."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "public_key".to_string(),
+                type_hint: "string".to_string(),
+                description: "Peer's public key (base64, 44 chars)".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "allowed_ips".to_string(),
+                type_hint: "array".to_string(),
+                description:
+                    "List of allowed IP ranges for this peer (CIDR notation, e.g. 10.20.30.2/32)"
+                        .to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "endpoint".to_string(),
+                type_hint: "string".to_string(),
+                description: "Optional peer endpoint address (IP:port) for a roaming-fixed peer"
+                    .to_string(),
+                required: false,
+            },
+        ],
+        example: json!({
+            "type": "wireguard_add_peer",
+            "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "allowed_ips": ["10.20.30.2/32"]
+        }),
+        log_template: Some(
+            LogTemplate::new()
+                .with_info("-> WG add_peer {public_key}")
+                .with_debug("WG wireguard_add_peer: pubkey={public_key} ips={allowed_ips}"),
+        ),
     }
 }
 

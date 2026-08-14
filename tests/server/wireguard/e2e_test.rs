@@ -292,16 +292,24 @@ fn peer_connected_event_advertises_the_interface_changing_actions() {
 }
 
 #[test]
-fn protocol_exposes_no_user_triggered_actions() {
-    // get_async_actions() is intentionally empty: the stateless protocol struct
-    // holds no handle to the running server, so a user-triggered action could
-    // not touch the interface. This also documents part of caveat (1) in
-    // metadata: there is no way to PRE-add a peer before it handshakes.
+fn protocol_advertises_wireguard_add_peer_as_the_only_async_action() {
+    // get_async_actions() now advertises exactly `wireguard_add_peer`: the
+    // user-triggered action that PRE-adds a peer's public key so a subsequent
+    // handshake is accepted and wireguard_peer_connected becomes reachable. This
+    // is the fix for caveat (1) - the reactive-only authorize flow being
+    // unreachable for a genuinely new peer. `list_peers` / `remove_peer` /
+    // `get_server_info` remain unadvertised (they were dead no-ops).
     let proto = WireguardProtocol::new();
     let state = ::netget::state::app_state::AppState::new();
-    assert!(
-        proto.get_async_actions(&state).is_empty(),
-        "WireGuard must advertise no user-triggered async actions"
+    let names: Vec<String> = proto
+        .get_async_actions(&state)
+        .into_iter()
+        .map(|a| a.name)
+        .collect();
+    assert_eq!(
+        names,
+        vec!["wireguard_add_peer".to_string()],
+        "WireGuard must advertise exactly wireguard_add_peer as its async action, got {names:?}"
     );
 }
 
@@ -321,6 +329,178 @@ fn metadata_is_beta_not_stable() {
 }
 
 // ---------------------------------------------------------------------------
+// wireguard_add_peer: the pre-authorization action that makes the flow reachable
+//
+// The config-mutation logic (`build_peer_config`) is a pure function so it can be
+// tested with no root and no WireGuard backend: it is exactly what add_peer feeds
+// to `configure_peer`, so validating it validates the key + allowed-ips that would
+// be pushed to the interface, and its fail-closed rejection of a malformed key.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn build_peer_config_accepts_valid_key_and_ips() {
+    use ::netget::server::wireguard::build_peer_config;
+    let key = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=";
+    let peer = build_peer_config(
+        key,
+        &["10.20.30.2/32".to_string(), "10.20.30.3/32".to_string()],
+        Some("203.0.113.45:51820".parse().unwrap()),
+    )
+    .expect("valid key + ips must build a peer config");
+
+    // The peer pushed to configure_peer carries exactly the requested key, IPs and
+    // endpoint - i.e. add_peer would authorize precisely this key.
+    assert_eq!(peer.public_key.to_string(), key);
+    let ips: Vec<String> = peer.allowed_ips.iter().map(|m| m.to_string()).collect();
+    assert_eq!(ips, vec!["10.20.30.2/32", "10.20.30.3/32"]);
+    assert_eq!(
+        peer.endpoint.map(|e| e.to_string()),
+        Some("203.0.113.45:51820".to_string())
+    );
+}
+
+#[test]
+fn build_peer_config_rejects_malformed_key() {
+    use ::netget::server::wireguard::build_peer_config;
+    // A malformed public key must fail-closed rather than configure a garbage peer.
+    let err = build_peer_config("not-a-valid-wireguard-key", &["10.20.30.2/32".to_string()], None)
+        .expect_err("malformed public key must be rejected");
+    assert!(
+        err.to_string().to_lowercase().contains("public key"),
+        "error should name the public key, got: {err}"
+    );
+}
+
+#[test]
+fn build_peer_config_rejects_empty_and_malformed_allowed_ips() {
+    use ::netget::server::wireguard::build_peer_config;
+    let key = "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=";
+
+    // Empty allowed_ips: a peer that can route nothing must be refused.
+    let err = build_peer_config(key, &[], None).expect_err("empty allowed_ips must be rejected");
+    assert!(
+        err.to_string().contains("allowed_ips"),
+        "error should name allowed_ips, got: {err}"
+    );
+
+    // A malformed CIDR must fail the whole request rather than being silently
+    // dropped, which would configure fewer routes than the operator asked for.
+    let err = build_peer_config(key, &["not-a-cidr".to_string()], None)
+        .expect_err("malformed allowed IP must be rejected");
+    assert!(
+        err.to_string().contains("Invalid allowed IP"),
+        "error should name the bad IP, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn add_peer_action_is_declared_and_documented() {
+    // The async action the model is offered must exist and require the two fields
+    // add_peer needs. This is what makes the authorize decision reachable up front.
+    let proto = WireguardProtocol::new();
+    let state = ::netget::state::app_state::AppState::new();
+    let def = proto
+        .get_async_actions(&state)
+        .into_iter()
+        .find(|a| a.name == "wireguard_add_peer")
+        .expect("wireguard_add_peer must be advertised");
+
+    let required: Vec<&str> = def
+        .parameters
+        .iter()
+        .filter(|p| p.required)
+        .map(|p| p.name.as_str())
+        .collect();
+    assert!(required.contains(&"public_key"), "public_key must be required");
+    assert!(required.contains(&"allowed_ips"), "allowed_ips must be required");
+}
+
+#[tokio::test]
+async fn add_peer_via_stateless_execute_action_errors_without_server() {
+    // Dispatched on the stateless protocol struct (no server context), the action
+    // must NOT silently succeed - there is no interface to configure.
+    let proto = WireguardProtocol::new();
+    proto
+        .execute_action(json!({
+            "type": "wireguard_add_peer",
+            "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+            "allowed_ips": ["10.20.30.2/32"]
+        }))
+        .expect_err("wireguard_add_peer without a running server must error, not no-op");
+}
+
+#[tokio::test]
+async fn add_peer_via_state_fails_closed_without_server_id() {
+    // execute_action_with_state with no server_id must fail-closed: no server to
+    // reach, so no peer is added. A missing authorization must never become an
+    // accept-all.
+    let proto = WireguardProtocol::new();
+    let state = ::netget::state::app_state::AppState::new();
+    let err = proto
+        .execute_action_with_state(
+            json!({
+                "type": "wireguard_add_peer",
+                "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+                "allowed_ips": ["10.20.30.2/32"]
+            }),
+            state,
+            None,
+        )
+        .await
+        .expect_err("wireguard_add_peer with no server id must fail-closed");
+    assert!(
+        err.to_string().contains("server"),
+        "error should explain the missing server context, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn add_peer_via_state_rejects_empty_allowed_ips_before_touching_server() {
+    // Validation happens before the server lookup, so a request that can route
+    // nothing is refused rather than reaching the interface. Fail-closed input.
+    let proto = WireguardProtocol::new();
+    let state = ::netget::state::app_state::AppState::new();
+    let err = proto
+        .execute_action_with_state(
+            json!({
+                "type": "wireguard_add_peer",
+                "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+                "allowed_ips": []
+            }),
+            state,
+            None,
+        )
+        .await
+        .expect_err("empty allowed_ips must be rejected");
+    assert!(
+        err.to_string().contains("allowed_ips"),
+        "error should name allowed_ips, got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn execute_action_with_state_delegates_non_add_peer_actions() {
+    // Sync actions carry no live-state needs, so the override must forward them to
+    // the stateless executor verbatim (here: disconnect_peer -> structured Output).
+    let proto = WireguardProtocol::new();
+    let state = ::netget::state::app_state::AppState::new();
+    let result = proto
+        .execute_action_with_state(
+            json!({
+                "type": "disconnect_peer",
+                "public_key": "xTIBA5rboUvnH4htodjb6e697QjLERt1NAB4mZqp8Dg=",
+                "reason": "test"
+            }),
+            state,
+            None,
+        )
+        .await
+        .expect("disconnect_peer must be delegated and succeed");
+    let out = output_json(result);
+    assert_eq!(out["action"], "disconnect_peer");
+}
+
+// ---------------------------------------------------------------------------
 // Root-gated real-backend harness.
 //
 // This is the ONLY path that could exercise a real handshake, and it needs root
@@ -330,15 +510,14 @@ fn metadata_is_beta_not_stable() {
 // never skips-as-pass. That is deliberate: a green tick here must mean the real
 // backend actually came up, not that the test quietly gave up.
 //
-// NOTE for whoever runs this with privilege: even once the interface is up, a
-// real client will NOT drive the wireguard_peer_connected flow as-is. WireGuard
-// responders drop a handshake whose static key is not already a configured peer,
-// but NetGet only authorizes peers reactively after they appear - see caveat (1)
-// in metadata(). Earning Stable requires fixing that (pre-registering the peer's
-// public key), then asserting: the handshake response message, that a transport
-// data packet authenticates and decrypts to the expected plaintext, and that a
-// forged/replayed packet is rejected. A `boringtun` in-process initiator is the
-// recommended driver for that work.
+// NOTE for whoever runs this with privilege: the reactive-only gap is now closed
+// by `wireguard_add_peer` - pre-authorize the initiator's static public key first
+// (a WireGuard responder drops a handshake from an unconfigured key), then a real
+// client's handshake will be accepted and `wireguard_peer_connected` will fire.
+// Earning Stable requires driving that end to end and then asserting: the handshake
+// response message, that a transport data packet authenticates and decrypts to the
+// expected plaintext, and that a forged/replayed packet is rejected. A `boringtun`
+// in-process initiator is the recommended driver for that work.
 // ---------------------------------------------------------------------------
 
 #[tokio::test]

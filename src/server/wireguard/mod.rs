@@ -9,8 +9,17 @@
 //! # What the LLM actually controls
 //!
 //! WireGuard performs its handshake in the kernel/userspace backend, so NetGet
-//! cannot gate the handshake itself. Instead, a peer monitoring loop polls the
-//! interface every 5 seconds and, when a *new* peer appears, raises a
+//! cannot gate the handshake crypto itself. Control has two levers:
+//!
+//! **Up front (user-triggered):** `wireguard_add_peer` pre-authorizes a peer's
+//! public key + allowed IPs on the live interface *before* it connects. A WireGuard
+//! responder drops a handshake whose static key is not already configured, so this
+//! is what makes a new peer's handshake succeed and the authorize decision
+//! reachable at all. Dispatched via [`crate::llm::actions::protocol_trait::Server::execute_action_with_state`]
+//! against the [`WireguardServer`] handle registered in `spawn`.
+//!
+//! **Post-handshake (event-driven):** a peer monitoring loop polls the interface
+//! every 5 seconds and, when a *new* peer appears, raises a
 //! `wireguard_peer_connected` event. That event is routed through
 //! [`crate::llm::action_helper::call_llm`], which first tries any configured
 //! script/static event handler and only falls back to a real LLM call when none
@@ -19,10 +28,14 @@
 //! - `authorize_peer` -> peer is (re)configured with the given `allowed_ips`
 //! - `disconnect_peer` / `reject_peer` -> peer is removed from the interface
 //!
+//! Fail-closed throughout: with no `wireguard_add_peer` call, an unknown peer's
+//! handshake is dropped by the backend and it never appears.
+//!
 //! # Limitations
 //!
 //! - Peers are observed *after* their handshake succeeds; the LLM cannot block a
-//!   handshake before it completes.
+//!   handshake before it completes (but it can refuse to pre-add the key, which
+//!   *does* prevent the handshake from ever succeeding).
 //! - `set_peer_traffic_limit` is recorded but NOT enforced (no tc/iptables setup).
 //! - Requires root / CAP_NET_ADMIN to create the interface.
 
@@ -81,6 +94,56 @@ pub struct WireguardServer {
     peers: Arc<RwLock<HashMap<String, ConnectionId>>>,
     /// LLM client used to raise peer events (script/static handlers take priority)
     llm_client: Arc<OllamaClient>,
+    /// Status stream used for dual logging. Stored on the struct so live-instance
+    /// actions (reached via `execute_action_with_state`) can log to the same TUI/MCP
+    /// stream as the monitoring loop without having a channel threaded in.
+    status_tx: mpsc::UnboundedSender<String>,
+}
+
+/// Build a validated `WGPeer` from action inputs.
+///
+/// This is the config-mutation logic for pre-adding / (re)configuring a peer, split
+/// out as a pure function so it can be unit-tested without a running WireGuard
+/// backend (creating the interface needs root, and on macOS the external
+/// `wireguard-go` binary). It is the single validation point shared by the reactive
+/// `authorize_peer` path and the new user-triggered `wireguard_add_peer` action.
+///
+/// Fail-closed: a malformed public key, an unparyseable allowed-IP, or an empty
+/// allowed-IP list is an `Err`, so nothing half-valid is ever pushed to
+/// `configure_peer`. It never fabricates a peer for missing input.
+pub fn build_peer_config(
+    public_key: &str,
+    allowed_ips: &[String],
+    endpoint: Option<SocketAddr>,
+) -> Result<WGPeer> {
+    let peer_key: Key = public_key
+        .parse()
+        .with_context(|| format!("Invalid peer public key: {}", short_key(public_key)))?;
+
+    if allowed_ips.is_empty() {
+        return Err(anyhow::anyhow!(
+            "allowed_ips must not be empty - a peer with no allowed IPs can route nothing"
+        ));
+    }
+
+    // Reject the whole request if any allowed-IP is malformed rather than silently
+    // dropping it: a peer configured with fewer routes than asked for is a policy
+    // surprise, and the caller should see the error and fix it.
+    let mut allowed_ip_masks: Vec<IpAddrMask> = Vec::with_capacity(allowed_ips.len());
+    for ip_str in allowed_ips {
+        let mask = ip_str
+            .parse::<IpAddrMask>()
+            .with_context(|| format!("Invalid allowed IP (expected CIDR, e.g. 10.20.30.2/32): {ip_str}"))?;
+        allowed_ip_masks.push(mask);
+    }
+
+    let mut peer = WGPeer::new(peer_key);
+    peer.allowed_ips = allowed_ip_masks;
+    if let Some(ep) = endpoint {
+        peer.endpoint = Some(ep);
+    }
+
+    Ok(peer)
 }
 
 impl WireguardServer {
@@ -182,7 +245,17 @@ impl WireguardServer {
             listen_port,
             peers: peers.clone(),
             llm_client,
+            status_tx: status_tx.clone(),
         });
+
+        // Register the live server instance so user-triggered actions
+        // (wireguard_add_peer) can reach it via `AppState::server_handle`. Without
+        // this the action executor only ever sees the stateless protocol struct and
+        // could not touch the interface. Dropped automatically when the server is
+        // removed, so it can never outlive the interface it points at.
+        app_state
+            .register_server_handle(server_id, server.clone())
+            .await;
 
         // Spawn monitoring task to track peer connections
         let server_clone = server.clone();
@@ -455,7 +528,7 @@ impl WireguardServer {
                         .and_then(|s| s.parse::<SocketAddr>().ok())
                         .or(endpoint);
 
-                    if let Err(e) = self.add_peer(public_key.clone(), ips, ep, status_tx).await {
+                    if let Err(e) = self.add_peer(public_key.clone(), ips, ep).await {
                         error!("Failed to authorize WireGuard peer {}: {}", public_key, e);
                         let _ = status_tx.send(format!("[ERROR] authorize_peer failed: {}", e));
                     }
@@ -479,16 +552,23 @@ impl WireguardServer {
         }
     }
 
-    /// Add a peer to the WireGuard interface (called by LLM action)
+    /// Add / (re)configure a peer on the WireGuard interface.
+    ///
+    /// Used by both the reactive `authorize_peer` path (after a peer already
+    /// appeared) and the user-triggered `wireguard_add_peer` action (to
+    /// **pre-authorize** a peer's public key *before* it handshakes). A WireGuard
+    /// responder drops a handshake whose static key is not already a configured
+    /// peer, so pre-adding the key is what makes a subsequent handshake succeed and
+    /// `wireguard_peer_connected` reachable. Fail-closed: with no such call, no peer
+    /// is configured and the handshake is dropped by the backend.
     pub async fn add_peer(
         &self,
         peer_public_key: String,
         allowed_ips: Vec<String>,
         endpoint: Option<SocketAddr>,
-        status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
         info!("Adding WireGuard peer: {}", peer_public_key);
-        let _ = status_tx.send(format!(
+        let _ = self.status_tx.send(format!(
             "[INFO] Adding peer: {}",
             short_key(&peer_public_key)
         ));
@@ -506,26 +586,9 @@ impl WireguardServer {
             ));
         }
 
-        // Parse peer public key
-        let peer_key: Key = peer_public_key.parse().context("Invalid peer public key")?;
-
-        // Parse allowed IPs
-        let allowed_ip_masks: Vec<IpAddrMask> = allowed_ips
-            .iter()
-            .filter_map(|ip_str| ip_str.parse::<IpAddrMask>().ok())
-            .collect();
-
-        if allowed_ip_masks.is_empty() {
-            return Err(anyhow::anyhow!("No valid allowed IPs provided"));
-        }
-
-        // Create peer configuration
-        let mut peer = WGPeer::new(peer_key);
-        peer.allowed_ips = allowed_ip_masks;
-
-        if let Some(ep) = endpoint {
-            peer.endpoint = Some(ep);
-        }
+        // Validate and build the peer config (single validation point; fail-closed
+        // on a malformed key or bad/empty allowed IPs).
+        let peer = build_peer_config(&peer_public_key, &allowed_ips, endpoint)?;
 
         // Configure peer
         let wgapi = self.wgapi.write().await;
@@ -534,7 +597,7 @@ impl WireguardServer {
             .context("Failed to configure peer")?;
 
         info!("WireGuard peer added successfully: {}", peer_public_key);
-        let _ = status_tx.send(format!(
+        let _ = self.status_tx.send(format!(
             "→ Peer authorized: {}",
             short_key(&peer_public_key)
         ));
