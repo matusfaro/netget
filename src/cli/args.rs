@@ -34,10 +34,20 @@ fn default_log_level() -> String {
 /// terminal" - only trailing-argument prompts worked non-interactively, despite
 /// `cat prompt.txt | netget` being advertised in --help.
 ///
-/// Reading is lazy as well as once: `--mcp`, `--mcp-http`, `--simple` and
-/// `--client` all return before either accessor is called, so stdin is never
-/// touched in the modes that need it for their own protocol. An interactive
-/// terminal is left alone entirely.
+/// Reading is lazy as well as once: `--mcp`, `--mcp-http`, `--simple`,
+/// `--client` and `--server` all return before either accessor is called, so
+/// stdin is never touched in the modes that need it for their own protocol. An
+/// interactive terminal is left alone entirely.
+///
+/// It is also only consulted when stdin is genuinely a prompt/actions *source*:
+/// the two accessors below skip it whenever a trailing-argument prompt (or
+/// `--load`) is present, because then the prompt does not come from stdin and
+/// draining it is pure downside. That guard is what lets the stdio pipe-filter
+/// (`prog | netget "be a filter" | prog`) start: its stdin is an open,
+/// never-EOF pipe, and the blocking `read_to_string` below would otherwise hang
+/// the whole process before any server could start. `cat prompt.txt | netget`
+/// still works — there is no trailing prompt there, so stdin is the source and
+/// is read.
 fn piped_stdin() -> &'static str {
     static PIPED: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     PIPED
@@ -610,16 +620,26 @@ impl Args {
             }
         }
 
-        // Third priority: stdin if not a terminal (piped/redirected input)
-        let piped = piped_stdin();
-        if !piped.is_empty() && save_load::is_actions_json(piped) {
-            // Parse {"actions": [...]} format and extract the array
-            let parsed: serde_json::Value = serde_json::from_str(piped)?;
-            let actions = parsed["actions"]
-                .as_array()
-                .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
-                .clone();
-            return Ok(Some(actions));
+        // Third priority: stdin, but ONLY when no trailing prompt was given.
+        //
+        // When trailing args are present the prompt/actions come from there, and
+        // stdin is not a source — it may instead be a live pipe feeding a stdio
+        // server (`prog | netget "be a filter"`). Consulting `piped_stdin()`
+        // there would block forever on that never-EOF pipe before any server
+        // starts. With no trailing args stdin IS the source, so
+        // `echo '{"actions":...}' | netget` and `cat prompt.txt | netget` still
+        // read it (those pipes reach EOF).
+        if self.prompt.is_empty() {
+            let piped = piped_stdin();
+            if !piped.is_empty() && save_load::is_actions_json(piped) {
+                // Parse {"actions": [...]} format and extract the array
+                let parsed: serde_json::Value = serde_json::from_str(piped)?;
+                let actions = parsed["actions"]
+                    .as_array()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid actions format"))?
+                    .clone();
+                return Ok(Some(actions));
+            }
         }
 
         // No actions JSON available

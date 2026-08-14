@@ -21,26 +21,35 @@ handled:
 
 Only one stdio server may run per process (an `AtomicBool` claim, released on task end/abort).
 
-### The startup constraint (important, non-obvious)
+### Launching it (three working paths, live stdin — IMPROVEMENTS item 12, fixed)
 
-**NetGet must be launched via actions-JSON / `--load`, not a natural-language prompt.** NetGet's
-prompt resolution (`Args::get_actions_json` → `piped_stdin`, `src/cli/args.rs`) does a **blocking
-`read_to_string` on stdin** whenever the invocation is *not* actions-JSON — it exists to support
-`cat prompt.txt | netget`. With an open, never-EOF stdin pipe that read blocks forever, *before any
-server starts*, so a natural-language prompt (whether an arg or piped in) can never hand a live
-stdin to the stdio server. Passing a `{"actions": [ {"type":"open_server","base_stack":"stdio"} ]}`
-argument, or `--load file.netget`, returns before `piped_stdin()` is ever called and leaves stdin
-intact. **This is the sanctioned launch path.** It is a NetGet-bootstrap fact, not something this
-protocol can change without editing core arg handling.
+All three of these hand the stdio server a live, never-EOF stdin:
 
-### The stdout-sharing caveat (known limitation)
+- **`prog | netget --server stdio -- <instruction> | prog`** — the recommended shape. The
+  `--server` flag returns from `run_server_direct` *before* NetGet's prompt resolution runs, so
+  stdin is never touched during bootstrap.
+- **`prog | netget "be a stdio filter" | prog`** — a natural-language prompt as a trailing arg
+  now also works. `Args::get_actions_json` / `get_prompt` (`src/cli/args.rs`) only consult
+  `piped_stdin()` when **no** trailing prompt is present; with a prompt given, stdin is left for
+  the server.
+- **actions-JSON / `--load`** — `{"actions":[{"type":"open_server","base_stack":"stdio"}]}` or a
+  `.netget` file; returns before `piped_stdin()` is ever called.
 
-In the non-interactive runner the status stream is also `println!`'d to **stdout**
-(`src/cli/non_interactive.rs`), so the stdout byte stream is *not* pristine — the model's
-`write_stdout` bytes are interleaved with NetGet status lines. For a genuinely clean downstream
-pipe this would need the status stream routed off stdout (e.g. to stderr); that is a core-runner
-change and a documented follow-up, not done here. The model's output is present and correct on
-stdout; it just shares the channel.
+The old hazard, now removed: `piped_stdin` used to do an unconditional blocking `read_to_string`
+on stdin for any non-actions-JSON invocation (to support `cat prompt.txt | netget`). On an open
+pipe that hung forever before any server started, so only actions-JSON could launch a live-stdin
+stdio server. The read is now skipped whenever a trailing prompt or `--load` supplies the input,
+and `cat prompt.txt | netget` (no trailing prompt) still reads stdin as before.
+
+### stdout is kept pristine for the payload (IMPROVEMENTS item 12, fixed)
+
+The non-interactive runner used to `println!` its status stream to **stdout**, interleaving
+NetGet status lines with the model's `write_stdout` bytes. It no longer does: whenever a server
+that owns the process's real stdout is running (currently only `stdio`), NetGet routes all of its
+own status/log lines to **stderr** instead (`src/cli/non_interactive.rs` `emit_status_line` /
+`server_owns_stdout`; `--server stdio` decides this up front in `run_server_direct`). Tracing
+logs already go to stderr in non-interactive mode. So a downstream pipe receives **only** the
+model's payload. Every other protocol keeps status on stdout, which the E2E harness parses.
 
 ## What the model sees and controls
 
@@ -67,7 +76,15 @@ an action error not a panic — the `send_tcp_data` lesson.
 
 ## Verified
 
-`tests/server/stdio/e2e_test.rs`: the NetGet binary is spawned as a real child with piped
-stdin/stdout, started via actions-JSON; a line typed on its stdin is answered by the mocked model
-with an uppercased line on stdout, asserted on the child's real stdout. `verify_calls()` confirms
-the one event round-trip.
+`tests/server/stdio/e2e_test.rs` spawns the NetGet binary as a real child with piped stdin/stdout
+and a line typed on its stdin answered by the mocked model with an uppercased line:
+
+- `test_stdio_pipe_filter` — launched via **actions-JSON**; asserts `HELLO` on the child's real
+  stdout (tolerant `contains`, stderr nulled).
+- `test_stdio_server_flag_clean_stdout` — launched via **`--server stdio`** with a **live** piped
+  stdin and the instruction as the trailing prompt (the recommended shape). Asserts stdout is
+  **pristine** — only the model's `write_stdout` payload, none of NetGet's status vocabulary — and
+  that the status text (`Using model` / `Waiting for connections`) instead appears on **stderr**,
+  proving both IMPROVEMENTS-item-12 fixes: stdin not drained at bootstrap, status off stdout.
+
+Both confirm the single event round-trip via `verify_calls()`.

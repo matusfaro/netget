@@ -104,3 +104,128 @@ async fn test_stdio_pipe_filter() -> E2EResult<()> {
     mock_server.verify_calls().await?;
     Ok(())
 }
+
+/// The pipe-filter, launched the sanctioned way: `prog | netget --server stdio | prog`, with a
+/// **live** (never-EOF) piped stdin. Asserts the two IMPROVEMENTS-item-12 fixes together:
+///
+/// 1. **Bootstrap does not drain stdin.** The `--server` flag returns before NetGet's prompt
+///    resolution (`get_actions_json`/`get_prompt`) would blocking-`read_to_string` stdin, so the
+///    stdio server gets a live stdin and answers the typed line — a blocked bootstrap would hang
+///    here and the model would never be called.
+/// 2. **Status is OFF stdout.** NetGet's own status/log lines (`[SERVER] Using model`, `Server #N
+///    started`, `Waiting for connections`, `[STATUS] ...`) go to stderr in `--server stdio` mode,
+///    so the child's stdout carries ONLY the model's `write_stdout` payload — a clean downstream
+///    pipe. We assert stdout is pristine AND that the status text actually appears on stderr
+///    (proving it was rerouted, not lost).
+#[tokio::test]
+async fn test_stdio_server_flag_clean_stdout() -> E2EResult<()> {
+    let mock = MockLlmBuilder::new()
+        .on_event("stdio_input_received")
+        .and_event_data_contains("data", "hello")
+        .respond_with_actions(serde_json::json!([{
+            "type": "write_stdout",
+            "data": "HELLO\n"
+        }]))
+        .expect_calls(1)
+        .and()
+        .build();
+    let mock_server = MockOllamaServer::start(mock).await?;
+
+    // Launch via the --server flag with the instruction as the trailing prompt. No actions-JSON,
+    // no drained stdin: the fix under test is that this path leaves stdin live for the server.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_netget"))
+        .arg("--model")
+        .arg("qwen3-coder:30b")
+        .arg("--log-level")
+        .arg("info")
+        .arg("--ollama-url")
+        .arg(mock_server.base_url())
+        .arg("--ollama-lock")
+        .arg("--server")
+        .arg("stdio")
+        .arg("--")
+        .arg("For each stdin line, write its uppercase form to stdout")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()?;
+
+    let mut stdin = child.stdin.take().ok_or("no child stdin")?;
+    let mut stdout_lines = BufReader::new(child.stdout.take().ok_or("no child stdout")?).lines();
+
+    // Drain stderr in the background into a shared buffer (so its pipe never fills), and so we can
+    // assert the status text was routed here rather than dropped.
+    let stderr_buf = std::sync::Arc::new(tokio::sync::Mutex::new(String::new()));
+    let stderr_buf_reader = stderr_buf.clone();
+    let mut stderr_lines = BufReader::new(child.stderr.take().ok_or("no child stderr")?).lines();
+    let stderr_task = tokio::spawn(async move {
+        while let Ok(Some(line)) = stderr_lines.next_line().await {
+            let mut buf = stderr_buf_reader.lock().await;
+            buf.push_str(&line);
+            buf.push('\n');
+        }
+    });
+
+    // Let the process validate the model, start the stdio server, and claim stdin.
+    tokio::time::sleep(Duration::from_millis(2500)).await;
+
+    stdin.write_all(b"hello\n").await?;
+    stdin.flush().await?;
+
+    // Collect EVERY stdout line up to and including the payload. Any NetGet status line wrongly
+    // left on stdout would be emitted during startup and therefore appear here before HELLO.
+    let mut stdout_seen: Vec<String> = Vec::new();
+    let found = tokio::time::timeout(Duration::from_secs(15), async {
+        while let Ok(Some(line)) = stdout_lines.next_line().await {
+            let is_payload = line.contains("HELLO");
+            stdout_seen.push(line);
+            if is_payload {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+
+    let _ = child.kill().await;
+    let _ = stderr_task.await;
+
+    assert!(
+        found,
+        "stdout should carry the model's 'HELLO' (a hung bootstrap or wrong routing would fail this).\nstdout saw: {stdout_seen:?}"
+    );
+
+    // stdout must be pristine: nothing but the payload. None of NetGet's status/log vocabulary.
+    let status_markers = [
+        "[SERVER]",
+        "[STATUS]",
+        "Using model",
+        "started",
+        "Waiting for connections",
+        "is running",
+        "Server stopped",
+    ];
+    for line in &stdout_seen {
+        if line.contains("HELLO") {
+            continue;
+        }
+        for marker in status_markers {
+            assert!(
+                !line.contains(marker),
+                "NetGet status line leaked onto stdout (should be on stderr): {line:?}"
+            );
+        }
+    }
+
+    // And prove the status was rerouted to stderr, not merely suppressed.
+    let stderr = stderr_buf.lock().await.clone();
+    assert!(
+        stderr.contains("Waiting for connections") || stderr.contains("Using model"),
+        "expected NetGet status text on stderr; stderr was:\n{stderr}"
+    );
+
+    mock_server.verify_calls().await?;
+    Ok(())
+}

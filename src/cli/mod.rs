@@ -519,6 +519,12 @@ async fn run_server_direct(protocol: &str, args: &Args) -> Result<()> {
         .map(|p| p.protocol_name().to_string())
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
+    // The stdio pipe-filter owns the process's real stdout for the model's
+    // payload, so ALL of this function's own diagnostics (including the model
+    // line below) must go to stderr to keep that stream clean for a downstream
+    // pipe. Known from `canonical` alone, before any output is produced.
+    let to_stderr = non_interactive::protocol_owns_stdout(&canonical);
+
     let startup_params = args.parse_server_params()?;
     let instruction = args.server_instruction(&canonical);
     let settings = Settings::load();
@@ -556,7 +562,11 @@ async fn run_server_direct(protocol: &str, args: &Args) -> Result<()> {
                 anyhow::anyhow!("No model available — pull one in Ollama or pass --model")
             })?
     };
-    println!("[SERVER] Using model: {}", selected_model);
+    if to_stderr {
+        eprintln!("[SERVER] Using model: {}", selected_model);
+    } else {
+        println!("[SERVER] Using model: {}", selected_model);
+    }
     state.set_ollama_model(Some(selected_model)).await;
 
     if let Some(mode) = args
@@ -580,8 +590,9 @@ async fn run_server_direct(protocol: &str, args: &Args) -> Result<()> {
         .with_app_state(state.clone());
     state.set_llm_client(llm.clone()).await;
 
-    // Status channel + a forwarder that prints server startup/lifecycle lines to
-    // stdout, mirroring run_non_interactive so `--server` behaves the same way.
+    // Status channel + a forwarder that prints server startup/lifecycle lines.
+    // `to_stderr` (computed above) routes them off stdout for the stdio filter,
+    // so a downstream pipe receives only the model's payload bytes.
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
     let _forwarder = tokio::spawn(async move {
         use std::io::{self, Write};
@@ -593,8 +604,13 @@ async fn run_server_direct(protocol: &str, args: &Args) -> Result<()> {
                     .or_else(|| msg.strip_prefix("[WARN] "))
                     .or_else(|| msg.strip_prefix("[DEBUG] "))
                     .unwrap_or(&msg);
-                println!("{clean}");
-                let _ = io::stdout().flush();
+                if to_stderr {
+                    eprintln!("{clean}");
+                    let _ = io::stderr().flush();
+                } else {
+                    println!("{clean}");
+                    let _ = io::stdout().flush();
+                }
             }
         }
     });
@@ -618,12 +634,18 @@ async fn run_server_direct(protocol: &str, args: &Args) -> Result<()> {
     )
     .await?;
 
-    println!(
+    let started_line = format!(
         "Server #{} ({}) started, skipping the initial model call. Press Ctrl+C to stop.",
         server_id.as_u32(),
         canonical
     );
-    println!("Waiting for connections...\n");
+    if to_stderr {
+        eprintln!("{started_line}");
+        eprintln!("Waiting for connections...\n");
+    } else {
+        println!("{started_line}");
+        println!("Waiting for connections...\n");
+    }
 
     // Hand off to the shared non-interactive server loop (Ctrl+C + task ticker).
     let (_srv_tx, srv_rx) = mpsc::unbounded_channel::<String>();

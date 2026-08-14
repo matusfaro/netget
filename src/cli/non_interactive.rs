@@ -15,6 +15,58 @@ use crate::llm::OllamaClient;
 use crate::settings::Settings;
 use crate::state::app_state::{AppState, Mode};
 
+/// True for a protocol that writes the model's payload to the process's own real
+/// stdout — currently only the `stdio` pipe-filter. While such a server runs,
+/// NetGet's own status/log lines must be kept OFF stdout (routed to stderr) so a
+/// downstream pipe (`prog | netget | prog`) receives only the payload bytes. The
+/// match is case-insensitive because the protocol name reaches state as both
+/// `stdio` (base_stack) and `STDIO` (registry canonical name).
+pub(crate) fn protocol_owns_stdout(protocol: &str) -> bool {
+    protocol.eq_ignore_ascii_case("stdio")
+}
+
+/// Whether any currently-registered server owns the process's stdout (see
+/// [`protocol_owns_stdout`]). Checked per status message so routing flips to
+/// stderr the instant a stdio server is registered, leaving stdout pristine.
+pub(crate) async fn server_owns_stdout(state: &AppState) -> bool {
+    state
+        .get_all_servers()
+        .await
+        .iter()
+        .any(|s| protocol_owns_stdout(&s.protocol_name))
+}
+
+/// Whether an actions-JSON batch opens a server that owns the process's stdout
+/// (a stdio pipe-filter). Determined up front from the raw action JSON so the
+/// actions path can keep stdout pristine from the very first status line,
+/// without waiting for the server to register. Matches both `protocol` and its
+/// `base_stack` alias.
+pub(crate) fn actions_launch_stdout_owner(actions: &[serde_json::Value]) -> bool {
+    actions.iter().any(|a| {
+        if a.get("type").and_then(|v| v.as_str()) != Some("open_server") {
+            return false;
+        }
+        a.get("protocol")
+            .or_else(|| a.get("base_stack"))
+            .and_then(|v| v.as_str())
+            .map(protocol_owns_stdout)
+            .unwrap_or(false)
+    })
+}
+
+/// Print a status/log line to the correct stream: stderr when a stdio server
+/// owns stdout, otherwise stdout (the default the test harness parses).
+fn emit_status_line(line: &str, to_stderr: bool) {
+    use std::io::Write;
+    if to_stderr {
+        eprintln!("{line}");
+        let _ = std::io::stderr().flush();
+    } else {
+        println!("{line}");
+        let _ = std::io::stdout().flush();
+    }
+}
+
 /// Run NetGet in non-interactive mode with the given prompt
 pub async fn run_non_interactive(
     prompt: String,
@@ -122,10 +174,14 @@ pub async fn run_non_interactive(
     // Create status channel for messages from spawned servers
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
-    // Spawn a background task to forward status messages to stdout in real-time
-    // This ensures the test helper can see server startup messages as they happen
+    // Spawn a background task to forward status messages in real-time so the
+    // test helper can see server startup messages as they happen. Each message
+    // goes to stdout by default, but to STDERR while a stdio server is running:
+    // that server writes the model's payload to the process's real stdout, and
+    // status lines mixed in would corrupt a downstream pipe. The per-message
+    // check flips to stderr the moment the stdio server registers.
+    let status_state = state.clone();
     let _status_forwarder = tokio::spawn(async move {
-        use std::io::{self, Write};
         while let Some(msg) = status_rx.recv().await {
             // Skip internal control messages
             if !msg.starts_with("__") {
@@ -138,9 +194,7 @@ pub async fn run_non_interactive(
                     .unwrap_or(&msg)
                     .strip_prefix("[DEBUG] ")
                     .unwrap_or(&msg);
-                println!("{clean_msg}");
-                // Explicitly flush stdout to ensure message is visible immediately
-                let _ = io::stdout().flush();
+                emit_status_line(clean_msg, server_owns_stdout(&status_state).await);
             }
         }
     });
@@ -183,14 +237,22 @@ pub(crate) async fn run_server(
     // Create status channel for server messages
     let (status_tx, mut server_status_rx) = mpsc::unbounded_channel::<String>();
 
+    // Keep NetGet's own status lines OFF stdout while a stdio server is running,
+    // so a downstream pipe receives only the model's payload bytes. The server
+    // is already spawned by this point, so a single check settles the sink.
+    let to_stderr = server_owns_stdout(state).await;
+
     // Server should already be started by the interpret loop above
     // Just verify it exists and print status
     if let Some(server_id) = state.get_first_server_id().await {
-        println!(
-            "Server #{} is running. Press Ctrl+C to stop.",
-            server_id.as_u32()
+        emit_status_line(
+            &format!(
+                "Server #{} is running. Press Ctrl+C to stop.",
+                server_id.as_u32()
+            ),
+            to_stderr,
         );
-        println!("Waiting for connections...\n");
+        emit_status_line("Waiting for connections...\n", to_stderr);
     } else {
         return Err(anyhow::anyhow!(
             "No server configured. Use a command like 'listen on port 8080 via http'"
@@ -216,14 +278,14 @@ pub(crate) async fn run_server(
             // Check for shutdown
             _ = tokio::time::sleep(Duration::from_millis(100)) => {
                 if *shutdown.lock().await {
-                    println!("\nShutting down server...");
+                    emit_status_line("\nShutting down server...", to_stderr);
                     break;
                 }
 
                 // Process status messages from handler (drain remaining)
                 while let Ok(msg) = status_rx.try_recv() {
                     if !msg.starts_with("__") {
-                        println!("[STATUS] {msg}");
+                        emit_status_line(&format!("[STATUS] {msg}"), to_stderr);
                     }
                 }
 
@@ -232,7 +294,7 @@ pub(crate) async fn run_server(
 
                 // Process server status messages
                 while let Ok(msg) = server_status_rx.try_recv() {
-                    println!("[STATUS] {msg}");
+                    emit_status_line(&format!("[STATUS] {msg}"), to_stderr);
                 }
             }
 
@@ -244,7 +306,7 @@ pub(crate) async fn run_server(
         }
     }
 
-    println!("Server stopped.");
+    emit_status_line("Server stopped.", to_stderr);
     Ok(())
 }
 
@@ -302,6 +364,12 @@ pub async fn run_with_actions(
     // Store the configured LLM client in state so spawned servers can use it
     state.set_llm_client(llm.clone()).await;
 
+    // A stdio pipe-filter server writes the model's payload to the process's
+    // real stdout, so this batch's own status/log lines must go to stderr to
+    // keep that stream pristine for a downstream pipe. Decided up front from the
+    // action JSON so even the first "Loading ..." line lands on the right stream.
+    let to_stderr = actions_launch_stdout_owner(&actions);
+
     // Create status channel
     let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
 
@@ -310,12 +378,15 @@ pub async fn run_with_actions(
         while let Some(msg) = status_rx.recv().await {
             if !msg.starts_with("__") {
                 // Print status messages immediately for real-time output
-                println!("{}", msg);
+                emit_status_line(&msg, to_stderr);
             }
         }
     });
 
-    println!("Loading {} action(s)...\n", actions.len());
+    emit_status_line(
+        &format!("Loading {} action(s)...\n", actions.len()),
+        to_stderr,
+    );
 
     // Execute each action
     for (i, action) in actions.iter().enumerate() {
@@ -366,11 +437,14 @@ pub async fn run_with_actions(
                             } else {
                                 format!("({})", protocol)
                             };
-                            println!(
-                                "[{}] Opened server #{} on {}",
-                                i + 1,
-                                server_id.as_u32(),
-                                binding_desc
+                            emit_status_line(
+                                &format!(
+                                    "[{}] Opened server #{} on {}",
+                                    i + 1,
+                                    server_id.as_u32(),
+                                    binding_desc
+                                ),
+                                to_stderr,
                             );
                         }
                         Err(e) => {
@@ -404,12 +478,15 @@ pub async fn run_with_actions(
                     .await
                     {
                         Ok(client_id) => {
-                            println!(
-                                "[{}] Opened client #{} to {} ({})",
-                                i + 1,
-                                client_id.as_u32(),
-                                remote_addr,
-                                protocol
+                            emit_status_line(
+                                &format!(
+                                    "[{}] Opened client #{} to {} ({})",
+                                    i + 1,
+                                    client_id.as_u32(),
+                                    remote_addr,
+                                    protocol
+                                ),
+                                to_stderr,
                             );
                         }
                         Err(e) => {
@@ -418,10 +495,13 @@ pub async fn run_with_actions(
                     }
                 }
                 CommonAction::ShowMessage { message } => {
-                    println!("[{}] {}", i + 1, message);
+                    emit_status_line(&format!("[{}] {}", i + 1, message), to_stderr);
                 }
                 _ => {
-                    println!("[{}] Skipping unsupported action type", i + 1);
+                    emit_status_line(
+                        &format!("[{}] Skipping unsupported action type", i + 1),
+                        to_stderr,
+                    );
                 }
             }
         } else {
@@ -435,7 +515,7 @@ pub async fn run_with_actions(
     // Wait for the background task to print all remaining messages
     let _ = status_printer.await;
 
-    println!("\nConfiguration loaded successfully.");
+    emit_status_line("\nConfiguration loaded successfully.", to_stderr);
 
     // Check if we're in server mode
     if state.get_mode().await == Mode::Server {
