@@ -708,7 +708,7 @@ fn print_output_line(line: &str, footer: &mut StickyFooter, palette: &ColorPalet
         execute!(
             stdout,
             SetForegroundColor(palette.reasoning),
-            Print("🧠 "),
+            Print("∴ "),
             Print(line.strip_prefix("[REASONING]").unwrap()),
             ResetColor,
         )?;
