@@ -31,11 +31,12 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::Value;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::git::actions::{
@@ -43,7 +44,6 @@ use crate::server::git::actions::{
 };
 use crate::server::git::pack::{build_repo, hex_id, write_pack, BuiltRepo, CommitMeta, RepoFile};
 use crate::state::app_state::AppState;
-use crate::{console_error, console_info};
 
 /// Capabilities advertised on the first ref line.
 ///
@@ -82,7 +82,7 @@ impl GitServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "Git server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("Git server listening on {}", local_addr));
 
         let protocol = Arc::new(GitProtocol::new());
 
@@ -95,9 +95,8 @@ impl GitServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Git connection {} from {}", connection_id, remote_addr);
-                        let _ =
-                            status_tx.send(format!("[INFO] Git connection from {}", remote_addr));
+                        Log::new(Some(&status_tx))
+                            .info(format!("Git connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -163,15 +162,14 @@ impl GitServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("[INFO] Git connection {} closed", connection_id));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("Git connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Git connection: {}", e);
-                        let _ = status_tx
-                            .send(format!("[ERROR] Failed to accept Git connection: {}", e));
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept Git connection: {}", e));
                         break;
                     }
                 }
@@ -201,10 +199,7 @@ async fn handle_git_request(
         .unwrap_or("")
         .to_string();
 
-    debug!("Git request: {} {}", method, path);
-    let _ = ctx
-        .status_tx
-        .send(format!("[DEBUG] Git {} {}", method, path));
+    Log::new(Some(&ctx.status_tx)).debug(format!("Git {} {}", method, path));
 
     // Parse repository name from path
     // Format: /<repo>/info/refs or /<repo>/git-upload-pack
@@ -247,7 +242,8 @@ async fn handle_git_request(
             let body_bytes = match req.collect().await {
                 Ok(collected) => collected.to_bytes(),
                 Err(e) => {
-                    console_error!(ctx.status_tx, "Failed to read request body: {}", e);
+                    Log::new(Some(&ctx.status_tx))
+                        .error(format!("Failed to read request body: {}", e));
                     return Ok(build_error_response(
                         StatusCode::BAD_REQUEST,
                         "Failed to read request body",
@@ -255,14 +251,10 @@ async fn handle_git_request(
                 }
             };
 
-            trace!(
+            Log::new(Some(&ctx.status_tx)).trace(format!(
                 "Git upload-pack request body ({} bytes, encoding {:?})",
                 body_bytes.len(),
                 content_encoding
-            );
-            let _ = ctx.status_tx.send(format!(
-                "[TRACE] Git upload-pack request: {} bytes",
-                body_bytes.len()
             ));
 
             Ok(handle_upload_pack(&ctx, &repo, &body_bytes, &content_encoding).await)
@@ -324,8 +316,8 @@ async fn handle_info_refs(
     };
 
     let body = build_refs_advertisement(&repo_build);
-    let _ = ctx.status_tx.send(format!(
-        "→ Git advertised {} at {} for '{}'",
+    Log::new(Some(&ctx.status_tx)).info(format!(
+        "Git advertised {} at {} for '{}'",
         repo_build.branch,
         &repo_build.commit_hex()[..8],
         repo
@@ -406,16 +398,10 @@ async fn handle_upload_pack(
     if !request.wants.is_empty() && !request.wants.contains(&commit_hex) {
         // The two halves of the clone disagreed. Say exactly why, because the client-side
         // error ("did not send all necessary objects") gives no hint.
-        error!(
-            "Git upload-pack for '{}': client wants {:?} but the snapshot answered for this \
-             request builds commit {}. The git_info_refs and git_upload_pack events returned \
-             different repository content, so the clone will fail. Use a static or script \
-             event handler, or an instruction that pins the exact file contents.",
-            repo, request.wants, commit_hex
-        );
-        let _ = ctx.status_tx.send(format!(
-            "[ERROR] Git '{}': advertised commit and packed commit differ ({} vs {}); clone will \
-             fail. Pin the repository content with a static event handler.",
+        Log::new(Some(&ctx.status_tx)).error(format!(
+            "Git '{}': advertised commit and packed commit differ ({} vs {}); clone will \
+             fail. The git_info_refs and git_upload_pack events returned different repository \
+             content. Pin the repository content with a static event handler.",
             repo,
             request.wants.first().map(|w| &w[..8]).unwrap_or("?"),
             &commit_hex[..8]
@@ -435,8 +421,8 @@ async fn handle_upload_pack(
     body.extend_from_slice(&pktline::encode(b"NAK\n"));
     body.extend_from_slice(&pack);
 
-    let _ = ctx.status_tx.send(format!(
-        "→ Git sent pack for '{}' ({} objects, {} bytes)",
+    Log::new(Some(&ctx.status_tx)).info(format!(
+        "Git sent pack for '{}' ({} objects, {} bytes)",
         repo,
         repo_build.objects.len(),
         pack.len()
@@ -478,10 +464,7 @@ async fn resolve_repository(
     {
         Ok(result) => result,
         Err(e) => {
-            error!("Git: handling '{}' failed: {:#}", event.id(), e);
-            let _ = ctx
-                .status_tx
-                .send(format!("✗ Git LLM error on {}: {}", event.id(), e));
+            Log::new(Some(&ctx.status_tx)).warn(format!("Git LLM error on {}: {}", event.id(), e));
             return Err(build_error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "Server could not produce a repository for this request",
@@ -490,7 +473,7 @@ async fn resolve_repository(
     };
 
     for message in &execution_result.messages {
-        console_info!(ctx.status_tx, "{}", message);
+        Log::new(Some(&ctx.status_tx)).info(format!("{}", message));
     }
 
     for result in execution_result.protocol_results {
@@ -499,10 +482,8 @@ async fn resolve_repository(
                 match snapshot_to_repo(&data, &ctx.default_branch) {
                     Ok(build) => return Ok(Outcome::Repository(build)),
                     Err(e) => {
-                        error!("Git: invalid repository description: {:#}", e);
-                        let _ = ctx
-                            .status_tx
-                            .send(format!("✗ Git: invalid repository description: {}", e));
+                        Log::new(Some(&ctx.status_tx))
+                            .error(format!("Git: invalid repository description: {}", e));
                         return Err(build_error_response(
                             StatusCode::INTERNAL_SERVER_ERROR,
                             &format!("Invalid repository description: {}", e),
@@ -525,12 +506,8 @@ async fn resolve_repository(
         }
     }
 
-    warn!(
-        "Git: '{}' produced no git_repository or git_error action",
-        event.id()
-    );
-    let _ = ctx.status_tx.send(format!(
-        "✗ Git: no git_repository/git_error action for {}",
+    Log::new(Some(&ctx.status_tx)).warn(format!(
+        "Git: no git_repository/git_error action for {}",
         event.id()
     ));
     Err(build_error_response(

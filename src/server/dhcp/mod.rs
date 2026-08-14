@@ -7,16 +7,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::DhcpProtocol;
 use crate::state::app_state::AppState;
 use actions::DHCP_REQUEST_EVENT;
 
-use crate::{console_debug, console_trace};
 use actions::DhcpRequestContext;
 use dhcproto::{v4, Decodable, Decoder};
 
@@ -43,8 +42,7 @@ impl DhcpServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("DHCP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] DHCP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("DHCP server listening on {}", local_addr));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -57,12 +55,13 @@ impl DhcpServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
 
-                        // DEBUG: Log summary
-                        console_debug!(status_tx, "DHCP received {} bytes from {}", n, peer_addr);
+                        // DEBUG: Log summary (FileOnly, hot per-packet path)
+                        Log::new(Some(&status_tx))
+                            .debug(format!("DHCP received {} bytes from {}", n, peer_addr));
 
-                        // TRACE: Log full payload (always hex for DHCP)
+                        // TRACE: Log full payload (always hex for DHCP, FileOnly)
                         let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "DHCP data (hex): {}", hex_str);
+                        Log::new(Some(&status_tx)).trace(format!("DHCP data (hex): {}", hex_str));
 
                         // A datagram that does not decode - or decodes without a DHCP message
                         // type option - is not a DHCP request. Raising `dhcp_request` for it
@@ -70,13 +69,8 @@ impl DhcpServer {
                         // "unknown" in every field, out of which no reply could be built:
                         // `base_reply` has no transaction id to echo and errors. Drop it.
                         let Some((_, Some(request_ctx))) = Self::parse_dhcp_message(&data) else {
-                            tracing::warn!(
+                            Log::new(Some(&status_tx)).warn(format!(
                                 "Dropping non-DHCP datagram ({} bytes) from {}",
-                                n,
-                                peer_addr
-                            );
-                            let _ = status_tx.send(format!(
-                                "[WARN] Dropping non-DHCP datagram ({} bytes) from {}",
                                 n, peer_addr
                             ));
                             continue;
@@ -140,11 +134,8 @@ impl DhcpServer {
 
                             let event = Event::new(&DHCP_REQUEST_EVENT, event_data);
 
-                            debug!("DHCP calling LLM for request from {}", peer_addr);
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] DHCP calling LLM for request from {}",
-                                peer_addr
-                            ));
+                            Log::new(Some(&status_clone))
+                                .debug(format!("DHCP calling LLM for request from {}", peer_addr));
 
                             match call_llm(
                                 &llm_clone,
@@ -158,16 +149,11 @@ impl DhcpServer {
                             {
                                 Ok(execution_result) => {
                                     for message in &execution_result.messages {
-                                        info!("{}", message);
-                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                        Log::new(Some(&status_clone)).info(format!("{}", message));
                                     }
 
-                                    debug!(
+                                    Log::new(Some(&status_clone)).debug(format!(
                                         "DHCP got {} protocol results",
-                                        execution_result.protocol_results.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] DHCP got {} protocol results",
                                         execution_result.protocol_results.len()
                                     ));
 
@@ -178,50 +164,39 @@ impl DhcpServer {
                                             let _ =
                                                 socket_clone.send_to(output_data, peer_addr).await;
 
-                                            // DEBUG: Log summary
-                                            debug!(
+                                            let log = Log::new(Some(&status_clone));
+
+                                            // DEBUG: Log summary (FileOnly, hot per-packet path)
+                                            log.debug(format!(
                                                 "DHCP sent {} bytes to {}",
                                                 output_data.len(),
                                                 peer_addr
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] DHCP sent {} bytes to {}",
-                                                output_data.len(),
-                                                peer_addr
                                             ));
 
-                                            // TRACE: Log full payload
+                                            // TRACE: Log full payload (FileOnly)
                                             let hex_str = hex::encode(output_data);
-                                            trace!("DHCP sent (hex): {}", hex_str);
-                                            let _ = status_clone.send(format!(
-                                                "[TRACE] DHCP sent (hex): {}",
-                                                hex_str
-                                            ));
+                                            log.trace(format!("DHCP sent (hex): {}", hex_str));
 
-                                            let _ = status_clone.send(format!(
-                                                "→ DHCP response to {} ({} bytes)",
+                                            log.info(format!(
+                                                "DHCP response to {} ({} bytes)",
                                                 peer_addr,
                                                 output_data.len()
                                             ));
                                         } else {
-                                            debug!("DHCP protocol result has no output data");
-                                            let _ = status_clone.send(
-                                                "[DEBUG] DHCP protocol result has no output data"
-                                                    .to_string(),
-                                            );
+                                            Log::new(Some(&status_clone))
+                                                .debug("DHCP protocol result has no output data");
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("DHCP LLM call failed: {}", e);
-                                    let _ = status_clone.send(format!("✗ DHCP LLM error: {}", e));
+                                    Log::new(Some(&status_clone))
+                                        .error(format!("DHCP LLM error: {}", e));
                                 }
                             }
                         });
                     }
                     Err(e) => {
-                        error!("DHCP receive error: {}", e);
-                        let _ = status_tx.send(format!("✗ DHCP receive error: {}", e));
+                        Log::new(Some(&status_tx)).error(format!("DHCP receive error: {}", e));
                         break;
                     }
                 }

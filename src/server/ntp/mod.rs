@@ -7,15 +7,15 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::{ActionResult, Server};
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::NtpProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
 use actions::NTP_REQUEST_EVENT;
 
 /// NTP server that forwards requests to LLM
@@ -32,8 +32,7 @@ impl NtpServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("NTP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] NTP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("NTP server listening on {}", local_addr));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -73,12 +72,13 @@ impl NtpServer {
                             .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-                        // DEBUG: Log summary
-                        console_debug!(status_tx, "NTP received {} bytes from {}", n, peer_addr);
+                        // DEBUG: Log summary (FileOnly, hot per-packet path)
+                        Log::new(Some(&status_tx))
+                            .debug(format!("NTP received {} bytes from {}", n, peer_addr));
 
-                        // TRACE: Log full payload (always hex for NTP)
+                        // TRACE: Log full payload (always hex for NTP, FileOnly)
                         let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "NTP data (hex): {}", hex_str);
+                        Log::new(Some(&status_tx)).trace(format!("NTP data (hex): {}", hex_str));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -176,11 +176,8 @@ impl NtpServer {
                                 return;
                             }
 
-                            debug!("NTP calling LLM for request from {}", peer_addr);
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] NTP calling LLM for request from {}",
-                                peer_addr
-                            ));
+                            Log::new(Some(&status_clone))
+                                .debug(format!("NTP calling LLM for request from {}", peer_addr));
 
                             match call_llm(
                                 &llm_clone,
@@ -195,26 +192,17 @@ impl NtpServer {
                                 Ok(execution_result) => {
                                     // Display messages from LLM
                                     for message in &execution_result.messages {
-                                        info!("{}", message);
-                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                        Log::new(Some(&status_clone)).info(format!("{}", message));
                                     }
 
-                                    debug!(
+                                    Log::new(Some(&status_clone)).debug(format!(
                                         "NTP parsed {} actions",
-                                        execution_result.raw_actions.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] NTP parsed {} actions",
                                         execution_result.raw_actions.len()
                                     ));
 
                                     // Process protocol results
-                                    debug!(
+                                    Log::new(Some(&status_clone)).debug(format!(
                                         "NTP got {} protocol results",
-                                        execution_result.protocol_results.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] NTP got {} protocol results",
                                         execution_result.protocol_results.len()
                                     ));
 
@@ -225,37 +213,27 @@ impl NtpServer {
                                             let _ =
                                                 socket_clone.send_to(output_data, peer_addr).await;
 
-                                            // DEBUG: Log summary
-                                            debug!(
+                                            let log = Log::new(Some(&status_clone));
+
+                                            // DEBUG: Log summary (FileOnly, hot per-packet path)
+                                            log.debug(format!(
                                                 "NTP sent {} bytes to {}",
                                                 output_data.len(),
                                                 peer_addr
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] NTP sent {} bytes to {}",
-                                                output_data.len(),
-                                                peer_addr
                                             ));
 
-                                            // TRACE: Log full payload (always hex for NTP)
+                                            // TRACE: Log full payload (always hex for NTP, FileOnly)
                                             let hex_str = hex::encode(output_data);
-                                            trace!("NTP sent (hex): {}", hex_str);
-                                            let _ = status_clone.send(format!(
-                                                "[TRACE] NTP sent (hex): {}",
-                                                hex_str
-                                            ));
+                                            log.trace(format!("NTP sent (hex): {}", hex_str));
 
-                                            let _ = status_clone.send(format!(
-                                                "→ NTP response to {} ({} bytes)",
+                                            log.info(format!(
+                                                "NTP response to {} ({} bytes)",
                                                 peer_addr,
                                                 output_data.len()
                                             ));
                                         } else {
-                                            debug!("NTP protocol result has no output data");
-                                            let _ = status_clone.send(
-                                                "[DEBUG] NTP protocol result has no output data"
-                                                    .to_string(),
-                                            );
+                                            Log::new(Some(&status_clone))
+                                                .debug("NTP protocol result has no output data");
                                         }
                                     }
                                 }
@@ -267,12 +245,8 @@ impl NtpServer {
                                     // never be a lie in the operator's favour — so send it and
                                     // say so, rather than dropping the request or inventing a
                                     // clock reading.
-                                    error!(
-                                        "NTP LLM call failed for request from {} ({}): {} — falling back to static time response",
-                                        peer_addr, connection_id, e
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "✗ NTP LLM error: {} — sending static time response",
+                                    Log::new(Some(&status_clone)).warn(format!(
+                                        "NTP LLM error: {} — sending static time response",
                                         e
                                     ));
                                     send_static_time_response(
@@ -346,13 +320,8 @@ async fn send_static_time_response(
     match protocol.execute_action(action) {
         Ok(ActionResult::Output(bytes)) => {
             let _ = socket.send_to(&bytes, peer_addr).await;
-            debug!(
-                "NTP sent static time response ({} bytes) to {}",
-                bytes.len(),
-                peer_addr
-            );
-            let _ = status.send(format!(
-                "→ NTP static time response to {} ({} bytes)",
+            Log::new(Some(status)).info(format!(
+                "NTP static time response to {} ({} bytes)",
                 peer_addr,
                 bytes.len()
             ));
@@ -364,11 +333,7 @@ async fn send_static_time_response(
             );
         }
         Err(e) => {
-            error!(
-                "NTP failed to build static time response for {}: {}",
-                peer_addr, e
-            );
-            let _ = status.send(format!("✗ NTP static time response failed: {e}"));
+            Log::new(Some(status)).error(format!("NTP static time response failed: {e}"));
         }
     }
 }

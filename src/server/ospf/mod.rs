@@ -19,11 +19,12 @@ use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::console_info;
 #[cfg(feature = "ospf")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "ospf")]
 use crate::llm::ollama_client::OllamaClient;
+#[cfg(feature = "ospf")]
+use crate::logging::emit::Log;
 #[cfg(feature = "ospf")]
 use crate::protocol::Event;
 #[cfg(feature = "ospf")]
@@ -108,11 +109,7 @@ impl OspfServer {
         let raw_socket = create_ospf_raw_socket(interface_ip, true, false)?;
         let socket_fd = raw_socket.as_raw_fd();
 
-        info!("OSPF server on interface {} (IP protocol 89)", interface_ip);
-        let _ = status_tx.send(format!(
-            "[INFO] OSPF server on {} (requires root)",
-            interface_ip
-        ));
+        Log::new(Some(&status_tx)).info(format!("OSPF server on {} (requires root)", interface_ip));
 
         // Extract interface configuration. Every declared startup parameter is read here
         // and lands in OspfInterfaceConfig, which is consulted on both directions; four of
@@ -150,8 +147,7 @@ impl OspfServer {
             }
         }
 
-        console_info!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!(
             "OSPF: router_id={}, area={}, mask={}, hello={}s, dead={}s, priority={}",
             config.router_id,
             config.area_id,
@@ -159,7 +155,7 @@ impl OspfServer {
             config.hello_interval,
             config.router_dead_interval,
             config.router_priority
-        );
+        ));
 
         let protocol = Arc::new(OspfProtocol::new());
         let neighbors: Arc<Mutex<HashMap<String, OspfNeighbor>>> =
@@ -474,13 +470,8 @@ impl OspfServer {
                 .hello_mismatches(hello_interval, router_dead_interval, &network_mask);
 
         if !mismatches.is_empty() {
-            warn!(
-                "OSPF Hello from {} rejected (RFC 2328 10.5): {}",
-                sender_router_id,
-                mismatches.join("; ")
-            );
-            let _ = status_tx.send(format!(
-                "[WARN] OSPF Hello from {} does not match this interface: {}",
+            Log::new(Some(&status_tx)).warn(format!(
+                "OSPF Hello from {} does not match this interface: {}",
                 sender_router_id,
                 mismatches.join("; ")
             ));
@@ -868,12 +859,8 @@ impl OspfServer {
         // and not respond, WITHOUT burning an LLM round-trip per received packet. The model is
         // consulted only when the operator opts in with how the router should behave.
         if !operator_wants_dynamic(&app_state, server_id, &event.event_type.id).await {
-            debug!(
+            Log::new(Some(&status_tx)).debug(format!(
                 "OSPF {} observed passively: no operator policy configured (no instruction or handler), no response and no LLM call",
-                event.event_type.id
-            );
-            let _ = status_tx.send(format!(
-                "OSPF {} observed passively: no policy configured (static default, no LLM)",
                 event.event_type.id
             ));
             return Ok(());
@@ -892,16 +879,11 @@ impl OspfServer {
             Ok(execution_result) => {
                 // Log LLM messages
                 for message in &execution_result.messages {
-                    info!("{}", message);
-                    let _ = status_tx.send(format!("[INFO] {}", message));
+                    Log::new(Some(&status_tx)).info(format!("{}", message));
                 }
 
-                debug!(
+                Log::new(Some(&status_tx)).debug(format!(
                     "OSPF got {} protocol results",
-                    execution_result.protocol_results.len()
-                );
-                let _ = status_tx.send(format!(
-                    "[DEBUG] OSPF got {} protocol results",
                     execution_result.protocol_results.len()
                 ));
 
@@ -977,35 +959,27 @@ impl OspfServer {
                                         &packet,
                                     ) {
                                         Ok(()) => {
-                                            debug!(
+                                            let log = Log::new(Some(&status_tx));
+                                            // Summary + hex payload are FileOnly (hot path).
+                                            log.debug(format!(
                                                 "OSPF sent {} bytes to {}",
                                                 packet.len(),
                                                 dest_ip
-                                            );
-                                            let _ = status_tx.send(format!(
-                                                "[DEBUG] OSPF sent {} bytes to {}",
-                                                packet.len(),
-                                                dest_ip
                                             ));
-
-                                            // TRACE: Log packet hex
-                                            trace!("OSPF sent (hex): {}", hex::encode(&packet));
-                                            let _ = status_tx.send(format!(
-                                                "[TRACE] OSPF sent (hex): {}",
+                                            log.trace(format!(
+                                                "OSPF sent (hex): {}",
                                                 hex::encode(&packet)
                                             ));
                                         }
                                         Err(e) => {
-                                            error!("Failed to send OSPF packet: {}", e);
-                                            let _ =
-                                                status_tx.send(format!("✗ OSPF send error: {}", e));
+                                            Log::new(Some(&status_tx))
+                                                .error(format!("OSPF send error: {}", e));
                                         }
                                     }
                                 }
                                 Err(e) => {
-                                    error!("Failed to build OSPF packet: {}", e);
-                                    let _ =
-                                        status_tx.send(format!("✗ OSPF packet build error: {}", e));
+                                    Log::new(Some(&status_tx))
+                                        .error(format!("OSPF packet build error: {}", e));
                                 }
                             }
                             continue;
@@ -1021,26 +995,20 @@ impl OspfServer {
                             output_data,
                         ) {
                             Ok(()) => {
-                                debug!(
-                                    "OSPF sent {} bytes to multicast (legacy)",
-                                    output_data.len()
-                                );
-                                let _ = status_tx.send(format!(
-                                    "[DEBUG] OSPF sent {} bytes to multicast (224.0.0.5)",
+                                Log::new(Some(&status_tx)).debug(format!(
+                                    "OSPF sent {} bytes to multicast (224.0.0.5)",
                                     output_data.len()
                                 ));
                             }
                             Err(e) => {
-                                error!("Failed to send OSPF packet: {}", e);
-                                let _ = status_tx.send(format!("✗ OSPF send error: {}", e));
+                                Log::new(Some(&status_tx)).error(format!("OSPF send error: {}", e));
                             }
                         }
                     }
                 }
             }
             Err(e) => {
-                error!("LLM call failed: {}", e);
-                let _ = status_tx.send(format!("✗ OSPF LLM error: {}", e));
+                Log::new(Some(&status_tx)).error(format!("OSPF LLM error: {}", e));
             }
         }
 

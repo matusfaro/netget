@@ -17,16 +17,16 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, trace};
+use tracing::trace;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::PypiProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_error, console_info};
 use actions::PYPI_REQUEST_EVENT;
 
 /// PyPI server that delegates package serving to LLM
@@ -44,7 +44,7 @@ impl PypiServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "PyPI server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("PyPI server listening on {}", local_addr));
 
         let protocol = Arc::new(PypiProtocol::new());
 
@@ -57,12 +57,10 @@ impl PypiServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        console_info!(
-                            status_tx,
+                        Log::new(Some(&status_tx)).info(format!(
                             "Accepted PyPI connection {} from {}",
-                            connection_id,
-                            remote_addr
-                        );
+                            connection_id, remote_addr
+                        ));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -122,24 +120,22 @@ impl PypiServer {
                             if let Err(err) =
                                 http1::Builder::new().serve_connection(io, service).await
                             {
-                                error!("Error serving PyPI connection: {:?}", err);
-                                let _ = status_tx_clone.send(format!(
-                                    "[ERROR] Error serving PyPI connection: {:?}",
-                                    err
-                                ));
+                                Log::new(Some(&status_tx_clone))
+                                    .error(format!("Error serving PyPI connection: {:?}", err));
                             }
 
                             // Mark connection as closed
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("✗ PyPI connection {connection_id} closed"));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("PyPI connection {connection_id} closed"));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept PyPI connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept PyPI connection: {}", e));
                         break;
                     }
                 }
@@ -174,9 +170,9 @@ async fn handle_pypi_request_with_llm_actions(
     status_tx: mpsc::UnboundedSender<String>,
     protocol: Arc<PypiProtocol>,
 ) -> Result<Response<Full<Bytes>>, Infallible> {
-    // TRACE: Handler invoked
-    let _ = status_tx.send(format!(
-        "[TRACE] 🔍 PyPI handler called for connection {}",
+    // TRACE: Handler invoked (FileOnly)
+    Log::new(Some(&status_tx)).trace(format!(
+        "🔍 PyPI handler called for connection {}",
         connection_id
     ));
 
@@ -197,7 +193,7 @@ async fn handle_pypi_request_with_llm_actions(
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "Failed to read request body: {}", e);
+            Log::new(Some(&status_tx)).error(format!("Failed to read request body: {}", e));
             Bytes::new()
         }
     };
@@ -230,21 +226,14 @@ async fn handle_pypi_request_with_llm_actions(
         String::new()
     };
 
-    // DEBUG: Log request summary to both file and TUI
-    debug!(
+    // DEBUG: Log request summary (FileOnly)
+    Log::new(Some(&status_tx)).debug(format!(
         "PyPI request: {} {} [{}] ({} bytes) from {:?}",
         method,
         uri,
         request_type,
         body_bytes.len(),
         connection_id
-    );
-    let _ = status_tx.send(format!(
-        "[DEBUG] PyPI request: {} {} [{}] ({} bytes)",
-        method,
-        uri,
-        request_type,
-        body_bytes.len()
     ));
 
     // TRACE: Log full request details
@@ -253,9 +242,9 @@ async fn handle_pypi_request_with_llm_actions(
         trace!("  {}: {}", name, value);
     }
 
-    // Create PyPI request event
-    let _ = status_tx.send(format!(
-        "[TRACE] 🔍 Creating PyPI event: path={}, request_type={}",
+    // Create PyPI request event (FileOnly)
+    Log::new(Some(&status_tx)).trace(format!(
+        "🔍 Creating PyPI event: path={}, request_type={}",
         path, request_type
     ));
 
@@ -273,7 +262,7 @@ async fn handle_pypi_request_with_llm_actions(
         }),
     );
 
-    let _ = status_tx.send("[TRACE] 🔍 Calling LLM for PyPI request".to_string());
+    Log::new(Some(&status_tx)).trace("🔍 Calling LLM for PyPI request");
 
     // Call LLM to generate PyPI response
     match call_llm(
@@ -287,9 +276,8 @@ async fn handle_pypi_request_with_llm_actions(
     .await
     {
         Ok(execution_result) => {
-            debug!("LLM PyPI response received");
-            let _ = status_tx.send(format!(
-                "[TRACE] 🔍 LLM PyPI response received, {} protocol results",
+            Log::new(Some(&status_tx)).debug(format!(
+                "LLM PyPI response received, {} protocol results",
                 execution_result.protocol_results.len()
             ));
 
@@ -331,11 +319,10 @@ async fn handle_pypi_request_with_llm_actions(
                             match base64::engine::general_purpose::STANDARD.decode(encoded) {
                                 Ok(decoded) => response_body = decoded,
                                 Err(e) => {
-                                    console_error!(
-                                        status_tx,
+                                    Log::new(Some(&status_tx)).error(format!(
                                         "PyPI response body_base64 is not valid base64: {}",
                                         e
-                                    );
+                                    ));
                                 }
                             }
                         } else if let Some(body) = json_value.get("body").and_then(|v| v.as_str()) {
@@ -345,8 +332,8 @@ async fn handle_pypi_request_with_llm_actions(
                 }
             }
 
-            let _ = status_tx.send(format!(
-                "→ PyPI {} {} → {} ({} bytes)",
+            Log::new(Some(&status_tx)).info(format!(
+                "PyPI {} {} → {} ({} bytes)",
                 method,
                 uri,
                 status_code,
@@ -365,16 +352,14 @@ async fn handle_pypi_request_with_llm_actions(
             match response.body(Full::new(Bytes::from(response_body))) {
                 Ok(resp) => Ok(resp),
                 Err(e) => {
-                    console_error!(status_tx, "Invalid PyPI response ({}), sending 502", e);
+                    Log::new(Some(&status_tx))
+                        .error(format!("Invalid PyPI response ({}), sending 502", e));
                     Ok(bad_gateway())
                 }
             }
         }
         Err(e) => {
-            let _ = status_tx.send(format!(
-                "[ERROR] 🔍 ERROR: LLM error for {} {}: {}",
-                method, uri, e
-            ));
+            Log::new(Some(&status_tx)).warn(format!("LLM error for {} {}: {}", method, uri, e));
 
             Ok(Response::builder()
                 .status(500)
