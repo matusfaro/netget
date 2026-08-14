@@ -135,6 +135,16 @@ impl Protocol for DataLinkProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: log a note for every captured frame, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "datalink_packet_captured":
+    actions = [{"type": "show_message", "message": "packet captured"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -152,7 +162,7 @@ impl Protocol for DataLinkProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<datalink_handler>"
+                        "code": script
                     }
                 }]
             }),

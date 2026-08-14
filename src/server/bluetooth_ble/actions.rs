@@ -291,6 +291,22 @@ impl Protocol for BluetoothBleProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: on startup, register a heart-rate service and begin
+        // advertising, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "bluetooth_ble_started":
+    actions = [{"type": "add_service", "uuid": "180D", "primary": True,
+                "characteristics": [{"uuid": "2A37",
+                                     "properties": ["read", "notify"],
+                                     "permissions": ["readable"],
+                                     "initial_value": "0048"}]},
+               {"type": "start_advertising", "device_name": "NetGet"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles BLE GATT server
             json!({
@@ -316,7 +332,7 @@ impl Protocol for BluetoothBleProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<bluetooth_ble_handler>"
+                        "code": script
                     }
                 }]
             }),

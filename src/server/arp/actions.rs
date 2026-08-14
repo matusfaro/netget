@@ -118,6 +118,21 @@ impl Protocol for ArpProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: reply to every ARP request with a fixed MAC, swapping
+        // sender/target, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "arp_request_received":
+    actions = [{"type": "send_arp_reply",
+                "sender_ip": event.get("target_ip", ""),
+                "sender_mac": "02:00:00:00:00:01",
+                "target_ip": event.get("sender_ip", ""),
+                "target_mac": event.get("sender_mac", "")}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -134,7 +149,7 @@ impl Protocol for ArpProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<arp_handler>"
+                        "code": script
                     }
                 }]
             }),

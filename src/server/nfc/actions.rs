@@ -477,6 +477,18 @@ impl Protocol for NfcServerProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every APDU with a text NDEF payload and a 90 00
+        // success status, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "nfc_apdu_received":
+    actions = [{"type": "respond_to_apdu",
+                "data_text": "Hello NFC!", "sw1": "90", "sw2": "00"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles NFC tag emulation
             json!({
@@ -502,7 +514,7 @@ impl Protocol for NfcServerProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<nfc_apdu_handler>"
+                        "code": script
                     }
                 }]
             }),

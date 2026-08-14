@@ -152,6 +152,18 @@ impl Protocol for IsisProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: answer every IS-IS hello with our own hello, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "isis_hello":
+    actions = [{"type": "send_isis_hello",
+                "system_id": "0000.0000.0001", "area_id": "49.0001"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles IS-IS adjacency formation
             json!({
@@ -170,7 +182,7 @@ impl Protocol for IsisProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }]
             }),

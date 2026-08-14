@@ -531,17 +531,10 @@ const KNOWN_BROKEN: &[(&str, &[&str])] = &[
     // their script_mode `code`, so the script handler cannot run. Fix = replace the
     // placeholder with real Python (see tcp/http/dns/redis/mysql/postgresql/s3/sqs/dynamo/smtp
     // for worked examples) and delete the entry.
-    ("ARP", &["SCRIPT_PLACEHOLDER"]),
-    ("BLUETOOTH_BLE", &["SCRIPT_PLACEHOLDER"]),
-    ("DataLink", &["SCRIPT_PLACEHOLDER"]),
-    ("etcd", &["SCRIPT_PLACEHOLDER"]),
-    ("ISIS", &["SCRIPT_PLACEHOLDER"]),
-    ("nfc", &["SCRIPT_PLACEHOLDER"]),
     ("USB-Keyboard", &["SCRIPT_PLACEHOLDER"]),
     ("USB-Mouse", &["SCRIPT_PLACEHOLDER"]),
     ("USB-Serial", &["SCRIPT_PLACEHOLDER"]),
     ("usb-smartcard", &["SCRIPT_PLACEHOLDER"]),
-    ("ZooKeeper", &["SCRIPT_PLACEHOLDER"]),
 ];
 
 fn expected_categories(name: &str) -> Option<BTreeSet<String>> {

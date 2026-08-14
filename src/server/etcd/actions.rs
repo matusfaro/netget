@@ -397,6 +397,17 @@ impl Protocol for EtcdProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every range read with an empty key set, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "etcd_range_request":
+    actions = [{"type": "etcd_range_response", "kvs": [], "count": 0}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all etcd responses intelligently
             json!({
@@ -415,7 +426,7 @@ impl Protocol for EtcdProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<etcd_handler>"
+                        "code": script
                     }
                 }]
             }),

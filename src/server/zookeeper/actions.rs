@@ -454,6 +454,19 @@ impl Protocol for ZookeeperProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every request with a success reply, echoing the
+        // request xid, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "zookeeper_request":
+    actions = [{"type": "zookeeper_response",
+                "xid": event.get("xid", 0),
+                "zxid": 0, "error_code": 0}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all ZooKeeper responses intelligently
             json!({
@@ -472,7 +485,7 @@ impl Protocol for ZookeeperProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<zookeeper_handler>"
+                        "code": script
                     }
                 }]
             }),
