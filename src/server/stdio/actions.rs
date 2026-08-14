@@ -121,6 +121,17 @@ impl Protocol for StdioProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: echo each line back on stdout, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "stdio_input_received":
+    actions = [{"type": "write_stdout",
+                "data": "you said: " + str(event.get("data", ""))}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -135,7 +146,7 @@ impl Protocol for StdioProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<stdio_handler>"
+                        "code": script
                     }
                 }]
             }),

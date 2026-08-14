@@ -129,6 +129,16 @@ impl Protocol for PtyProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: echo each input back to the pty, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "pty_input_received":
+    actions = [{"type": "write_pty_output", "data": str(event.get("data", ""))}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -146,7 +156,7 @@ impl Protocol for PtyProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<pty_handler>"
+                        "code": script
                     }
                 }]
             }),

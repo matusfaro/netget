@@ -195,6 +195,19 @@ impl Protocol for DcProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: greet every command with a private message to the
+        // client, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "dc_command_received":
+    actions = [{"type": "send_dc_message",
+                "target": event.get("client_nickname", "user"),
+                "message": "Hello from NetGet"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -213,7 +226,7 @@ impl Protocol for DcProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<protocol_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -132,6 +132,17 @@ impl Protocol for NamedPipeProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: reply "OK" to every message on the named pipe, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "named_pipe_data_received":
+    actions = [{"type": "write_named_pipe_data", "data": "OK"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -149,7 +160,7 @@ impl Protocol for NamedPipeProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<named_pipe_handler>"
+                        "code": script
                     }
                 }]
             }),

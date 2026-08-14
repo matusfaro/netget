@@ -124,6 +124,17 @@ impl Protocol for SocketFileProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: reply "OK" to every message on the unix socket, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "socket_file_data_received":
+    actions = [{"type": "send_socket_data", "data": "OK"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             json!({
                 "type": "open_server",
@@ -140,7 +151,7 @@ impl Protocol for SocketFileProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<socket_file_handler>"
+                        "code": script
                     }
                 }]
             }),

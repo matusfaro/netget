@@ -529,6 +529,17 @@ impl Protocol for SshAgentProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: report an empty key list for every identities request,
+        // no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "ssh_agent_request_identities":
+    actions = [{"type": "send_identities_list", "identities": []}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all SSH Agent responses intelligently
             json!({
@@ -547,7 +558,7 @@ impl Protocol for SshAgentProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<ssh_agent_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -103,6 +103,17 @@ impl Protocol for SshProtocol {
         use crate::llm::actions::StartupExamples;
         use serde_json::json;
 
+        // Deterministic: answer every shell command with a canned line, no LLM
+        // call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "ssh_shell_command":
+    actions = [{"type": "ssh_shell_response", "response": "command not found\n"}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode: LLM handles all SSH responses intelligently
             json!({
@@ -121,7 +132,7 @@ impl Protocol for SshProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<ssh_handler>"
+                        "code": script
                     }
                 }]
             }),

@@ -118,6 +118,18 @@ impl Protocol for ReverseShellProtocol {
     fn get_startup_examples(&self) -> crate::llm::actions::StartupExamples {
         use crate::llm::actions::StartupExamples;
 
+        // Deterministic: emulate a minimal shell — answer every command with a
+        // canned line and a fresh prompt, no LLM call.
+        let script = r#"import json, sys
+data = json.load(sys.stdin)
+event = data["event"]
+if data["event_type_id"] == "reverse_shell_command":
+    actions = [{"type": "send_shell_output", "output": "command not found\n",
+                "append_prompt": True, "prompt": "$ "}]
+else:
+    actions = []
+print(json.dumps({"actions": actions}))"#;
+
         StartupExamples::new(
             // LLM mode
             json!({
@@ -136,7 +148,7 @@ impl Protocol for ReverseShellProtocol {
                     "handler": {
                         "type": "script",
                         "language": "python",
-                        "code": "<revshell_handler>"
+                        "code": script
                     }
                 }]
             }),
