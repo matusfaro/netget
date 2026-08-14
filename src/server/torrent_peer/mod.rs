@@ -9,14 +9,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::error;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace};
 use actions::TorrentPeerProtocol;
 
 /// BitTorrent Peer Wire Protocol server
@@ -33,12 +33,8 @@ impl TorrentPeerServer {
     ) -> Result<SocketAddr> {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!(
+        Log::new(Some(&status_tx)).info(format!(
             "BitTorrent Peer server (action-based) listening on {}",
-            local_addr
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] BitTorrent Peer server listening on {}",
             local_addr
         ));
 
@@ -56,9 +52,8 @@ impl TorrentPeerServer {
                         let status_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
 
-                        debug!("BitTorrent Peer accepted connection from {}", peer_addr);
-                        let _ = status_clone.send(format!(
-                            "[DEBUG] BitTorrent Peer accepted connection from {}",
+                        Log::new(Some(&status_clone)).debug(format!(
+                            "BitTorrent Peer accepted connection from {}",
                             peer_addr
                         ));
 
@@ -110,7 +105,8 @@ impl TorrentPeerServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "BitTorrent Peer accept error: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("BitTorrent Peer accept error: {}", e));
                     }
                 }
             }
@@ -150,25 +146,20 @@ impl TorrentPeerServer {
         'read: loop {
             let n = read_half.read(&mut chunk).await?;
             if n == 0 {
-                debug!("BitTorrent Peer connection closed by peer");
-                let _ =
-                    status_tx.send("[DEBUG] BitTorrent Peer connection closed by peer".to_string());
+                Log::new(Some(&status_tx)).debug("BitTorrent Peer connection closed by peer");
                 break;
             }
 
-            console_debug!(
-                status_tx,
+            Log::new(Some(&status_tx)).debug(format!(
                 "BitTorrent Peer received {} bytes from {}",
-                n,
-                peer_addr
-            );
+                n, peer_addr
+            ));
 
             // TRACE: Log full payload
-            console_trace!(
-                status_tx,
+            Log::new(Some(&status_tx)).trace(format!(
                 "BitTorrent Peer data (hex): {}",
                 hex::encode(&chunk[..n])
-            );
+            ));
 
             pending.extend_from_slice(&chunk[..n]);
 
@@ -177,12 +168,11 @@ impl TorrentPeerServer {
             // this by every client in use.
             const MAX_PENDING: usize = 2 * 1024 * 1024;
             if pending.len() > MAX_PENDING {
-                console_error!(
-                    status_tx,
+                Log::new(Some(&status_tx)).warn(format!(
                     "BitTorrent Peer {} buffered {} bytes without a complete message, closing",
                     peer_addr,
                     pending.len()
-                );
+                ));
                 break;
             }
 
@@ -194,12 +184,10 @@ impl TorrentPeerServer {
                     let handshake: Vec<u8> = pending.drain(..68).collect();
                     match Self::parse_handshake(&handshake) {
                         Ok((info_hash, peer_id, peer_id_hex)) => {
-                            console_debug!(
-                                status_tx,
+                            Log::new(Some(&status_tx)).debug(format!(
                                 "BitTorrent Peer handshake: info_hash={}, peer_id={}",
-                                info_hash,
-                                peer_id
-                            );
+                                info_hash, peer_id
+                            ));
 
                             handshake_complete = true;
 
@@ -226,7 +214,8 @@ impl TorrentPeerServer {
                             .await?;
                         }
                         Err(e) => {
-                            console_error!(status_tx, "Failed to parse handshake: {}", e);
+                            Log::new(Some(&status_tx))
+                                .error(format!("Failed to parse handshake: {}", e));
                             break 'read;
                         }
                     }
@@ -246,7 +235,8 @@ impl TorrentPeerServer {
 
                 match Self::parse_message(&frame) {
                     Ok((message_type, message_data)) => {
-                        console_debug!(status_tx, "BitTorrent Peer message type: {}", message_type);
+                        Log::new(Some(&status_tx))
+                            .debug(format!("BitTorrent Peer message type: {}", message_type));
 
                         let event_type = match message_type.as_str() {
                             // One event covers the four payload-free state messages; they
@@ -264,11 +254,10 @@ impl TorrentPeerServer {
                         };
                         let event = Event::new(event_type, message_data);
 
-                        console_debug!(
-                            status_tx,
+                        Log::new(Some(&status_tx)).debug(format!(
                             "BitTorrent Peer calling LLM for {} message",
                             message_type
-                        );
+                        ));
 
                         Self::dispatch_event(
                             event,
@@ -284,7 +273,8 @@ impl TorrentPeerServer {
                         .await?;
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to parse peer message: {}", e);
+                        Log::new(Some(&status_tx))
+                            .warn(format!("Failed to parse peer message: {}", e));
                     }
                 }
             }
@@ -321,8 +311,7 @@ impl TorrentPeerServer {
                     .await?;
             }
             Err(e) => {
-                error!("BitTorrent Peer LLM call failed: {}", e);
-                let _ = status_tx.send(format!("✗ BitTorrent Peer LLM error: {}", e));
+                Log::new(Some(&status_tx)).warn(format!("BitTorrent Peer LLM error: {}", e));
             }
         }
         Ok(())
@@ -338,14 +327,13 @@ impl TorrentPeerServer {
 
         // Display messages from LLM
         for message in &execution_result.messages {
-            console_info!(status_tx, "{}", message);
+            Log::new(Some(&status_tx)).info(format!("{}", message));
         }
 
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "BitTorrent Peer got {} protocol results",
             execution_result.protocol_results.len()
-        );
+        ));
 
         // Send responses. Every output is written, in order: a handshake reply is
         // routinely followed by a bitfield and an unchoke, and dropping all but the first
@@ -356,16 +344,16 @@ impl TorrentPeerServer {
                 write.write_all(&output_data).await?;
                 drop(write);
 
-                console_debug!(
-                    status_tx,
+                Log::new(Some(&status_tx)).debug(format!(
                     "BitTorrent Peer sent {} bytes to {}",
                     output_data.len(),
                     peer_addr
-                );
+                ));
 
                 // TRACE: Log full response
                 let hex_str = hex::encode(&output_data);
-                console_trace!(status_tx, "BitTorrent Peer sent (hex): {}", hex_str);
+                Log::new(Some(&status_tx))
+                    .trace(format!("BitTorrent Peer sent (hex): {}", hex_str));
             }
         }
 

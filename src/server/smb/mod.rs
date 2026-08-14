@@ -25,7 +25,7 @@ use crate::state::server::{
 };
 use crate::state::ServerId;
 
-use crate::{console_error, console_info, console_warn};
+use crate::logging::emit::Log;
 use actions::SMB_OPERATION_EVENT;
 
 // NTSTATUS codes used in SMB2 response headers (MS-ERREF 2.3.1).
@@ -98,11 +98,10 @@ impl SmbServer {
         status_tx: mpsc::UnboundedSender<String>,
         server_id: ServerId,
     ) -> Result<SocketAddr> {
-        info!(
+        Log::new(Some(&status_tx)).info(format!(
             "SMB server (LLM-controlled, guest-only) starting on {}",
             listen_addr
-        );
-        let _ = status_tx.send(format!("[INFO] SMB server starting on {}", listen_addr));
+        ));
 
         let protocol = Arc::new(SmbProtocol::new());
 
@@ -113,8 +112,7 @@ impl SmbServer {
 
         let actual_addr = listener.local_addr()?;
 
-        info!("SMB server listening on {}", actual_addr);
-        let _ = status_tx.send(format!("→ SMB server listening on {}", actual_addr));
+        Log::new(Some(&status_tx)).info(format!("SMB server listening on {}", actual_addr));
 
         // Spawn connection acceptor
         let task_registrar = app_state.clone();
@@ -126,8 +124,8 @@ impl SmbServer {
 
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        info!("SMB connection accepted from {}", peer_addr);
-                        let _ = status_tx.send(format!("→ SMB connection from {}", peer_addr));
+                        Log::new(Some(&status_tx))
+                            .info(format!("SMB connection accepted from {}", peer_addr));
 
                         // Spawn per-connection handler
                         let llm_client = llm_client.clone();
@@ -147,17 +145,15 @@ impl SmbServer {
                             )
                             .await
                             {
-                                error!("SMB connection error from {}: {}", peer_addr, e);
-                                let _ = status_tx.send(format!(
-                                    "✗ SMB connection error from {}: {}",
+                                Log::new(Some(&status_tx)).error(format!(
+                                    "SMB connection error from {}: {}",
                                     peer_addr, e
                                 ));
                             }
                         });
                     }
                     Err(e) => {
-                        error!("SMB accept error: {}", e);
-                        let _ = status_tx.send(format!("✗ SMB accept error: {}", e));
+                        Log::new(Some(&status_tx)).error(format!("SMB accept error: {}", e));
                     }
                 }
             }
@@ -197,12 +193,10 @@ impl SmbServer {
         // Generate connection ID
         let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
-        console_info!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!(
             "SMB connection {} from {}",
-            connection_id,
-            peer_addr
-        );
+            connection_id, peer_addr
+        ));
 
         // Get local address for tracking
         let local_addr = stream
@@ -254,9 +248,8 @@ impl SmbServer {
 
                     // Parse SMB2 header
                     if &header_buf[0..4] != b"\xFESMB" {
-                        warn!("Invalid SMB2 signature from {}", peer_addr);
-                        let _ = status_tx
-                            .send(format!("[WARN] Invalid SMB2 signature from {}", peer_addr));
+                        Log::new(Some(&status_tx))
+                            .warn(format!("Invalid SMB2 signature from {}", peer_addr));
                         break;
                     }
 
@@ -316,7 +309,8 @@ impl SmbServer {
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    console_info!(status_tx, "SMB client {} disconnected", peer_addr);
+                    Log::new(Some(&status_tx))
+                        .info(format!("SMB client {} disconnected", peer_addr));
                     break;
                 }
                 Err(e) => {
@@ -332,7 +326,7 @@ impl SmbServer {
             .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        console_info!(status_tx, "SMB connection {} closed", connection_id);
+        Log::new(Some(&status_tx)).info(format!("SMB connection {} closed", connection_id));
 
         Ok(())
     }
@@ -365,8 +359,7 @@ impl SmbServer {
 
         match command {
             SMB2_NEGOTIATE => {
-                debug!("SMB2 NEGOTIATE request");
-                let _ = status_tx.send("[DEBUG] SMB2 NEGOTIATE - offering SMB 2.1".to_string());
+                Log::new(Some(status_tx)).debug("SMB2 NEGOTIATE request - offering SMB 2.1");
 
                 // Consume NEGOTIATE request body from the stream
                 // NEGOTIATE request body is 36 bytes (structure) + 2 bytes (dialect) = 38 bytes total
@@ -408,8 +401,8 @@ impl SmbServer {
                 let username = Self::parse_smb2_username(&body_buf[..bytes_read])
                     .unwrap_or_else(|| "guest".to_string());
 
-                info!("SMB2 SESSION_SETUP for user: {}", username);
-                let _ = status_tx.send(format!("[INFO] SMB auth attempt: {}", username));
+                Log::new(Some(status_tx))
+                    .info(format!("SMB2 SESSION_SETUP for user: {}", username));
 
                 // Consult LLM to check if this user should be authenticated
                 let actions = match Self::consult_llm(
@@ -428,11 +421,10 @@ impl SmbServer {
                 {
                     Ok(actions) => actions,
                     Err(e) => {
-                        warn!(
-                            "LLM error during SMB authentication for user {}: {}",
+                        Log::new(Some(status_tx)).warn(format!(
+                            "LLM error during SMB authentication for user {} - denying auth: {}",
                             username, e
-                        );
-                        let _ = status_tx.send(format!("[WARN] LLM error: {} - denying auth", e));
+                        ));
 
                         // Send AUTH_DENIED response instead of closing connection
                         let response = Self::build_auth_denied_response(_header)?;
@@ -447,16 +439,18 @@ impl SmbServer {
                 });
 
                 if !auth_allowed {
-                    warn!("SMB authentication denied for user: {}", username);
-                    let _ = status_tx.send(format!("✗ SMB auth denied: {}", username));
+                    Log::new(Some(status_tx))
+                        .warn(format!("SMB authentication denied for user: {}", username));
 
                     // Return ACCESS_DENIED response
                     let response = Self::build_auth_denied_response(_header)?;
                     return Ok(Some(response));
                 }
 
-                info!("SMB authentication successful for user: {}", username);
-                let _ = status_tx.send(format!("→ SMB auth success: {}", username));
+                Log::new(Some(status_tx)).info(format!(
+                    "SMB authentication successful for user: {}",
+                    username
+                ));
 
                 // Build successful session setup response
                 let response =
@@ -489,8 +483,7 @@ impl SmbServer {
                 Ok(Some(response))
             }
             SMB2_TREE_CONNECT => {
-                debug!("SMB2 TREE_CONNECT request");
-                let _ = status_tx.send("[DEBUG] SMB2 TREE_CONNECT - accepting share".to_string());
+                Log::new(Some(status_tx)).debug("SMB2 TREE_CONNECT request - accepting share");
 
                 // For simplicity, accept any tree connect with share name "share"
                 let response =
@@ -510,8 +503,7 @@ impl SmbServer {
                 let path = Self::parse_smb2_path(&body_buf[..bytes_read])
                     .unwrap_or_else(|| "/unknown".to_string());
 
-                info!("SMB2 CREATE request for: {}", path);
-                let _ = status_tx.send(format!("[INFO] SMB CREATE: {}", path));
+                Log::new(Some(status_tx)).info(format!("SMB2 CREATE request for: {}", path));
 
                 // Consult LLM to check if file exists and get info. An LLM failure must
                 // answer in SMB2, not drop the connection: a client that gets no reply
@@ -593,11 +585,9 @@ impl SmbServer {
                 };
 
                 if let Some(path) = path {
-                    info!("SMB2 CLOSE: {}", path);
-                    let _ = status_tx.send(format!("[INFO] SMB CLOSE: {}", path));
+                    Log::new(Some(status_tx)).info(format!("SMB2 CLOSE: {}", path));
                 } else {
-                    warn!("SMB2 CLOSE: unknown file handle");
-                    let _ = status_tx.send("[WARN] SMB CLOSE: unknown handle".to_string());
+                    Log::new(Some(status_tx)).warn("SMB2 CLOSE: unknown file handle");
                 }
 
                 let response = Self::build_close_response(_header)?;
@@ -624,9 +614,8 @@ impl SmbServer {
                 };
 
                 let path = path.unwrap_or_else(|| "/unknown".to_string());
-                info!("SMB2 READ: {} (offset={}, length={})", path, offset, length);
-                let _ = status_tx.send(format!(
-                    "[INFO] SMB READ: {} offset={} len={}",
+                Log::new(Some(status_tx)).info(format!(
+                    "SMB2 READ: {} (offset={}, length={})",
                     path, offset, length
                 ));
 
@@ -676,9 +665,10 @@ impl SmbServer {
                                 // Refuse rather than putting the undecodable string on the
                                 // wire, which is exactly the failure this field exists to
                                 // prevent.
-                                warn!("SMB read: {} - refusing with STATUS_DATA_ERROR", e);
-                                let _ = status_tx
-                                    .send(format!("✗ SMB read: bad content encoding: {}", e));
+                                Log::new(Some(status_tx)).warn(format!(
+                                    "SMB read: {} - refusing with STATUS_DATA_ERROR",
+                                    e
+                                ));
                                 let response = Self::build_error_response(
                                     _header,
                                     SMB2_READ,
@@ -719,11 +709,10 @@ impl SmbServer {
                 // trusting a peer to be honest about a 4 GB write.
                 const MAX_WRITE_LEN: u32 = 8 * 1024 * 1024;
                 if length > MAX_WRITE_LEN {
-                    warn!(
+                    Log::new(Some(status_tx)).warn(format!(
                         "SMB2 WRITE: refusing {} byte write (max {})",
                         length, MAX_WRITE_LEN
-                    );
-                    let _ = status_tx.send(format!("✗ SMB write too large: {} bytes", length));
+                    ));
                     let response =
                         Self::build_error_response(_header, SMB2_WRITE, STATUS_ACCESS_DENIED)?;
                     return Ok(Some(response));
@@ -740,12 +729,8 @@ impl SmbServer {
                 };
 
                 let path = path.unwrap_or_else(|| "/unknown".to_string());
-                info!(
+                Log::new(Some(status_tx)).info(format!(
                     "SMB2 WRITE: {} (offset={}, length={})",
-                    path, offset, length
-                );
-                let _ = status_tx.send(format!(
-                    "[INFO] SMB WRITE: {} offset={} len={}",
                     path, offset, length
                 ));
 
@@ -791,12 +776,11 @@ impl SmbServer {
                     .find(|a| a.get("type").and_then(|t| t.as_str()) == Some("smb_write_file"));
 
                 let Some(write_action) = write_action else {
-                    warn!(
+                    Log::new(Some(status_tx)).warn(format!(
                         "SMB2 WRITE: no smb_write_file action for {} - refusing with \
                          STATUS_ACCESS_DENIED",
                         path
-                    );
-                    let _ = status_tx.send(format!("✗ SMB write denied: {}", path));
+                    ));
                     let response =
                         Self::build_error_response(_header, SMB2_WRITE, STATUS_ACCESS_DENIED)?;
                     return Ok(Some(response));
@@ -834,8 +818,7 @@ impl SmbServer {
                     };
 
                     let path = path.unwrap_or_else(|| "/unknown".to_string());
-                    info!("SMB2 QUERY_INFO: {}", path);
-                    let _ = status_tx.send(format!("[INFO] SMB QUERY_INFO: {}", path));
+                    Log::new(Some(status_tx)).info(format!("SMB2 QUERY_INFO: {}", path));
 
                     // Consult LLM for file info. On an LLM failure the client is told the
                     // query failed rather than being handed the 4096-byte default as if
@@ -901,8 +884,7 @@ impl SmbServer {
                     };
 
                     let path = path.unwrap_or_else(|| "/".to_string());
-                    info!("SMB2 QUERY_DIRECTORY: {}", path);
-                    let _ = status_tx.send(format!("[INFO] SMB QUERY_DIRECTORY: {}", path));
+                    Log::new(Some(status_tx)).info(format!("SMB2 QUERY_DIRECTORY: {}", path));
 
                     // Consult LLM for directory listing. On an LLM failure the client is
                     // told the enumeration failed rather than being handed an empty
@@ -953,7 +935,7 @@ impl SmbServer {
                 }
             }
             _ => {
-                console_warn!(status_tx, "Unknown SMB2 command: 0x{:04x}", command);
+                Log::new(Some(status_tx)).warn(format!("Unknown SMB2 command: 0x{:04x}", command));
                 Ok(None)
             }
         }
@@ -970,8 +952,10 @@ impl SmbServer {
         params: serde_json::Value,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<Vec<serde_json::Value>> {
-        debug!("Consulting LLM for SMB {} operation", operation);
-        let _ = status_tx.send(format!("[DEBUG] SMB {}: {:?}", operation, params));
+        Log::new(Some(status_tx)).debug(format!(
+            "Consulting LLM for SMB {} operation: {:?}",
+            operation, params
+        ));
 
         // Create SMB operation event
         // Extract path from params if available, otherwise use empty string
@@ -997,8 +981,7 @@ impl SmbServer {
 
         let event = Event::new(&SMB_OPERATION_EVENT, event_data);
 
-        trace!("Calling LLM for SMB {} operation", operation);
-        let _ = status_tx.send(format!("[TRACE] Calling LLM for SMB {}", operation));
+        Log::new(Some(status_tx)).trace(format!("Calling LLM for SMB {} operation", operation));
 
         // Call LLM with Event-based approach
         let execution_result = call_llm(
@@ -1013,7 +996,7 @@ impl SmbServer {
 
         // Display messages from LLM
         for message in &execution_result.messages {
-            console_info!(status_tx, "{}", message);
+            Log::new(Some(status_tx)).info(format!("{}", message));
         }
 
         debug!(
@@ -1626,8 +1609,7 @@ impl SmbServer {
             STATUS_INTERNAL_ERROR
         };
 
-        console_error!(
-            status_tx,
+        Log::new(Some(status_tx)).warn(format!(
             "SMB {} {}: LLM {} - refusing with NTSTATUS 0x{:08X}: {}",
             operation,
             path,
@@ -1638,7 +1620,7 @@ impl SmbServer {
             },
             status,
             err
-        );
+        ));
 
         Self::build_error_response(request_header, command, status)
     }

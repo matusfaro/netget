@@ -26,18 +26,18 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::{Event, EventType};
 use crate::server::connection::ConnectionId;
 use crate::server::oci_registry::actions::{
     oci_error_body, sha256_digest, OciRegistryProtocol, DEFAULT_BLOB_MEDIA_TYPE,
 };
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info};
 
 /// How `GET /v2/` is answered.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -222,13 +222,10 @@ impl OciRegistryServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("OCI registry listening on {}", local_addr);
-        console_info!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!(
             "OCI registry listening on {} (version_check={:?}, pull-only)",
-            local_addr,
-            version_check
-        );
+            local_addr, version_check
+        ));
 
         let protocol = Arc::new(OciRegistryProtocol::new());
         let task_registrar = app_state.clone();
@@ -240,11 +237,10 @@ impl OciRegistryServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        debug!(
+                        Log::new(Some(&status_tx)).debug(format!(
                             "OCI registry connection {} from {}",
                             connection_id, remote_addr
-                        );
-                        console_debug!(status_tx, "OCI registry connection from {}", remote_addr);
+                        ));
 
                         use crate::state::server::{
                             ConnectionState as ServerConnectionState, ConnectionStatus,
@@ -306,11 +302,8 @@ impl OciRegistryServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(
-                            status_tx,
-                            "Failed to accept OCI registry connection: {}",
-                            e
-                        );
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept OCI registry connection: {}", e));
                         break;
                     }
                 }
@@ -432,8 +425,7 @@ async fn handle_oci_request(
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
 
-    debug!("OCI registry: {} {}", method, path);
-    console_debug!(status_tx, "OCI {} {}", method, path);
+    Log::new(Some(&status_tx)).debug(format!("OCI {} {}", method, path));
     trace!(
         "OCI registry request: {} {} accept={:?} ua={}",
         method,
@@ -459,12 +451,10 @@ async fn handle_oci_request(
 
     // Pull-only: every mutating method is refused up front, honestly.
     if !matches!(method, Method::GET | Method::HEAD) {
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "OCI {} {} refused: this registry is pull-only",
-            method,
-            path
-        );
+            method, path
+        ));
         return Ok(error_response(
             405,
             "UNSUPPORTED",
@@ -635,7 +625,7 @@ async fn handle_oci_request(
     let execution = match llm_result {
         Ok(e) => e,
         Err(e) => {
-            console_error!(status_tx, "OCI registry LLM call failed: {}", e);
+            Log::new(Some(&status_tx)).warn(format!("OCI registry LLM call failed: {}", e));
             return Ok(error_response(
                 503,
                 "UNKNOWN",
@@ -651,16 +641,10 @@ async fn handle_oci_request(
         }
     }
 
-    warn!(
-        "OCI registry: no usable action returned for {} {}",
-        method, path
-    );
-    console_error!(
-        status_tx,
+    Log::new(Some(&status_tx)).warn(format!(
         "OCI registry: no usable action for {} {} - refusing (fail-closed)",
-        method,
-        path
-    );
+        method, path
+    ));
     Ok(no_answer_response(route_label(&route)))
 }
 
@@ -726,7 +710,7 @@ fn build_from_action(
                 .get("message")
                 .and_then(|v| v.as_str())
                 .unwrap_or("authentication required");
-            console_debug!(status_tx, "OCI -> 401 auth challenge realm={}", realm);
+            Log::new(Some(status_tx)).debug(format!("OCI -> 401 auth challenge realm={}", realm));
             Some(build(
                 401,
                 vec![
@@ -760,11 +744,10 @@ fn build_from_action(
                     format!("</v2/_catalog?last={}>; rel=\"next\"", last),
                 ));
             }
-            console_debug!(
-                status_tx,
+            Log::new(Some(status_tx)).debug(format!(
                 "OCI -> catalog ({} repositories)",
                 repositories.as_array().map(|a| a.len()).unwrap_or(0)
-            );
+            ));
             Some(build(200, headers, body.into_bytes()))
         }
 
@@ -781,12 +764,11 @@ fn build_from_action(
                 .unwrap_or(requested_name);
             let tags = data.get("tags").cloned().unwrap_or_else(|| json!([]));
             let body = json!({"name": name, "tags": tags}).to_string();
-            console_debug!(
-                status_tx,
+            Log::new(Some(status_tx)).debug(format!(
                 "OCI -> tag list for {} ({} tags)",
                 name,
                 tags.as_array().map(|a| a.len()).unwrap_or(0)
-            );
+            ));
             Some(build(
                 200,
                 vec![
@@ -832,17 +814,10 @@ fn build_from_action(
             // what content addressing exists to prevent.
             if let OciRoute::Manifest { reference, .. } = route {
                 if is_digest_reference(reference) && reference != &computed {
-                    warn!(
-                        "OCI manifest requested by digest {} but the model supplied content \
-                         hashing to {}; refusing",
-                        reference, computed
-                    );
-                    console_error!(
-                        status_tx,
+                    Log::new(Some(status_tx)).warn(format!(
                         "OCI -> 404 MANIFEST_UNKNOWN: requested {} but content hashes to {}",
-                        reference,
-                        computed
-                    );
+                        reference, computed
+                    ));
                     return Some(error_response(
                         404,
                         "MANIFEST_UNKNOWN",
@@ -853,13 +828,12 @@ fn build_from_action(
                 }
             }
 
-            console_debug!(
-                status_tx,
+            Log::new(Some(status_tx)).debug(format!(
                 "OCI -> manifest {} ({}, {} bytes)",
                 computed,
                 media_type,
                 body.len()
-            );
+            ));
             Some(build(
                 200,
                 vec![
@@ -899,17 +873,10 @@ fn build_from_action(
 
             if let OciRoute::Blob { digest, .. } = route {
                 if digest != &computed {
-                    warn!(
-                        "OCI blob {} requested but the model supplied content hashing to {}; \
-                         refusing",
-                        digest, computed
-                    );
-                    console_error!(
-                        status_tx,
+                    Log::new(Some(status_tx)).warn(format!(
                         "OCI -> 404 BLOB_UNKNOWN: requested {} but content hashes to {}",
-                        digest,
-                        computed
-                    );
+                        digest, computed
+                    ));
                     return Some(error_response(
                         404,
                         "BLOB_UNKNOWN",
@@ -920,12 +887,11 @@ fn build_from_action(
                 }
             }
 
-            console_debug!(
-                status_tx,
+            Log::new(Some(status_tx)).debug(format!(
                 "OCI -> blob {} ({} bytes)",
                 computed,
                 bytes.len()
-            );
+            ));
             Some(build(
                 200,
                 vec![
@@ -955,7 +921,7 @@ fn build_from_action(
                 .map(|s| s as u16)
                 .unwrap_or(500);
             let detail = data.get("detail").cloned().filter(|d| !d.is_null());
-            console_debug!(status_tx, "OCI -> {} {}: {}", status, code, message);
+            Log::new(Some(status_tx)).debug(format!("OCI -> {} {}: {}", status, code, message));
             Some(error_response(status, code, message, detail))
         }
 

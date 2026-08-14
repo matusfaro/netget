@@ -10,14 +10,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::error;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info, console_trace};
 use actions::TorrentTrackerProtocol;
 
 /// BitTorrent Tracker server
@@ -34,12 +34,8 @@ impl TorrentTrackerServer {
     ) -> Result<SocketAddr> {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!(
+        Log::new(Some(&status_tx)).info(format!(
             "BitTorrent Tracker server (action-based) listening on {}",
-            local_addr
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] BitTorrent Tracker server listening on {}",
             local_addr
         ));
 
@@ -57,9 +53,8 @@ impl TorrentTrackerServer {
                         let status_clone = status_tx.clone();
                         let protocol_clone = protocol.clone();
 
-                        debug!("BitTorrent Tracker accepted connection from {}", peer_addr);
-                        let _ = status_clone.send(format!(
-                            "[DEBUG] BitTorrent Tracker accepted connection from {}",
+                        Log::new(Some(&status_clone)).debug(format!(
+                            "BitTorrent Tracker accepted connection from {}",
                             peer_addr
                         ));
 
@@ -106,7 +101,8 @@ impl TorrentTrackerServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "BitTorrent Tracker accept error: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("BitTorrent Tracker accept error: {}", e));
                     }
                 }
             }
@@ -138,25 +134,22 @@ impl TorrentTrackerServer {
         // Read HTTP request
         let n = read_half.read(&mut buffer).await?;
         if n == 0 {
-            debug!("BitTorrent Tracker connection closed by peer");
-            let _ =
-                status_tx.send("[DEBUG] BitTorrent Tracker connection closed by peer".to_string());
+            Log::new(Some(&status_tx)).debug("BitTorrent Tracker connection closed by peer");
             return Ok(());
         }
 
         let request_data = buffer[..n].to_vec();
 
         // DEBUG: Log summary
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "BitTorrent Tracker received {} bytes from {}",
-            n,
-            peer_addr
-        );
+            n, peer_addr
+        ));
 
         // TRACE: Log full request
         if let Ok(request_str) = std::str::from_utf8(&request_data) {
-            console_trace!(status_tx, "BitTorrent Tracker request: {}", request_str);
+            Log::new(Some(&status_tx))
+                .trace(format!("BitTorrent Tracker request: {}", request_str));
         }
 
         // Parse HTTP request. A malformed request used to propagate out of this function
@@ -166,7 +159,7 @@ impl TorrentTrackerServer {
         let (request_type, request_params) = match Self::parse_http_request(&request_str) {
             Ok(parsed) => parsed,
             Err(e) => {
-                console_error!(status_tx, "BitTorrent Tracker bad request: {}", e);
+                Log::new(Some(&status_tx)).warn(format!("BitTorrent Tracker bad request: {}", e));
                 write_half
                     .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                     .await?;
@@ -174,11 +167,8 @@ impl TorrentTrackerServer {
             }
         };
 
-        console_debug!(
-            status_tx,
-            "BitTorrent Tracker request type: {}",
-            request_type
-        );
+        Log::new(Some(&status_tx))
+            .debug(format!("BitTorrent Tracker request type: {}", request_type));
 
         // Create event for LLM
         let event_type = match request_type.as_str() {
@@ -199,11 +189,10 @@ impl TorrentTrackerServer {
         };
         let event = Event::new(event_type, serde_json::json!(request_params));
 
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "BitTorrent Tracker calling LLM for {} request",
             request_type
-        );
+        ));
 
         // Call LLM
         match call_llm(
@@ -219,41 +208,35 @@ impl TorrentTrackerServer {
             Ok(execution_result) => {
                 // Display messages from LLM
                 for message in &execution_result.messages {
-                    console_info!(status_tx, "{}", message);
+                    Log::new(Some(&status_tx)).info(format!("{}", message));
                 }
 
-                console_debug!(
-                    status_tx,
+                Log::new(Some(&status_tx)).debug(format!(
                     "BitTorrent Tracker got {} protocol results",
                     execution_result.protocol_results.len()
-                );
+                ));
 
                 // Send responses
                 for protocol_result in execution_result.protocol_results {
                     if let Some(output_data) = protocol_result.get_all_output().first() {
                         write_half.write_all(output_data).await?;
 
-                        console_debug!(
-                            status_tx,
+                        Log::new(Some(&status_tx)).debug(format!(
                             "BitTorrent Tracker sent {} bytes to {}",
                             output_data.len(),
                             peer_addr
-                        );
+                        ));
 
                         // TRACE: Log full response
                         if let Ok(response_str) = std::str::from_utf8(output_data) {
-                            console_trace!(
-                                status_tx,
-                                "BitTorrent Tracker response: {}",
-                                response_str
-                            );
+                            Log::new(Some(&status_tx))
+                                .trace(format!("BitTorrent Tracker response: {}", response_str));
                         }
                     }
                 }
             }
             Err(e) => {
-                error!("BitTorrent Tracker LLM call failed: {}", e);
-                let _ = status_tx.send(format!("✗ BitTorrent Tracker LLM error: {}", e));
+                Log::new(Some(&status_tx)).warn(format!("BitTorrent Tracker LLM error: {}", e));
 
                 // Send error response
                 let error_response = b"HTTP/1.1 500 Internal Server Error\r\n\r\n";
