@@ -7,11 +7,11 @@ pub mod actions;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::DotProtocol;
 use crate::state::app_state::AppState;
 use crate::state::ServerId;
-use crate::{console_debug, console_error, console_info, console_trace, console_warn};
 use actions::DOT_QUERY_EVENT;
 use anyhow::{Context, Result};
 use hickory_proto::op::Message as DnsMessage;
@@ -22,7 +22,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
 use tokio_rustls::TlsAcceptor;
-use tracing::{debug, error, info, warn};
+use tracing::error;
 
 /// DNS-over-TLS server
 pub struct DotServer;
@@ -47,7 +47,7 @@ impl DotServer {
         let tls_config = crate::server::tls_cert_manager::generate_default_tls_config()
             .context("Failed to generate TLS configuration")?;
 
-        console_info!(status_tx, "Starting DoT server on {}", bind_addr);
+        Log::new(Some(&status_tx)).info(format!("Starting DoT server on {}", bind_addr));
 
         let listener = TcpListener::bind(bind_addr)
             .await
@@ -58,7 +58,7 @@ impl DotServer {
             .local_addr()
             .context("Failed to get DoT listener local address")?;
 
-        console_info!(status_tx, "DoT server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("DoT server listening on {}", local_addr));
 
         let task_registrar = app_state.clone();
         let handle = tokio::spawn(async move {
@@ -91,7 +91,8 @@ impl DotServer {
         loop {
             match listener.accept().await {
                 Ok((stream, peer_addr)) => {
-                    console_debug!(status_tx, "DoT TCP connection from {}", peer_addr);
+                    Log::new(Some(&status_tx))
+                        .debug(format!("DoT TCP connection from {}", peer_addr));
 
                     let acceptor = acceptor.clone();
                     let llm_client = llm_client.clone();
@@ -110,7 +111,8 @@ impl DotServer {
                     });
                 }
                 Err(e) => {
-                    console_warn!(status_tx, "Failed to accept DoT TCP connection: {}", e);
+                    Log::new(Some(&status_tx))
+                        .warn(format!("Failed to accept DoT TCP connection: {}", e));
                 }
             }
         }
@@ -132,9 +134,9 @@ impl DotServer {
             .await
             .context("TLS handshake failed")?;
 
-        console_debug!(status_tx, "DoT TLS handshake complete with {}", peer_addr);
+        Log::new(Some(&status_tx)).debug(format!("DoT TLS handshake complete with {}", peer_addr));
 
-        console_info!(status_tx, "DoT connection from {}", peer_addr);
+        Log::new(Some(&status_tx)).info(format!("DoT connection from {}", peer_addr));
 
         // Handle DNS queries over TLS
         loop {
@@ -143,15 +145,13 @@ impl DotServer {
             match tls_stream.read_exact(&mut len_buf).await {
                 Ok(_) => {}
                 Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    debug!("DoT connection from {} closed by peer", peer_addr);
-                    let _ =
-                        status_tx.send(format!("[DEBUG] DoT connection from {} closed", peer_addr));
+                    Log::new(Some(&status_tx))
+                        .debug(format!("DoT connection from {} closed", peer_addr));
                     break;
                 }
                 Err(e) => {
-                    error!("Failed to read length prefix: {}", e);
-                    let _ =
-                        status_tx.send(format!("[ERROR] Failed to read DoT length prefix: {}", e));
+                    Log::new(Some(&status_tx))
+                        .error(format!("Failed to read DoT length prefix: {}", e));
                     break;
                 }
             }
@@ -159,36 +159,27 @@ impl DotServer {
             let dns_len = u16::from_be_bytes(len_buf) as usize;
 
             if dns_len == 0 || dns_len > 65535 {
-                warn!("Invalid DNS message length: {}", dns_len);
-                let _ = status_tx.send(format!(
-                    "[WARN] Invalid DoT DNS message length: {}",
-                    dns_len
-                ));
+                Log::new(Some(&status_tx))
+                    .warn(format!("Invalid DoT DNS message length: {}", dns_len));
                 break;
             }
 
             // Read DNS message
             let mut dns_buf = vec![0u8; dns_len];
             if let Err(e) = tls_stream.read_exact(&mut dns_buf).await {
-                error!("Failed to read DNS message: {}", e);
-                let _ = status_tx.send(format!("[ERROR] Failed to read DoT DNS message: {}", e));
+                Log::new(Some(&status_tx)).error(format!("Failed to read DoT DNS message: {}", e));
                 break;
             }
 
-            console_debug!(
-                status_tx,
-                "DoT received {} bytes from {}",
-                dns_len,
-                peer_addr
-            );
+            Log::new(Some(&status_tx))
+                .debug(format!("DoT received {} bytes from {}", dns_len, peer_addr));
 
             // Parse DNS query
             let dns_message = match DnsMessage::from_vec(&dns_buf) {
                 Ok(msg) => msg,
                 Err(e) => {
-                    error!("Failed to parse DNS message: {}", e);
-                    let _ =
-                        status_tx.send(format!("[ERROR] Failed to parse DoT DNS message: {}", e));
+                    Log::new(Some(&status_tx))
+                        .warn(format!("Failed to parse DoT DNS message: {}", e));
                     continue;
                 }
             };
@@ -196,8 +187,7 @@ impl DotServer {
             // Extract query information
             let queries = dns_message.queries();
             if queries.is_empty() {
-                warn!("DoT DNS message has no queries");
-                let _ = status_tx.send("[WARN] DoT DNS message has no queries".to_string());
+                Log::new(Some(&status_tx)).warn("DoT DNS message has no queries");
                 continue;
             }
 
@@ -206,15 +196,13 @@ impl DotServer {
             let query_type = format!("{:?}", query.query_type());
             let query_id = dns_message.id();
 
-            console_info!(
-                status_tx,
+            Log::new(Some(&status_tx)).info(format!(
                 "DoT query: {} {} (ID: {})",
-                domain,
-                query_type,
-                query_id
-            );
+                domain, query_type, query_id
+            ));
 
-            console_trace!(status_tx, "DoT DNS query hex: {}", hex::encode(&dns_buf));
+            Log::new(Some(&status_tx))
+                .trace(format!("DoT DNS query hex: {}", hex::encode(&dns_buf)));
 
             // Create event for LLM
             let event = Event::new(
@@ -230,7 +218,8 @@ impl DotServer {
             // Get protocol actions
             let protocol = Arc::new(DotProtocol::new());
 
-            console_debug!(status_tx, "DoT calling LLM for query from {}", peer_addr);
+            Log::new(Some(&status_tx))
+                .debug(format!("DoT calling LLM for query from {}", peer_addr));
 
             // Call LLM
             match call_llm(
@@ -246,14 +235,13 @@ impl DotServer {
                 Ok(execution_result) => {
                     // Display messages from LLM
                     for message in &execution_result.messages {
-                        console_info!(status_tx, "{}", message);
+                        Log::new(Some(&status_tx)).info(format!("{}", message));
                     }
 
-                    console_debug!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).debug(format!(
                         "DoT got {} protocol results",
                         execution_result.protocol_results.len()
-                    );
+                    ));
 
                     // Execute actions from LLM response
                     for protocol_result in &execution_result.protocol_results {
@@ -267,17 +255,12 @@ impl DotServer {
                                 response.extend_from_slice(bytes);
 
                                 if let Err(e) = tls_stream.write_all(&response).await {
-                                    console_error!(status_tx, "Failed to send DoT response: {}", e);
+                                    Log::new(Some(&status_tx))
+                                        .error(format!("Failed to send DoT response: {}", e));
                                 } else {
-                                    debug!("DoT sent {} bytes to {}", bytes.len(), peer_addr);
-                                    let _ = status_tx
-                                        .send(format!("[DEBUG] DoT sent {} bytes", bytes.len()));
-
-                                    console_trace!(
-                                        status_tx,
-                                        "DoT response hex: {}",
-                                        hex::encode(bytes)
-                                    );
+                                    let log = Log::new(Some(&status_tx));
+                                    log.debug(format!("DoT sent {} bytes", bytes.len()));
+                                    log.trace(format!("DoT response hex: {}", hex::encode(bytes)));
                                 }
                             }
                             ActionResult::Custom { data, .. } => {
@@ -292,44 +275,31 @@ impl DotServer {
                                         response.extend_from_slice(&response_bytes);
 
                                         if let Err(e) = tls_stream.write_all(&response).await {
-                                            console_error!(
-                                                status_tx,
+                                            Log::new(Some(&status_tx)).error(format!(
                                                 "Failed to send DoT response: {}",
                                                 e
-                                            );
+                                            ));
                                         } else {
-                                            debug!(
-                                                "DoT sent {} bytes to {}",
-                                                response_bytes.len(),
-                                                peer_addr
-                                            );
-                                            let _ = status_tx.send(format!(
-                                                "[DEBUG] DoT sent {} bytes",
+                                            let log = Log::new(Some(&status_tx));
+                                            log.debug(format!(
+                                                "DoT sent {} bytes",
                                                 response_bytes.len()
                                             ));
-
-                                            console_trace!(
-                                                status_tx,
-                                                "DoT response hex: {}",
-                                                output_data
-                                            );
+                                            log.trace(format!("DoT response hex: {}", output_data));
                                         }
                                     }
                                 }
                             }
                             ActionResult::CloseConnection => {
-                                info!("DoT connection from {} closed by LLM action", peer_addr);
-                                let _ = status_tx.send(format!(
-                                    "[INFO] DoT connection from {} closed by LLM",
+                                Log::new(Some(&status_tx)).info(format!(
+                                    "DoT connection from {} closed by LLM",
                                     peer_addr
                                 ));
                                 return Ok(());
                             }
                             ActionResult::NoAction => {
                                 // Ignore query - don't send response
-                                debug!("DoT query ignored by LLM");
-                                let _ =
-                                    status_tx.send("[DEBUG] DoT query ignored by LLM".to_string());
+                                Log::new(Some(&status_tx)).debug("DoT query ignored by LLM");
                             }
                             _ => {}
                         }
@@ -346,17 +316,10 @@ impl DotServer {
                     // discards the packet as unsolicited and we are back to silence, so this
                     // reuses the DNS server's own builder rather than synthesising a header.
                     let overloaded = crate::llm::is_overload_error(&e);
-                    error!(
-                        "DoT LLM call failed for query from {} (overload={}): {}",
-                        peer_addr, overloaded, e
-                    );
-                    console_error!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).warn(format!(
                         "DoT answering SERVFAIL to {} (overload={}): {}",
-                        peer_addr,
-                        overloaded,
-                        e
-                    );
+                        peer_addr, overloaded, e
+                    ));
                     match crate::server::dns::actions::build_servfail(&dns_message) {
                         Ok(packet) => {
                             // RFC 7858 uses the DNS-over-TCP framing: a two-byte length
@@ -364,21 +327,17 @@ impl DotServer {
                             let mut framed = (packet.len() as u16).to_be_bytes().to_vec();
                             framed.extend_from_slice(&packet);
                             if let Err(send_err) = tls_stream.write_all(&framed).await {
-                                console_error!(
-                                    status_tx,
+                                Log::new(Some(&status_tx)).error(format!(
                                     "DoT failed to send SERVFAIL to {}: {}",
-                                    peer_addr,
-                                    send_err
-                                );
+                                    peer_addr, send_err
+                                ));
                             }
                         }
                         Err(build_err) => {
-                            console_error!(
-                                status_tx,
+                            Log::new(Some(&status_tx)).error(format!(
                                 "DoT failed to build SERVFAIL for {}: {}",
-                                peer_addr,
-                                build_err
-                            );
+                                peer_addr, build_err
+                            ));
                         }
                     }
                     continue;
@@ -387,7 +346,7 @@ impl DotServer {
         }
 
         // Connection closed
-        console_info!(status_tx, "DoT connection from {} closed", peer_addr);
+        Log::new(Some(&status_tx)).info(format!("DoT connection from {} closed", peer_addr));
 
         Ok(())
     }

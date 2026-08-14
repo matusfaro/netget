@@ -47,17 +47,17 @@ use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::{CloseFrame, Role, WebSocketConfig};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::WebSocketStream;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
 use crate::state::ServerId;
-use crate::{console_debug, console_error, console_info, console_warn};
 use actions::{
     encode_inbound_payload, WebSocketProtocol, WsOut, WEBSOCKET_BINARY_MESSAGE_EVENT,
     WEBSOCKET_CLOSE_EVENT, WEBSOCKET_CONNECTION_OPENED_EVENT, WEBSOCKET_HANDSHAKE_EVENT,
@@ -465,10 +465,9 @@ impl WebSocketServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("WebSocket server listening on {}", local_addr);
-        console_info!(status_tx, "WebSocket server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("WebSocket server listening on {}", local_addr));
         if let Some(p) = &path_filter {
-            console_info!(status_tx, "WebSocket server only upgrades path {}", p);
+            Log::new(Some(&status_tx)).info(format!("WebSocket server only upgrades path {}", p));
         }
 
         let accept_state = app_state.clone();
@@ -501,8 +500,8 @@ impl WebSocketServer {
                         });
                     }
                     Err(e) => {
-                        error!("WebSocket accept error: {}", e);
-                        console_error!(accept_status_tx, "WebSocket accept error: {}", e);
+                        Log::new(Some(&accept_status_tx))
+                            .error(format!("WebSocket accept error: {}", e));
                         break;
                     }
                 }
@@ -559,8 +558,10 @@ impl WebSocketServer {
         let head = match parse_request_head(&head_bytes) {
             Ok(h) => h,
             Err(e) => {
-                warn!("WebSocket malformed request from {}: {}", peer_addr, e);
-                console_warn!(status_tx, "WebSocket malformed request: {}", e);
+                Log::new(Some(&status_tx)).warn(format!(
+                    "WebSocket malformed request from {}: {}",
+                    peer_addr, e
+                ));
                 let _ = socket.write_all(&build_error_response(400, &e, &[])).await;
                 return Ok(());
             }
@@ -570,16 +571,10 @@ impl WebSocketServer {
         let key = match validate_upgrade(&head) {
             Ok(k) => k,
             Err(rej) => {
-                debug!(
-                    "WebSocket upgrade refused for {}: {} {}",
+                Log::new(Some(&status_tx)).debug(format!(
+                    "WebSocket upgrade refused for {} ({}): {}",
                     peer_addr, rej.status, rej.reason
-                );
-                console_debug!(
-                    status_tx,
-                    "WebSocket upgrade refused ({}): {}",
-                    rej.status,
-                    rej.reason
-                );
+                ));
                 let _ = socket
                     .write_all(&build_error_response(
                         rej.status,
@@ -593,12 +588,11 @@ impl WebSocketServer {
 
         if let Some(want) = &path_filter {
             if head.path() != want {
-                console_debug!(
-                    status_tx,
+                Log::new(Some(&status_tx)).debug(format!(
                     "WebSocket 404 for path {} (server serves {})",
                     head.path(),
                     want
-                );
+                ));
                 let _ = socket
                     .write_all(&build_error_response(
                         404,
@@ -673,12 +667,10 @@ impl WebSocketServer {
         let subprotocol = match decision {
             HandshakeDecision::Accept { subprotocol } => subprotocol,
             HandshakeDecision::Reject { status, reason } => {
-                console_info!(
-                    status_tx,
+                Log::new(Some(&status_tx)).info(format!(
                     "WebSocket upgrade rejected by handler ({}): {}",
-                    status,
-                    reason
-                );
+                    status, reason
+                ));
                 let _ = socket
                     .write_all(&build_error_response(status, &reason, &[]))
                     .await;
@@ -714,12 +706,7 @@ impl WebSocketServer {
             })
             .await;
 
-        info!(
-            "WebSocket {} open from {} path={} subprotocol={:?}",
-            connection_id, peer_addr, path, subprotocol
-        );
-        console_info!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!(
             "WebSocket {} open from {} ({}{})",
             connection_id,
             peer_addr,
@@ -728,7 +715,7 @@ impl WebSocketServer {
                 .as_ref()
                 .map(|s| format!(", subprotocol {s}"))
                 .unwrap_or_default()
-        );
+        ));
 
         // ---- 6. hand the upgraded socket to the framing layer ---------------
         // `from_partially_read` rather than `from_raw_socket`: a pipelined client may already
@@ -806,12 +793,8 @@ impl WebSocketServer {
         {
             Ok(r) => r,
             Err(e) => {
-                error!("WebSocket handshake handler failed: {}", e);
-                console_error!(
-                    status_tx,
-                    "WebSocket upgrade refused: handler error ({})",
-                    e
-                );
+                Log::new(Some(status_tx))
+                    .error(format!("WebSocket upgrade refused: handler error ({})", e));
                 return HandshakeDecision::Reject {
                     status: 503,
                     reason: "The upgrade handler failed, so the connection was not opened"
@@ -855,15 +838,11 @@ impl WebSocketServer {
 
         // Structurally distinct from the explicit rejection above: this is the fail-closed
         // path, and it says so in the log rather than quietly behaving like an approval.
-        error!(
-            "WebSocket handshake for {} produced neither accept_websocket nor reject_websocket; \
-             refusing the upgrade",
+        Log::new(Some(status_tx)).error(format!(
+            "WebSocket upgrade refused for {}: handler returned neither accept_websocket nor \
+             reject_websocket",
             peer_addr
-        );
-        console_error!(
-            status_tx,
-            "WebSocket upgrade refused: handler returned no accept_websocket / reject_websocket"
-        );
+        ));
         HandshakeDecision::Reject {
             status: 503,
             reason: "The upgrade handler did not accept the connection".to_string(),
@@ -898,8 +877,8 @@ impl WebSocketServer {
                     })),
                 };
                 if let Err(e) = sink.send(message).await {
-                    debug!("WebSocket write failed on {}: {}", writer_conn, e);
-                    console_debug!(writer_status_tx, "WebSocket write failed: {}", e);
+                    Log::new(Some(&writer_status_tx))
+                        .debug(format!("WebSocket write failed on {}: {}", writer_conn, e));
                     break;
                 }
                 if closing {
@@ -940,11 +919,10 @@ impl WebSocketServer {
             Err(e) => {
                 // Not fatal: nothing has been promised to the client yet, so the connection
                 // stays up and the first real message gets its own chance.
-                warn!(
+                Log::new(Some(&ctx.status_tx)).warn(format!(
                     "WebSocket connection-opened handler failed on {}: {}",
                     ctx.connection_id, e
-                );
-                console_warn!(ctx.status_tx, "WebSocket greeting handler failed: {}", e);
+                ));
             }
         }
 
@@ -990,24 +968,18 @@ impl WebSocketServer {
                         // 1005 "no status received" is the RFC's name for an empty close.
                         None => (1005u16, String::new()),
                     };
-                    info!(
-                        "WebSocket {} closing: code={} reason={:?}",
+                    Log::new(Some(&ctx.status_tx)).info(format!(
+                        "WebSocket {} closed by client (code {} reason {:?})",
                         ctx.connection_id, code, reason
-                    );
-                    console_info!(
-                        ctx.status_tx,
-                        "WebSocket {} closed by client (code {})",
-                        ctx.connection_id,
-                        code
-                    );
+                    ));
                     // Run inline: this is the terminal event and must not race the shutdown.
                     Self::handle_close(ctx.clone(), code, reason).await;
                     break;
                 }
                 Ok(Message::Frame(_)) => {}
                 Err(e) => {
-                    debug!("WebSocket {} read error: {}", ctx.connection_id, e);
-                    console_debug!(ctx.status_tx, "WebSocket read ended: {}", e);
+                    Log::new(Some(&ctx.status_tx))
+                        .debug(format!("WebSocket {} read error: {}", ctx.connection_id, e));
                     break;
                 }
             }
@@ -1028,9 +1000,8 @@ impl WebSocketServer {
             let mut data = ctx.data.lock().await;
             if data.state == HandlerState::Processing {
                 data.queued.push_back(frame);
-                let _ = ctx
-                    .status_tx
-                    .send(format!("⏸ Queued a message for {}", ctx.connection_id));
+                Log::new(Some(&ctx.status_tx))
+                    .debug(format!("Queued a message for {}", ctx.connection_id));
                 return;
             }
             data.state = HandlerState::Processing;
@@ -1121,8 +1092,8 @@ impl WebSocketServer {
                         let mut data = ctx.data.lock().await;
                         data.pending = Some(next);
                         data.state = HandlerState::Accumulating;
-                        let _ = ctx.status_tx.send(format!(
-                            "⏳ Holding a message from {} until more arrives",
+                        Log::new(Some(&ctx.status_tx)).debug(format!(
+                            "Holding a message from {} until more arrives",
                             ctx.connection_id
                         ));
                         return;
@@ -1138,13 +1109,10 @@ impl WebSocketServer {
                     // Do not reset to Idle and write nothing: the peer would wait for a reply
                     // that is never coming. 1011 is the RFC's "the server hit an unexpected
                     // condition", which is exactly what happened.
-                    error!("WebSocket handler failed on {}: {}", ctx.connection_id, e);
-                    console_error!(
-                        ctx.status_tx,
+                    Log::new(Some(&ctx.status_tx)).warn(format!(
                         "WebSocket {}: handler failed, closing with 1011 ({})",
-                        ctx.connection_id,
-                        e
-                    );
+                        ctx.connection_id, e
+                    ));
                     if crate::llm::is_overload_error(&e) {
                         warn!(
                             "WebSocket {} closed: LLM capacity exhausted",

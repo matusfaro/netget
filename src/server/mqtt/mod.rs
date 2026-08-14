@@ -27,11 +27,11 @@ pub mod actions;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
-use crate::{console_debug, console_error, console_info, console_warn};
 use actions::{
     MqttProtocol, MQTT_CONNECT_EVENT, MQTT_PUBLISH_EVENT, MQTT_SUBSCRIBE_EVENT,
     MQTT_UNSUBSCRIBE_EVENT,
@@ -110,8 +110,7 @@ impl MqttServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!("MQTT broker listening on {}", local_addr);
-        console_info!(status_tx, "MQTT broker listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("MQTT broker listening on {}", local_addr));
 
         let accept_state = app_state.clone();
         let accept_status_tx = status_tx.clone();
@@ -120,8 +119,8 @@ impl MqttServer {
             loop {
                 match listener.accept().await {
                     Ok((socket, peer_addr)) => {
-                        debug!("MQTT connection from {}", peer_addr);
-                        console_debug!(accept_status_tx, "MQTT connection from {}", peer_addr);
+                        Log::new(Some(&accept_status_tx))
+                            .debug(format!("MQTT connection from {}", peer_addr));
 
                         let llm_client = llm_client.clone();
                         let app_state = accept_state.clone();
@@ -145,8 +144,8 @@ impl MqttServer {
                         });
                     }
                     Err(e) => {
-                        error!("MQTT accept error: {}", e);
-                        console_error!(accept_status_tx, "MQTT accept error: {}", e);
+                        Log::new(Some(&accept_status_tx))
+                            .error(format!("MQTT accept error: {}", e));
                         break;
                     }
                 }
@@ -195,7 +194,7 @@ async fn handle_mqtt_connection(
     let writer_handle = tokio::spawn(async move {
         while let Some(bytes) = out_rx.recv().await {
             if let Err(e) = write_half.write_all(&bytes).await {
-                console_debug!(writer_status_tx, "MQTT write failed: {}", e);
+                Log::new(Some(&writer_status_tx)).debug(format!("MQTT write failed: {}", e));
                 break;
             }
         }
@@ -250,8 +249,8 @@ async fn handle_mqtt_connection(
                 Ok(Some(p)) => p,
                 Ok(None) => break, // need more bytes
                 Err(e) => {
-                    warn!("MQTT protocol error from {}: {}", peer_addr, e);
-                    console_warn!(status_tx, "MQTT protocol error from {}: {}", peer_addr, e);
+                    Log::new(Some(&status_tx))
+                        .warn(format!("MQTT protocol error from {}: {}", peer_addr, e));
                     // A malformed packet desynchronises the stream; the spec says close.
                     finish_connection(
                         protocol,
@@ -310,12 +309,11 @@ async fn handle_mqtt_connection(
         "MQTT connection {} closing: {}",
         connection_id, close_reason
     );
-    console_info!(
-        status_tx,
+    Log::new(Some(&status_tx)).info(format!(
         "MQTT client {} disconnected ({})",
         client_id.as_deref().unwrap_or("<unidentified>"),
         close_reason
-    );
+    ));
 
     finish_connection(
         protocol,
@@ -401,14 +399,13 @@ async fn dispatch_packet(
     match packet.packet_type {
         PKT_CONNECT => {
             let Some(connect) = parse_connect(&packet.body) else {
-                warn!("MQTT malformed CONNECT, closing connection");
-                console_warn!(status_tx, "MQTT malformed CONNECT from client, closing");
+                Log::new(Some(&status_tx)).warn("MQTT malformed CONNECT from client, closing");
                 return false;
             };
 
             if client_id.is_some() {
                 // 3.1.0-2: a second CONNECT on one connection is a protocol violation.
-                console_warn!(status_tx, "MQTT duplicate CONNECT, closing connection");
+                Log::new(Some(&status_tx)).warn("MQTT duplicate CONNECT, closing connection");
                 return false;
             }
 
@@ -435,13 +432,12 @@ async fn dispatch_packet(
                 "MQTT client '{}' connected (clean_session={}, keep_alive={}s)",
                 effective_id, connect.clean_session, connect.keep_alive
             );
-            console_info!(
-                status_tx,
+            Log::new(Some(&status_tx)).info(format!(
                 "MQTT CONNECT from client '{}' (user={}, clean_session={})",
                 effective_id,
                 connect.username.as_deref().unwrap_or("-"),
                 connect.clean_session
-            );
+            ));
 
             let event = Event::new(
                 &MQTT_CONNECT_EVENT,
@@ -477,11 +473,10 @@ async fn dispatch_packet(
                     // CONNACK is mandatory (3.2). Accept by default rather than let the
                     // client sit in its connect timeout. Safe only because the handler ran
                     // and declined to decide - see `LlmOutcome::Failed`.
-                    console_warn!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).warn(format!(
                         "MQTT no mqtt_connack from handler for '{}'; accepting by default",
                         effective_id
-                    );
+                    ));
                     let _ = out_tx.send(build_connack(0, false));
                     true
                 }
@@ -492,12 +487,11 @@ async fn dispatch_packet(
                     // backend that never answered. Never code 0 here: that is an accepted
                     // connection, and for a CONNECT carrying credentials it is an
                     // authentication decision made by an outage.
-                    console_error!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).warn(format!(
                         "MQTT refusing CONNECT from '{}' with CONNACK 3 (server unavailable): \
                          backend failed",
                         effective_id
-                    );
+                    ));
                     let _ = out_tx.send(build_connack(CONNACK_SERVER_UNAVAILABLE, false));
                     false
                 }
@@ -507,26 +501,25 @@ async fn dispatch_packet(
         PKT_PUBLISH => {
             let qos = (packet.flags >> 1) & 0x03;
             if qos > 2 {
-                console_warn!(status_tx, "MQTT PUBLISH with invalid QoS 3, closing");
+                Log::new(Some(&status_tx)).warn("MQTT PUBLISH with invalid QoS 3, closing");
                 return false;
             }
             let Some(publish) = parse_publish(&packet.body, qos) else {
-                console_warn!(status_tx, "MQTT malformed PUBLISH, closing connection");
+                Log::new(Some(&status_tx)).warn("MQTT malformed PUBLISH, closing connection");
                 return false;
             };
 
             let (payload, payload_is_text) = decode_payload(&publish.payload);
             let name = client_id.clone().unwrap_or_else(|| "<no CONNECT>".into());
 
-            console_debug!(
-                status_tx,
+            Log::new(Some(&status_tx)).debug(format!(
                 "MQTT PUBLISH from '{}' topic='{}' qos={} retain={} {} bytes",
                 name,
                 publish.topic,
                 qos,
                 (packet.flags & 0x01) == 1,
                 publish.payload.len()
-            );
+            ));
 
             let event = Event::new(
                 &MQTT_PUBLISH_EVENT,
@@ -586,13 +579,11 @@ async fn dispatch_packet(
                     // error at this point is closing the connection, so that is what happens:
                     // the publisher gets no acknowledgement, keeps the message, and retries
                     // on reconnect exactly as QoS 1/2 promise.
-                    console_error!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).warn(format!(
                         "MQTT closing connection: backend failed on PUBLISH (qos={}, id={}), \
                          acknowledging it would claim delivery",
-                        qos,
-                        publish.packet_id
-                    );
+                        qos, publish.packet_id
+                    ));
                     false
                 }
             }
@@ -609,17 +600,16 @@ async fn dispatch_packet(
 
         PKT_SUBSCRIBE => {
             let Some(sub) = parse_subscribe(&packet.body) else {
-                console_warn!(status_tx, "MQTT malformed SUBSCRIBE, closing connection");
+                Log::new(Some(&status_tx)).warn("MQTT malformed SUBSCRIBE, closing connection");
                 return false;
             };
             if sub.topics.is_empty() {
-                console_warn!(status_tx, "MQTT SUBSCRIBE with no topic filter, closing");
+                Log::new(Some(&status_tx)).warn("MQTT SUBSCRIBE with no topic filter, closing");
                 return false;
             }
 
             let name = client_id.clone().unwrap_or_else(|| "<no CONNECT>".into());
-            console_info!(
-                status_tx,
+            Log::new(Some(&status_tx)).info(format!(
                 "MQTT SUBSCRIBE from '{}': {}",
                 name,
                 sub.topics
@@ -627,7 +617,7 @@ async fn dispatch_packet(
                     .map(|(f, q)| format!("{} (qos {})", f, q))
                     .collect::<Vec<_>>()
                     .join(", ")
-            );
+            ));
 
             let topics: Vec<serde_json::Value> = sub
                 .topics
@@ -662,11 +652,10 @@ async fn dispatch_packet(
                 LlmOutcome::Silent => {
                     // SUBACK is mandatory (3.8.4) and must echo the packet identifier.
                     let granted: Vec<u8> = sub.topics.iter().map(|(_, q)| *q).collect();
-                    console_warn!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).warn(format!(
                         "MQTT no mqtt_suback from handler; granting requested QoS to '{}'",
                         name
-                    );
+                    ));
                     let _ = out_tx.send(build_suback(sub.packet_id, &granted));
                     true
                 }
@@ -676,13 +665,12 @@ async fn dispatch_packet(
                     // so use it rather than granting: granting a subscription is an access
                     // decision, and nothing decided it.
                     let refused = vec![SUBACK_FAILURE; sub.topics.len()];
-                    console_error!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).warn(format!(
                         "MQTT refusing all {} subscription(s) from '{}' with SUBACK 0x80: \
                          backend failed",
                         sub.topics.len(),
                         name
-                    );
+                    ));
                     let _ = out_tx.send(build_suback(sub.packet_id, &refused));
                     true
                 }
@@ -691,17 +679,16 @@ async fn dispatch_packet(
 
         PKT_UNSUBSCRIBE => {
             let Some(unsub) = parse_unsubscribe(&packet.body) else {
-                console_warn!(status_tx, "MQTT malformed UNSUBSCRIBE, closing connection");
+                Log::new(Some(&status_tx)).warn("MQTT malformed UNSUBSCRIBE, closing connection");
                 return false;
             };
 
             let name = client_id.clone().unwrap_or_else(|| "<no CONNECT>".into());
-            console_info!(
-                status_tx,
+            Log::new(Some(&status_tx)).info(format!(
                 "MQTT UNSUBSCRIBE from '{}': {}",
                 name,
                 unsub.topics.join(", ")
-            );
+            ));
 
             let event = Event::new(
                 &MQTT_UNSUBSCRIBE_EVENT,
@@ -736,12 +723,11 @@ async fn dispatch_packet(
                     // failure code, and it means "the subscriptions are gone". Claiming that
                     // when nothing processed the request would leave the client believing it
                     // had unsubscribed. Close instead.
-                    console_error!(
-                        status_tx,
+                    Log::new(Some(&status_tx)).warn(format!(
                         "MQTT closing connection: backend failed on UNSUBSCRIBE (id={}), \
                          acknowledging it would claim the subscriptions were removed",
                         unsub.packet_id
-                    );
+                    ));
                     false
                 }
             }
@@ -755,11 +741,10 @@ async fn dispatch_packet(
         }
 
         PKT_DISCONNECT => {
-            console_info!(
-                status_tx,
+            Log::new(Some(&status_tx)).info(format!(
                 "MQTT client '{}' sent DISCONNECT",
                 client_id.as_deref().unwrap_or("<unidentified>")
-            );
+            ));
             false
         }
 
@@ -850,18 +835,10 @@ async fn run_llm(
         }
         Err(e) => {
             let overloaded = crate::llm::is_overload_error(&e);
-            error!(
+            Log::new(Some(&status_tx)).warn(format!(
                 "MQTT handler failed for {} on connection {} (overload={}): {}",
                 event.event_type.id, connection_id, overloaded, e
-            );
-            console_error!(
-                status_tx,
-                "MQTT handler failed for {} on connection {} (overload={}): {}",
-                event.event_type.id,
-                connection_id,
-                overloaded,
-                e
-            );
+            ));
             LlmOutcome::Failed
         }
     }
