@@ -8,15 +8,15 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use super::connection::ConnectionId;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_trace};
 use actions::{
     QuicProtocol, QUIC_CONNECTION_OPENED_EVENT, QUIC_DATA_RECEIVED_EVENT, QUIC_STREAM_OPENED_EVENT,
 };
@@ -83,8 +83,10 @@ impl QuicServer {
             .local_addr()
             .context("Failed to get local address")?;
 
-        info!("QUIC server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] QUIC server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!(
+            "QUIC server (action-based) listening on {}",
+            local_addr
+        ));
 
         let protocol = Arc::new(QuicProtocol::new());
 
@@ -102,12 +104,8 @@ impl QuicServer {
                     match connecting.await {
                         Ok(connection) => {
                             let remote_addr = connection.remote_address();
-                            info!(
+                            Log::new(Some(&status_tx_clone)).info(format!(
                                 "Accepted QUIC connection {} from {}",
-                                connection_id, remote_addr
-                            );
-                            let _ = status_tx_clone.send(format!(
-                                "✓ QUIC connection {} from {}",
                                 connection_id, remote_addr
                             ));
 
@@ -156,8 +154,9 @@ impl QuicServer {
                                     }
                                 }
                                 Err(e) => {
-                                    error!("LLM error on connection opened: {}", e);
-                                    let _ = status_tx_clone.send(format!("✗ LLM error: {e}"));
+                                    // Non-fatal: the connection carries on, so WARN.
+                                    Log::new(Some(&status_tx_clone))
+                                        .warn(format!("LLM error on connection opened: {}", e));
                                 }
                             }
 
@@ -169,12 +168,8 @@ impl QuicServer {
                                         let stream_id = ConnectionId::new(
                                             app_state_clone.get_next_unified_id().await,
                                         );
-                                        info!(
+                                        Log::new(Some(&status_tx_clone)).info(format!(
                                             "Accepted QUIC stream {} on connection {}",
-                                            stream_id, connection_id
-                                        );
-                                        let _ = status_tx_clone.send(format!(
-                                            "→ Stream {} opened on connection {}",
                                             stream_id, connection_id
                                         ));
 
@@ -201,20 +196,15 @@ impl QuicServer {
                                         });
                                     }
                                     Err(quinn::ConnectionError::ApplicationClosed(_)) => {
-                                        info!("QUIC connection {} closed by peer", connection_id);
-                                        let _ = status_tx_clone.send(format!(
-                                            "✗ QUIC connection {} closed",
+                                        Log::new(Some(&status_tx_clone)).info(format!(
+                                            "QUIC connection {} closed by peer",
                                             connection_id
                                         ));
                                         break;
                                     }
                                     Err(e) => {
-                                        error!(
+                                        Log::new(Some(&status_tx_clone)).error(format!(
                                             "Error accepting stream on {}: {}",
-                                            connection_id, e
-                                        );
-                                        let _ = status_tx_clone.send(format!(
-                                            "✗ Stream accept error on {}: {}",
                                             connection_id, e
                                         ));
                                         break;
@@ -229,9 +219,8 @@ impl QuicServer {
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         }
                         Err(e) => {
-                            error!("Connection error on {}: {}", connection_id, e);
-                            let _ = status_tx_clone
-                                .send(format!("✗ Connection error on {}: {}", connection_id, e));
+                            Log::new(Some(&status_tx_clone))
+                                .error(format!("Connection error on {}: {}", connection_id, e));
                         }
                     }
                 });
@@ -312,12 +301,11 @@ impl QuicServer {
                         if let Err(e) = write_result {
                             error!("Failed to send initial data on stream {}: {}", stream_id, e);
                         } else {
-                            console_debug!(
-                                status_tx,
+                            Log::new(Some(&status_tx)).debug(format!(
                                 "QUIC sent {} bytes on stream {}",
                                 output_data.len(),
                                 stream_id
-                            );
+                            ));
                             app_state
                                 .update_connection_stats(
                                     server_id,
@@ -333,8 +321,8 @@ impl QuicServer {
                 }
             }
             Err(e) => {
-                error!("LLM error on stream opened: {}", e);
-                let _ = status_tx.send(format!("✗ LLM error: {e}"));
+                // Non-fatal: the read loop still runs, so WARN.
+                Log::new(Some(&status_tx)).warn(format!("LLM error on stream opened: {}", e));
             }
         }
 
@@ -358,7 +346,11 @@ impl QuicServer {
                         )
                         .await;
 
-                    // DEBUG: Log summary with data preview
+                    // Data summary + full payload are FileOnly: the quic_data_received
+                    // event template renders the equivalent lines to the TUI, so streaming
+                    // the payload here too would duplicate it and load the unbounded
+                    // status channel.
+                    let log = Log::new(Some(&status_tx));
                     if data
                         .iter()
                         .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
@@ -369,27 +361,17 @@ impl QuicServer {
                         } else {
                             data_str.to_string()
                         };
-                        console_debug!(
-                            status_tx,
+                        log.debug(format!(
                             "QUIC received {} bytes on stream {}: {}",
-                            n,
-                            stream_id,
-                            preview
-                        );
-
-                        // TRACE: Log full text payload
-                        console_trace!(status_tx, "QUIC data (text): {:?}", data_str);
+                            n, stream_id, preview
+                        ));
+                        log.trace(format!("QUIC data (text): {:?}", data_str));
                     } else {
-                        console_debug!(
-                            status_tx,
+                        log.debug(format!(
                             "QUIC received {} bytes on stream {} (binary data)",
-                            n,
-                            stream_id
-                        );
-
-                        // TRACE: Log full hex payload
-                        let hex_str = hex::encode(&data);
-                        console_trace!(status_tx, "QUIC data (hex): {}", hex_str);
+                            n, stream_id
+                        ));
+                        log.trace(format!("QUIC data (hex): {}", hex::encode(&data)));
                     }
 
                     // Handle data directly (await to ensure processing completes before stream removal)
@@ -408,14 +390,13 @@ impl QuicServer {
                 }
                 Ok(None) => {
                     // Stream finished
-                    info!("QUIC stream {} finished", stream_id);
-                    let _ = status_tx.send(format!("✗ QUIC stream {} closed", stream_id));
+                    Log::new(Some(&status_tx)).info(format!("QUIC stream {} finished", stream_id));
                     streams.lock().await.remove(&stream_id);
                     break;
                 }
                 Err(e) => {
-                    error!("Read error on stream {}: {}", stream_id, e);
-                    let _ = status_tx.send(format!("✗ Read error on stream {}: {}", stream_id, e));
+                    Log::new(Some(&status_tx))
+                        .error(format!("Read error on stream {}: {}", stream_id, e));
                     streams.lock().await.remove(&stream_id);
                     break;
                 }
@@ -451,8 +432,8 @@ impl QuicServer {
             streams.lock().await.entry(stream_id).and_modify(|s| {
                 s.queued_data.extend_from_slice(&data);
             });
-            let _ = status_tx.send(format!(
-                "⏸ Queued {} bytes for stream {}",
+            Log::new(Some(&status_tx)).debug(format!(
+                "Queued {} bytes for stream {}",
                 data.len(),
                 stream_id
             ));
@@ -570,7 +551,10 @@ impl QuicServer {
                                             Some(1),
                                         )
                                         .await;
-                                    // DEBUG: Log summary with data preview
+                                    // Sent-data summary + payload are FileOnly: the
+                                    // send_quic_data action template already reports the send
+                                    // to the TUI.
+                                    let log = Log::new(Some(&status_tx));
                                     if output_data
                                         .iter()
                                         .all(|&b| b.is_ascii_graphic() || b.is_ascii_whitespace())
@@ -581,34 +565,26 @@ impl QuicServer {
                                         } else {
                                             data_str.to_string()
                                         };
-                                        console_debug!(
-                                            status_tx,
+                                        log.debug(format!(
                                             "QUIC sent {} bytes on stream {}: {}",
                                             output_data.len(),
                                             stream_id,
                                             preview
-                                        );
-
-                                        // TRACE: Log full text payload
-                                        console_trace!(
-                                            status_tx,
-                                            "QUIC sent (text): {:?}",
-                                            data_str
-                                        );
+                                        ));
+                                        log.trace(format!("QUIC sent (text): {:?}", data_str));
                                     } else {
-                                        console_debug!(
-                                            status_tx,
+                                        log.debug(format!(
                                             "QUIC sent {} bytes on stream {} (binary data)",
                                             output_data.len(),
                                             stream_id
-                                        );
-
-                                        // TRACE: Log full hex payload
-                                        let hex_str = hex::encode(&output_data);
-                                        console_trace!(status_tx, "QUIC sent (hex): {}", hex_str);
+                                        ));
+                                        log.trace(format!(
+                                            "QUIC sent (hex): {}",
+                                            hex::encode(&output_data)
+                                        ));
                                     }
-                                    let _ = status_tx.send(format!(
-                                        "→ Sent {} bytes on stream {}",
+                                    log.debug(format!(
+                                        "Sent {} bytes on stream {}",
                                         output_data.len(),
                                         stream_id
                                     ));
@@ -631,15 +607,15 @@ impl QuicServer {
                             .await
                             .entry(stream_id)
                             .and_modify(|s| s.state = StreamState::Accumulating);
-                        let _ = status_tx
-                            .send(format!("⏳ Waiting for more data on stream {}", stream_id));
+                        Log::new(Some(&status_tx))
+                            .debug(format!("Waiting for more data on stream {}", stream_id));
                         return;
                     }
 
                     // Handle close_stream
                     if should_close {
                         streams.lock().await.remove(&stream_id);
-                        let _ = status_tx.send(format!("✗ Closed stream {}", stream_id));
+                        Log::new(Some(&status_tx)).info(format!("Closed stream {}", stream_id));
                         return;
                     }
 
@@ -653,8 +629,8 @@ impl QuicServer {
                     };
 
                     if has_queued {
-                        let _ = status_tx
-                            .send(format!("▶ Processing queued data for stream {}", stream_id));
+                        Log::new(Some(&status_tx))
+                            .debug(format!("Processing queued data for stream {}", stream_id));
                         // Loop continues to process queued data
                     } else {
                         // Go to Idle state
@@ -667,8 +643,7 @@ impl QuicServer {
                     }
                 }
                 Err(e) => {
-                    error!("LLM error for QUIC data: {}", e);
-                    let _ = status_tx.send(format!("✗ LLM error: {e}"));
+                    Log::new(Some(&status_tx)).warn(format!("LLM error for QUIC data: {}", e));
                     streams
                         .lock()
                         .await

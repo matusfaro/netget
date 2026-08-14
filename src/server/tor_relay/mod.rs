@@ -85,7 +85,8 @@ use circuit::{CircuitId, CircuitManager, StreamId};
 #[cfg(feature = "tor")]
 use stream::{build_relay_cell, connect_to_target, end_reason, parse_begin_target, relay_command};
 
-use crate::console_debug;
+#[cfg(feature = "tor")]
+use crate::logging::emit::Log;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -129,9 +130,8 @@ impl TorRelayServer {
             .local_addr()
             .context("Failed to get local address")?;
 
-        info!("Tor Relay server listening on {}", actual_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] Tor Relay (OR protocol) server listening on {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "Tor Relay (OR protocol) server listening on {}",
             actual_addr
         ));
 
@@ -148,19 +148,8 @@ impl TorRelayServer {
         // could ever complete a circuit with it**. Both are public values by design.
         let fingerprint = circuit_manager.identity_fingerprint();
         let onion_key = *circuit_manager.onion_public_key().as_bytes();
-        info!(
-            "Relay identity fingerprint: {}, onion key: {}",
-            hex::encode(fingerprint),
-            hex::encode(onion_key)
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] Relay fingerprint: {}",
-            hex::encode(fingerprint)
-        ));
-        let _ = status_tx.send(format!(
-            "[INFO] Relay onion key: {}",
-            hex::encode(onion_key)
-        ));
+        Log::new(Some(&status_tx)).info(format!("Relay fingerprint: {}", hex::encode(fingerprint)));
+        Log::new(Some(&status_tx)).info(format!("Relay onion key: {}", hex::encode(onion_key)));
 
         let protocol = Arc::new(TorRelayProtocol::new());
 
@@ -173,12 +162,10 @@ impl TorRelayServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await,
                         );
-                        console_debug!(
-                            status_tx,
+                        Log::new(Some(&status_tx)).debug(format!(
                             "Tor Relay connection {} from {}",
-                            connection_id,
-                            remote_addr
-                        );
+                            connection_id, remote_addr
+                        ));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -207,7 +194,8 @@ impl TorRelayServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept Tor Relay connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept Tor Relay connection: {}", e));
                     }
                 }
             }
@@ -269,13 +257,13 @@ async fn handle_tor_relay_connection(
     // Perform TLS handshake
     let tls_stream = match acceptor.accept(stream).await {
         Ok(s) => {
-            debug!("TLS handshake completed for {}", remote_addr);
-            let _ = status_tx.send(format!("→ TLS handshake completed for {}", remote_addr));
+            Log::new(Some(&status_tx)).info(format!("TLS handshake completed for {}", remote_addr));
             s
         }
         Err(e) => {
-            warn!("TLS handshake failed for {}: {}", remote_addr, e);
-            let _ = status_tx.send(format!("✗ TLS handshake failed for {}: {}", remote_addr, e));
+            // Handshake failure is a client-side condition, not a server error: WARN.
+            Log::new(Some(&status_tx))
+                .warn(format!("TLS handshake failed for {}: {}", remote_addr, e));
             return Err(e.into());
         }
     };
@@ -384,9 +372,8 @@ impl TorRelaySession {
                 read_result = self.stream.read(&mut read_buf) => {
                     match read_result {
                         Ok(0) => {
-                            debug!("Tor Relay connection closed by {}", self.remote_addr);
-                            let _ = self.status_tx.send(format!(
-                                "→ Tor Relay connection closed by {}",
+                            Log::new(Some(&self.status_tx)).info(format!(
+                                "Tor Relay connection closed by {}",
                                 self.remote_addr
                             ));
                             return Ok(());
@@ -424,10 +411,8 @@ impl TorRelaySession {
                     .chunks_exact(2)
                     .map(|c| u16::from_be_bytes([c[0], c[1]]))
                     .collect();
-                info!("Received VERSIONS cell offering {:?}", offered);
-                let _ = self
-                    .status_tx
-                    .send(format!("[INFO] Tor VERSIONS offering {:?}", offered));
+                Log::new(Some(&self.status_tx))
+                    .info(format!("Received VERSIONS cell offering {:?}", offered));
 
                 if !offered.contains(&LINK_PROTOCOL_VERSION) {
                     warn!(
@@ -530,15 +515,15 @@ impl TorRelaySession {
             .handle_create2(circuit_id, client_x)
             .await?;
 
-        info!("Circuit {} created successfully", circuit_id.as_u32());
-        let _ = self
-            .status_tx
-            .send(format!("[INFO] Circuit {} created", circuit_id.as_u32()));
+        Log::new(Some(&self.status_tx)).info(format!(
+            "Circuit {} created successfully",
+            circuit_id.as_u32()
+        ));
 
-        // Log relay statistics
+        // Log relay statistics (summary: file-only)
         let stats = self.circuit_manager.get_relay_stats().await;
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] Relay stats: {} circuits, {} streams, sent={} received={}",
+        Log::new(Some(&self.status_tx)).debug(format!(
+            "Relay stats: {} circuits, {} streams, sent={} received={}",
             stats.total_circuits,
             stats.total_streams,
             stats.total_bytes_sent,
@@ -583,8 +568,9 @@ impl TorRelaySession {
                 }
             }
             Err(e) => {
-                warn!("LLM call failed for circuit creation: {}", e);
-                let _ = self.status_tx.send(format!("✗ Tor relay LLM error: {}", e));
+                // Non-fatal: CREATED2 is still sent below, so WARN.
+                Log::new(Some(&self.status_tx))
+                    .warn(format!("LLM call failed for circuit creation: {}", e));
             }
         }
 
@@ -780,16 +766,10 @@ impl TorRelaySession {
                         // the peer asked for. There is no "try again" cell here to express an
                         // overload with, so overload and outage are answered identically and
                         // distinguished only in the log.
-                        error!(
-                            "LLM call failed for RELAY {} on circuit {}: {} - destroying the \
-                             circuit with reason INTERNAL",
-                            relay_cmd_name,
-                            circuit_id.as_u32(),
-                            e
-                        );
-                        let _ = self.status_tx.send(format!(
-                            "[ERROR] Tor relay circuit 0x{:08x}: LLM call failed on RELAY {} \
-                             ({}) - sent DESTROY (reason 2 INTERNAL)",
+                        // Non-fatal: a DESTROY cell (reason 2 INTERNAL) is the wire answer, so WARN.
+                        Log::new(Some(&self.status_tx)).warn(format!(
+                            "Tor relay circuit 0x{:08x}: LLM call failed on RELAY {} ({}) - sent \
+                             DESTROY (reason 2 INTERNAL)",
                             circuit_id.as_u32(),
                             relay_cmd_name,
                             e
@@ -826,15 +806,10 @@ impl TorRelaySession {
         // Parse target address
         let target = parse_begin_target(data)?;
 
-        info!(
+        Log::new(Some(&self.status_tx)).info(format!(
             "BEGIN stream {} on circuit {} to {}",
             stream_id.as_u16(),
             circuit_id.as_u32(),
-            target
-        );
-        let _ = self.status_tx.send(format!(
-            "[INFO] BEGIN stream {} → {}",
-            stream_id.as_u16(),
             target
         ));
 
@@ -846,9 +821,8 @@ impl TorRelaySession {
         // Attempt to connect to target
         match connect_to_target(&target).await {
             Ok(tcp_stream) => {
-                info!("Connected to {} for stream {}", target, stream_id.as_u16());
-                let _ = self.status_tx.send(format!(
-                    "→ Connected to {} for stream {}",
+                Log::new(Some(&self.status_tx)).info(format!(
+                    "Connected to {} for stream {}",
                     target,
                     stream_id.as_u16()
                 ));
@@ -882,10 +856,9 @@ impl TorRelaySession {
                 Ok(Some(encrypted))
             }
             Err(e) => {
-                error!("Failed to connect to {}: {}", target, e);
-                let _ = self
-                    .status_tx
-                    .send(format!("✗ Failed to connect to {}: {}", target, e));
+                // Non-fatal: an END cell (CONNECT_REFUSED) is sent to the client, so WARN.
+                Log::new(Some(&self.status_tx))
+                    .warn(format!("Failed to connect to {}: {}", target, e));
 
                 // Close stream
                 let _ = self
@@ -921,14 +894,10 @@ impl TorRelaySession {
         circuit_id: CircuitId,
         stream_id: StreamId,
     ) -> Result<Option<Vec<u8>>> {
-        info!(
+        Log::new(Some(&self.status_tx)).info(format!(
             "BEGIN_DIR stream {} on circuit {} (directory request over circuit)",
             stream_id.as_u16(),
             circuit_id.as_u32()
-        );
-        let _ = self.status_tx.send(format!(
-            "[INFO] BEGIN_DIR stream {} (directory over circuit)",
-            stream_id.as_u16()
         ));
 
         // Create directory stream in circuit manager
@@ -1176,9 +1145,8 @@ impl TorRelaySession {
             data[0]
         };
 
-        debug!("END stream {} (reason: {})", stream_id.as_u16(), reason);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] END stream {} (reason: {})",
+        Log::new(Some(&self.status_tx)).debug(format!(
+            "END stream {} (reason: {})",
             stream_id.as_u16(),
             reason
         ));
@@ -1401,7 +1369,7 @@ impl TorRelaySession {
 
             // Close stream
             let _ = circuit_mgr.close_stream(circuit_id, stream_id).await;
-            let _ = status_tx.send(format!("[DEBUG] Stream {} closed", stream_id.as_u16()));
+            Log::new(Some(&status_tx)).debug(format!("Stream {} closed", stream_id.as_u16()));
         });
 
         Ok(())
