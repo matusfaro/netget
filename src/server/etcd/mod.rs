@@ -43,7 +43,8 @@ mod mvccpb {
     include!(concat!(env!("OUT_DIR"), "/mvccpb.rs"));
 }
 
-use crate::{console_debug, console_error, console_info};
+#[cfg(feature = "etcd")]
+use crate::logging::emit::Log;
 #[cfg(feature = "etcd")]
 use etcdserverpb::{
     CompactionRequest, CompactionResponse, DeleteRangeRequest, DeleteRangeResponse, PutRequest,
@@ -153,15 +154,11 @@ fn llm_failure(
     } else {
         "INTERNAL"
     };
-    console_error!(
-        status_tx,
+    Log::new(Some(status_tx)).warn(format!(
         "etcd {} could not be answered: the handler failed ({}). Replying grpc-status {} \
          ({}); no key-value data is being invented.",
-        method,
-        e,
-        status,
-        name
-    );
+        method, e, status, name
+    ));
     GrpcFailure::new(status, format!("netget etcd: handler unavailable: {}", e))
 }
 
@@ -345,12 +342,10 @@ impl EtcdServer {
         let cluster_id = 0x6574636400000001u64; // "etcd" + 1
         let member_id = 0x6d656d6265720001u64; // "member" + 1 (shortened to fit u64)
 
-        console_info!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!(
             "etcd server starting on {} (cluster: {})",
-            listen_addr,
-            cluster_name
-        );
+            listen_addr, cluster_name
+        ));
 
         // Create in-memory meta
         let meta = Arc::new(Mutex::new(EtcdMeta::new(cluster_id, member_id)));
@@ -360,7 +355,7 @@ impl EtcdServer {
         let listener = tokio::net::TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        console_info!(status_tx, "etcd server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("etcd server listening on {}", local_addr));
 
         // Spawn server task
         let task_registrar = app_state.clone();
@@ -368,7 +363,8 @@ impl EtcdServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, peer_addr)) => {
-                        console_debug!(status_tx, "etcd connection from {}", peer_addr);
+                        Log::new(Some(&status_tx))
+                            .debug(format!("etcd connection from {}", peer_addr));
 
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
@@ -398,7 +394,8 @@ impl EtcdServer {
                         // A persistent accept error (EMFILE, listener torn down) recurs
                         // immediately, so continuing spins a hot loop that floods the
                         // unbounded status channel. Stop the listener instead.
-                        console_error!(status_tx, "etcd accept failed, listener stopped: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("etcd accept failed, listener stopped: {}", e));
                         break;
                     }
                 }
@@ -491,7 +488,7 @@ impl EtcdServer {
         let path = req.uri().path().to_string();
         let method = req.method().as_str().to_string();
 
-        console_debug!(status_tx, "etcd gRPC {} {}", method, path);
+        Log::new(Some(&status_tx)).debug(format!("etcd gRPC {} {}", method, path));
 
         // Cap the body before buffering it. HTTP/2 flow control bounds the window, not the
         // total, so an unbounded `collect()` lets one client grow the process without limit.
@@ -620,7 +617,7 @@ impl EtcdServer {
         let request = RangeRequest::decode(msg_bytes)?;
 
         let key_str = String::from_utf8_lossy(&request.key);
-        console_debug!(status_tx, "etcd Range request: key={}", key_str);
+        Log::new(Some(&status_tx)).debug(format!("etcd Range request: key={}", key_str));
 
         trace!("etcd Range request: {:?}", request);
 
@@ -722,12 +719,10 @@ impl EtcdServer {
 
         let key_str = String::from_utf8_lossy(&request.key);
         let value_str = String::from_utf8_lossy(&request.value);
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "etcd Put request: key={}, value={}",
-            key_str,
-            value_str
-        );
+            key_str, value_str
+        ));
 
         // Call LLM with put request event
         use crate::protocol::Event;
@@ -742,7 +737,7 @@ impl EtcdServer {
             }),
         );
 
-        console_debug!(status_tx, "etcd calling LLM for Put request");
+        Log::new(Some(&status_tx)).debug("etcd calling LLM for Put request");
 
         let execution_result = crate::llm::action_helper::call_llm(
             &llm_client,
@@ -757,14 +752,13 @@ impl EtcdServer {
 
         // Display messages from LLM
         for message in &execution_result.messages {
-            console_info!(status_tx, "{}", message);
+            Log::new(Some(&status_tx)).info(format!("{}", message));
         }
 
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "etcd got {} protocol results",
             execution_result.protocol_results.len()
-        );
+        ));
 
         if let Some(failure) = take_etcd_error(&execution_result.protocol_results) {
             return Err(failure);
@@ -823,7 +817,7 @@ impl EtcdServer {
         let request = DeleteRangeRequest::decode(msg_bytes)?;
 
         let key_str = String::from_utf8_lossy(&request.key);
-        console_debug!(status_tx, "etcd DeleteRange request: key={}", key_str);
+        Log::new(Some(&status_tx)).debug(format!("etcd DeleteRange request: key={}", key_str));
 
         // Call LLM with delete request event
         use crate::protocol::Event;
@@ -841,7 +835,7 @@ impl EtcdServer {
             }),
         );
 
-        console_debug!(status_tx, "etcd calling LLM for Delete request");
+        Log::new(Some(&status_tx)).debug("etcd calling LLM for Delete request");
 
         let execution_result = crate::llm::action_helper::call_llm(
             &llm_client,
@@ -856,14 +850,13 @@ impl EtcdServer {
 
         // Display messages from LLM
         for message in &execution_result.messages {
-            console_info!(status_tx, "{}", message);
+            Log::new(Some(&status_tx)).info(format!("{}", message));
         }
 
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "etcd got {} protocol results",
             execution_result.protocol_results.len()
-        );
+        ));
 
         if let Some(failure) = take_etcd_error(&execution_result.protocol_results) {
             return Err(failure);
@@ -917,13 +910,12 @@ impl EtcdServer {
 
         let request = TxnRequest::decode(msg_bytes)?;
 
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "etcd Txn request: {} compare(s), {} success op(s), {} failure op(s)",
             request.compare.len(),
             request.success.len(),
             request.failure.len()
-        );
+        ));
 
         // Describe the predicates as structured JSON. Protobuf enums are rendered as their
         // spec names rather than raw numbers so a handler can reason about them.
@@ -979,7 +971,7 @@ impl EtcdServer {
         .map_err(|e| llm_failure(&status_tx, "Txn", e))?;
 
         for message in &execution_result.messages {
-            console_info!(status_tx, "{}", message);
+            Log::new(Some(&status_tx)).info(format!("{}", message));
         }
 
         if let Some(failure) = take_etcd_error(&execution_result.protocol_results) {
@@ -1025,11 +1017,10 @@ impl EtcdServer {
     ) -> std::result::Result<Vec<u8>, GrpcFailure> {
         let request = CompactionRequest::decode(msg_bytes)?;
 
-        console_debug!(
-            status_tx,
+        Log::new(Some(&status_tx)).debug(format!(
             "etcd Compact request: revision={}",
             request.revision
-        );
+        ));
 
         let meta_lock = meta.lock().await;
 

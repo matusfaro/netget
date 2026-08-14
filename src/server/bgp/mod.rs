@@ -51,6 +51,8 @@ use crate::llm::actions::protocol_trait::ActionResult;
 #[cfg(feature = "bgp")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "bgp")]
+use crate::logging::emit::Log;
+#[cfg(feature = "bgp")]
 use crate::protocol::Event;
 #[cfg(feature = "bgp")]
 use crate::server::BgpProtocol;
@@ -58,7 +60,6 @@ use crate::server::BgpProtocol;
 use crate::state::app_state::AppState;
 #[cfg(feature = "bgp")]
 use crate::state::server::BgpSessionState;
-use crate::{console_error, console_info, console_warn};
 #[cfg(feature = "bgp")]
 use actions::{
     BGP_ESTABLISHED_EVENT, BGP_MESSAGE_INTENT, BGP_NOTIFICATION_EVENT, BGP_OPEN_EVENT,
@@ -96,14 +97,10 @@ impl BgpServer {
         let local_addr = listener.local_addr()?;
 
         let config = BgpConfig::from_params(startup_params.as_ref())?;
-        console_info!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!(
             "BGP server listening on {} as AS{} router-id {} hold {}s",
-            local_addr,
-            config.local_as,
-            config.router_id,
-            config.hold_time
-        );
+            local_addr, config.local_as, config.router_id, config.hold_time
+        ));
 
         let protocol = Arc::new(BgpProtocol::new());
 
@@ -115,9 +112,8 @@ impl BgpServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await,
                         );
-                        info!("BGP connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx.send(format!(
-                            "→ BGP connection {} from {}",
+                        Log::new(Some(&status_tx)).info(format!(
+                            "BGP connection {} from {}",
                             connection_id, remote_addr
                         ));
 
@@ -145,20 +141,21 @@ impl BgpServer {
                             )
                             .await
                             {
-                                console_error!(status_clone, "BGP session error: {}", e);
+                                Log::new(Some(&status_clone))
+                                    .error(format!("BGP session error: {}", e));
                             }
 
                             state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            info!("BGP connection {} closed", connection_id);
-                            let _ = status_clone
-                                .send(format!("✗ BGP connection {} closed", connection_id));
+                            Log::new(Some(&status_clone))
+                                .info(format!("BGP connection {} closed", connection_id));
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept BGP connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept BGP connection: {}", e));
                         break;
                     }
                 }
@@ -400,23 +397,19 @@ impl BgpSession {
                     break;
                 }
                 Incoming::HeaderError(e) => {
-                    console_error!(
-                        self.status_tx,
+                    Log::new(Some(&self.status_tx)).warn(format!(
                         "BGP header rejected from {}: {:?}",
-                        self.remote_addr,
-                        e
-                    );
+                        self.remote_addr, e
+                    ));
                     let (code, sub) = e.notify_code();
                     self.notify(code, sub, &e.notify_data());
                     break;
                 }
                 Incoming::DecodeError(e, msg_type) => {
-                    console_error!(
-                        self.status_tx,
+                    Log::new(Some(&self.status_tx)).warn(format!(
                         "BGP message from {} failed to parse: {}",
-                        self.remote_addr,
-                        e
-                    );
+                        self.remote_addr, e
+                    ));
                     if msg_type != wire::MSG_NOTIFICATION {
                         let (code, sub) = e.notify;
                         self.notify(code, sub, &[]);
@@ -532,7 +525,7 @@ impl BgpSession {
         // reaching here means they passed. What is left is what only we can judge.
         let peer_as = open.my_asn4();
         if peer_as == 0 {
-            console_error!(self.status_tx, "BGP peer advertised AS 0, rejecting");
+            Log::new(Some(&self.status_tx)).warn("BGP peer advertised AS 0, rejecting");
             self.notify(wire::ERR_OPEN, wire::SUB_BAD_PEER_AS, &[]);
             return Ok(false);
         }
@@ -554,15 +547,14 @@ impl BgpSession {
         // in our OPEN, which a handler is free to override.
         self.hold_time = negotiate_hold(self.config.hold_time, peer_hold);
 
-        console_info!(
-            self.status_tx,
+        Log::new(Some(&self.status_tx)).info(format!(
             "BGP OPEN from AS{} router-id {} hold {}s (asn4={}), negotiated hold {}s",
             peer_as,
             open.bgp_id(),
             peer_hold,
             self.peer_asn4,
             self.hold_time
-        );
+        ));
 
         let event = Event {
             event_type: &BGP_OPEN_EVENT,
@@ -605,12 +597,10 @@ impl BgpSession {
                 // handshake gets the configured OPEN. Refusing here would mean an LLM outage
                 // silently drops every BGP session, which is the failure mode, not the
                 // safeguard.
-                console_warn!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "BGP no OPEN from handler for {}, sending configured OPEN AS{}",
-                    self.remote_addr,
-                    self.config.local_as
-                );
+                    self.remote_addr, self.config.local_as
+                ));
                 let bytes = wire::encode(wire::build_open(
                     self.config.local_as,
                     self.config.hold_time,
@@ -652,12 +642,10 @@ impl BgpSession {
     async fn on_established(&mut self) -> Result<()> {
         self.state = BgpSessionState::Established;
         let peer_as = self.peer_as.unwrap_or(0);
-        console_info!(
-            self.status_tx,
-            "✓ BGP session {} established with AS{}",
-            self.connection_id,
-            peer_as
-        );
+        Log::new(Some(&self.status_tx)).info(format!(
+            "BGP session {} established with AS{}",
+            self.connection_id, peer_as
+        ));
         self.set_connection_state("Established").await;
 
         // The one moment worth a model call on the session path: the peer is up and will accept
@@ -705,13 +693,12 @@ impl BgpSession {
 
     async fn on_notification(&mut self, n: netgauze_bgp_pkt::notification::BgpNotificationMessage) {
         let (code, subcode) = notification_codes(&n);
-        console_error!(
-            self.status_tx,
+        Log::new(Some(&self.status_tx)).warn(format!(
             "BGP NOTIFICATION from {}: {} / {}",
             self.remote_addr,
             wire::error_name(code),
             wire::error_subcode_name(code, subcode)
-        );
+        ));
 
         let event = Event {
             event_type: &BGP_NOTIFICATION_EVENT,
@@ -772,12 +759,10 @@ impl BgpSession {
         {
             Ok(result) => result,
             Err(e) => {
-                console_error!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "BGP handler failed for {}: {}",
-                    event.event_type.id,
-                    e
-                );
+                    event.event_type.id, e
+                ));
                 return SendOutcome::Nothing;
             }
         };
@@ -810,12 +795,8 @@ impl BgpSession {
                         Err(e) => {
                             // Encoding failed, so nothing goes on the wire. Emitting a
                             // half-formed message would be worse than emitting none.
-                            console_error!(
-                                self.status_tx,
-                                "BGP refused to encode {} action: {}",
-                                kind,
-                                e
-                            );
+                            Log::new(Some(&self.status_tx))
+                                .warn(format!("BGP refused to encode {} action: {}", kind, e));
                         }
                     }
                 }
@@ -837,13 +818,12 @@ impl BgpSession {
     fn notify(&self, code: u8, subcode: u8, data: &[u8]) {
         match wire::encode_notification(code, subcode, data) {
             Ok(bytes) => {
-                console_error!(
-                    self.status_tx,
-                    "→ BGP NOTIFICATION {} / {} to {}",
+                Log::new(Some(&self.status_tx)).warn(format!(
+                    "BGP NOTIFICATION {} / {} to {}",
                     wire::error_name(code),
                     wire::error_subcode_name(code, subcode),
                     self.remote_addr
-                );
+                ));
                 self.send(bytes);
             }
             Err(e) => error!("BGP could not encode NOTIFICATION {code}/{subcode}: {e}"),
@@ -963,12 +943,11 @@ fn spawn_timers(
             let elapsed = started.elapsed().as_secs();
             let last = last_received.load(Ordering::Relaxed);
             if elapsed.saturating_sub(last) >= u64::from(hold_time) {
-                console_error!(
-                    status_tx,
+                Log::new(Some(&status_tx)).warn(format!(
                     "BGP hold timer expired on {} after {}s of silence",
                     connection_id,
                     elapsed.saturating_sub(last)
-                );
+                ));
                 if let Ok(bytes) = wire::encode_notification(wire::ERR_HOLD_TIMER_EXPIRED, 0, &[]) {
                     let _ = out_tx.send(bytes);
                 }

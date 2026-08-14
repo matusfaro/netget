@@ -29,11 +29,11 @@ pub mod codec;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
-use crate::{console_debug, console_error, console_info, console_warn};
 use actions::{
     AmqpProtocol, RESP_CHANNEL_CLOSE, RESP_CONNECTION_CLOSE, RESP_CONNECTION_OPEN_OK,
     RESP_CONSUME_OK, RESP_QUEUE_DECLARE_OK,
@@ -47,7 +47,7 @@ use std::sync::Arc;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, trace};
 
 /// Largest total frame size this broker offers in `Connection.Tune`, in bytes.
 /// RabbitMQ's default is the same value.
@@ -103,11 +103,10 @@ impl AmqpServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!(
+        Log::new(Some(&status_tx)).info(format!(
             "AMQP broker listening on {} (frame_max={}, heartbeat={}s)",
             local_addr, frame_max, heartbeat
-        );
-        console_info!(status_tx, "AMQP broker listening on {}", local_addr);
+        ));
 
         let accept_state = state.clone();
         let accept_status_tx = status_tx.clone();
@@ -116,8 +115,8 @@ impl AmqpServer {
             loop {
                 match listener.accept().await {
                     Ok((socket, peer_addr)) => {
-                        debug!("AMQP connection from {}", peer_addr);
-                        console_debug!(accept_status_tx, "AMQP connection from {}", peer_addr);
+                        Log::new(Some(&accept_status_tx))
+                            .debug(format!("AMQP connection from {}", peer_addr));
 
                         let llm_client = llm_client.clone();
                         let app_state = accept_state.clone();
@@ -135,8 +134,8 @@ impl AmqpServer {
                         });
                     }
                     Err(e) => {
-                        error!("AMQP accept error: {}", e);
-                        console_error!(accept_status_tx, "AMQP accept error: {}", e);
+                        Log::new(Some(&accept_status_tx))
+                            .error(format!("AMQP accept error: {}", e));
                         break;
                     }
                 }
@@ -209,7 +208,7 @@ async fn handle_connection(
     let writer_handle = tokio::spawn(async move {
         while let Some(bytes) = out_rx.recv().await {
             if let Err(e) = write_half.write_all(&bytes).await {
-                console_debug!(writer_status_tx, "AMQP write failed: {}", e);
+                Log::new(Some(&writer_status_tx)).debug(format!("AMQP write failed: {}", e));
                 break;
             }
         }
@@ -238,12 +237,10 @@ async fn handle_connection(
         .await;
     let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-    console_info!(
-        status_tx,
+    Log::new(Some(&status_tx)).info(format!(
         "AMQP connection {} from {}",
-        connection_id,
-        peer_addr
-    );
+        connection_id, peer_addr
+    ));
 
     let mut session = Session {
         server_id,
@@ -276,8 +273,7 @@ async fn handle_connection(
         .await;
 
     if let Err(e) = &result {
-        debug!("AMQP connection {} error: {}", connection_id, e);
-        console_debug!(status_tx, "AMQP connection {} error: {}", connection_id, e);
+        Log::new(Some(&status_tx)).debug(format!("AMQP connection {} error: {}", connection_id, e));
     }
 
     actions::unregister_consumers_for_connection(server_id, connection_id);
@@ -288,7 +284,7 @@ async fn handle_connection(
         .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
         .await;
     let _ = status_tx.send("__UPDATE_UI__".to_string());
-    console_info!(status_tx, "AMQP connection {} closed", connection_id);
+    Log::new(Some(&status_tx)).info(format!("AMQP connection {} closed", connection_id));
 
     result
 }
@@ -330,13 +326,11 @@ impl Session {
         if header != PROTOCOL_HEADER_091 {
             // Section 4.2.2: answer an unsupported version with the header the broker
             // does speak, then close. Anything not starting with "AMQP" is not a client.
-            console_warn!(
-                self.status_tx,
+            Log::new(Some(&self.status_tx)).warn(format!(
                 "AMQP client {} sent an unsupported protocol header {:?}; replying with 0-9-1 \
                  and closing",
-                self.peer_addr,
-                header
-            );
+                self.peer_addr, header
+            ));
             let _ = self.out_tx.send(PROTOCOL_HEADER_091.to_vec());
             return Ok(());
         }
@@ -364,12 +358,10 @@ impl Session {
                 Err(e) => {
                     // A framing or decoding error desynchronises the stream; the spec's
                     // remedy is a connection exception.
-                    console_warn!(
-                        self.status_tx,
+                    Log::new(Some(&self.status_tx)).warn(format!(
                         "AMQP protocol error from {}: {}",
-                        self.peer_addr,
-                        e
-                    );
+                        self.peer_addr, e
+                    ));
                     self.send_connection_close(505, &format!("UNEXPECTED_FRAME - {}", e), 0, 0);
                     return Ok(());
                 }
@@ -399,12 +391,11 @@ impl Session {
         match tokio::time::timeout(deadline, read_frame(reader, max_payload)).await {
             Ok(result) => result,
             Err(_) => {
-                console_warn!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "AMQP client {} sent nothing for {}s (two heartbeat intervals); closing",
                     self.peer_addr,
                     deadline.as_secs()
-                );
+                ));
                 Ok(None)
             }
         }
@@ -463,13 +454,12 @@ impl Session {
                 self.username = username;
                 self.has_password = has_password;
 
-                console_debug!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).debug(format!(
                     "AMQP start-ok from {} (mechanism={}, user={})",
                     self.peer_addr,
                     self.mechanism,
                     self.username.as_deref().unwrap_or("-")
-                );
+                ));
 
                 let mut args = Encoder::new();
                 args.u16(CHANNEL_MAX);
@@ -503,13 +493,10 @@ impl Session {
                 if self.heartbeat > 0 {
                     spawn_heartbeat(self.out_tx.clone(), self.heartbeat);
                 }
-                console_debug!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).debug(format!(
                     "AMQP tuned for {}: frame_max={} heartbeat={}s",
-                    self.peer_addr,
-                    self.frame_max,
-                    self.heartbeat
-                );
+                    self.peer_addr, self.frame_max, self.heartbeat
+                ));
                 *phase = Phase::AwaitOpen;
                 Ok(Next::Continue)
             }
@@ -534,13 +521,12 @@ impl Session {
     /// The handshake is finished and the client asked to open a virtual host. This is the
     /// connection's one authentication/authorisation decision.
     async fn on_connection_open(&mut self, phase: &mut Phase) -> Result<Next> {
-        console_info!(
-            self.status_tx,
+        Log::new(Some(&self.status_tx)).info(format!(
             "AMQP connection.open from {} vhost='{}' user='{}'",
             self.peer_addr,
             self.virtual_host,
             self.username.as_deref().unwrap_or("-")
-        );
+        ));
 
         let event = Event::new(
             &actions::AMQP_CONNECTION_OPEN_EVENT,
@@ -562,11 +548,10 @@ impl Session {
             HandlerOutcome::Closed => Ok(Next::Close),
             HandlerOutcome::Wrote(mask) if mask & RESP_CONNECTION_CLOSE != 0 => {
                 // The model refused. Its Connection.Close is already queued.
-                console_info!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).info(format!(
                     "AMQP connection from {} refused by handler",
                     self.peer_addr
-                );
+                ));
                 Ok(Next::Close)
             }
             HandlerOutcome::Wrote(mask) if mask & RESP_CONNECTION_OPEN_OK != 0 => {
@@ -589,16 +574,11 @@ impl Session {
                 // handler that produced an unrelated action must not open a broker to a
                 // client — and the refusal a handler asks for explicitly stays
                 // distinguishable from this one by its reply code and text.
-                warn!(
-                    "AMQP no open decision for {} (vhost '{}'); refusing the connection",
-                    self.peer_addr, self.virtual_host
-                );
-                console_warn!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "AMQP handler made no decision for {}; refusing with 403. Answer \
                      amqp_connection_open with amqp_connection_open_ok to accept clients.",
                     self.peer_addr
-                );
+                ));
                 self.send_connection_close(
                     REPLY_ACCESS_REFUSED,
                     "ACCESS_REFUSED - the broker's handler made no decision about this connection",
@@ -622,13 +602,10 @@ impl Session {
             (CLASS_CONNECTION, CONNECTION_CLOSE) => {
                 let reply_code = d.u16()?;
                 let reply_text = d.short_string()?;
-                console_info!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).info(format!(
                     "AMQP client {} closing: {} {}",
-                    self.peer_addr,
-                    reply_code,
-                    reply_text
-                );
+                    self.peer_addr, reply_code, reply_text
+                ));
                 self.send_method(0, CLASS_CONNECTION, CONNECTION_CLOSE_OK, Vec::new());
                 Ok(Next::Close)
             }
@@ -653,19 +630,16 @@ impl Session {
                 let mut args = Encoder::new();
                 args.long_string(b"");
                 self.send_method(channel, CLASS_CHANNEL, CHANNEL_OPEN_OK, args.into_vec());
-                console_debug!(self.status_tx, "AMQP channel {} opened", channel);
+                Log::new(Some(&self.status_tx)).debug(format!("AMQP channel {} opened", channel));
                 Ok(Next::Continue)
             }
             (CLASS_CHANNEL, CHANNEL_CLOSE) => {
                 let reply_code = d.u16()?;
                 let reply_text = d.short_string()?;
-                console_debug!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).debug(format!(
                     "AMQP channel {} closed by client: {} {}",
-                    channel,
-                    reply_code,
-                    reply_text
-                );
+                    channel, reply_code, reply_text
+                ));
                 self.close_channel(channel);
                 self.send_method(channel, CLASS_CHANNEL, CHANNEL_CLOSE_OK, Vec::new());
                 Ok(Next::Continue)
@@ -682,13 +656,10 @@ impl Session {
                 let kind = d.short_string()?;
                 let bits = d.bits(5)?;
                 let nowait = bits.get(4).copied().unwrap_or(false);
-                console_debug!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).debug(format!(
                     "AMQP exchange.declare '{}' type={} on channel {}",
-                    exchange,
-                    kind,
-                    channel
-                );
+                    exchange, kind, channel
+                ));
                 if !nowait {
                     self.send_method(channel, CLASS_EXCHANGE, EXCHANGE_DECLARE_OK, Vec::new());
                 }
@@ -711,13 +682,10 @@ impl Session {
                 let exchange = d.short_string()?;
                 let routing_key = d.short_string()?;
                 let bits = d.bits(1)?;
-                console_debug!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).debug(format!(
                     "AMQP queue.bind '{}' to exchange '{}' key '{}'",
-                    queue,
-                    exchange,
-                    routing_key
-                );
+                    queue, exchange, routing_key
+                ));
                 if !bits.first().copied().unwrap_or(false) {
                     self.send_method(channel, CLASS_QUEUE, QUEUE_BIND_OK, Vec::new());
                 }
@@ -745,7 +713,8 @@ impl Session {
                 let consumer_tag = d.short_string()?;
                 let bits = d.bits(1)?;
                 actions::unregister_consumer(self.server_id, &consumer_tag);
-                console_debug!(self.status_tx, "AMQP basic.cancel '{}'", consumer_tag);
+                Log::new(Some(&self.status_tx))
+                    .debug(format!("AMQP basic.cancel '{}'", consumer_tag));
                 if !bits.first().copied().unwrap_or(false) {
                     let mut args = Encoder::new();
                     args.short_string(&consumer_tag);
@@ -789,24 +758,21 @@ impl Session {
             }
             (CLASS_BASIC, BASIC_REJECT) | (CLASS_BASIC, BASIC_NACK) => {
                 let delivery_tag = d.u64()?;
-                console_debug!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).debug(format!(
                     "AMQP client rejected delivery_tag={} (nothing is requeued: the broker \
                      stores no messages)",
                     delivery_tag
-                );
+                ));
                 Ok(Next::Continue)
             }
 
             // ---- everything else -------------------------------------------
             _ => {
                 let name = method_name(class_id, method_id);
-                console_warn!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "AMQP {} is not implemented; closing channel {} with 540",
-                    name,
-                    channel
-                );
+                    name, channel
+                ));
                 let text = format!(
                     "NOT_IMPLEMENTED - {} is not implemented by this broker",
                     name
@@ -837,12 +803,10 @@ impl Session {
         arguments: Value,
         nowait: bool,
     ) -> Result<Next> {
-        console_info!(
-            self.status_tx,
+        Log::new(Some(&self.status_tx)).info(format!(
             "AMQP queue.declare '{}' on channel {}",
-            queue,
-            channel
-        );
+            queue, channel
+        ));
 
         if nowait {
             // The client explicitly asked for no reply, so there is nothing to decide.
@@ -879,12 +843,11 @@ impl Session {
                 // Queue.Declare-Ok is mandatory unless no-wait was set, and a queue's
                 // existence is not a security decision — reporting an empty queue is the
                 // least surprising answer and keeps the client from blocking forever.
-                console_warn!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "AMQP no amqp_queue_declare_ok from handler for '{}'; reporting an empty \
                      queue",
                     queue
-                );
+                ));
                 self.send_queue_declare_ok(channel, &queue, 0, 0);
                 Ok(Next::Continue)
             }
@@ -906,13 +869,10 @@ impl Session {
             requested_tag
         };
 
-        console_info!(
-            self.status_tx,
+        Log::new(Some(&self.status_tx)).info(format!(
             "AMQP basic.consume '{}' on queue '{}' (channel {})",
-            consumer_tag,
-            queue,
-            channel
-        );
+            consumer_tag, queue, channel
+        ));
 
         if nowait {
             // No Consume-Ok is owed, so there is no decision to make; register the
@@ -949,12 +909,11 @@ impl Session {
                 }
             }
             _ => {
-                console_warn!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "AMQP no amqp_basic_consume_ok from handler for '{}'; registering the \
                      consumer with the tag it asked for",
                     consumer_tag
-                );
+                ));
                 self.register_consumer(&consumer_tag, channel, &queue);
                 let mut args = Encoder::new();
                 args.short_string(&consumer_tag);
@@ -1068,13 +1027,12 @@ impl Session {
             Err(_) => (String::from_utf8_lossy(&publish.body).into_owned(), false),
         };
 
-        console_info!(
-            self.status_tx,
+        Log::new(Some(&self.status_tx)).info(format!(
             "AMQP basic.publish exchange='{}' routing_key='{}' {} bytes",
             publish.exchange,
             publish.routing_key,
             publish.body.len()
-        );
+        ));
 
         let event = Event::new(
             &actions::AMQP_BASIC_PUBLISH_EVENT,
@@ -1203,13 +1161,10 @@ impl Session {
                 HandlerOutcome::Wrote(self.protocol.written())
             }
             Err(e) => {
-                error!("AMQP handler failed for {}: {}", event.event_type.id, e);
-                console_error!(
-                    self.status_tx,
+                Log::new(Some(&self.status_tx)).warn(format!(
                     "AMQP handler failed for {}: {}",
-                    event.event_type.id,
-                    e
-                );
+                    event.event_type.id, e
+                ));
                 HandlerOutcome::Wrote(self.protocol.written())
             }
         }
