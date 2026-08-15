@@ -7,11 +7,12 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::{ActionResult, Server};
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::StunProtocol;
 use crate::state::app_state::AppState;
@@ -32,10 +33,13 @@ impl StunServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("STUN server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] STUN server listening on {}", local_addr));
-        let _ = status_tx.send(format!(
-            "[DEBUG] STUN socket bound - requested: {}, actual: {}",
+        let log = Log::new(Some(&status_tx));
+        log.info(format!(
+            "STUN server (action-based) listening on {}",
+            local_addr
+        ));
+        log.debug(format!(
+            "STUN socket bound - requested: {}, actual: {}",
             listen_addr, local_addr
         ));
 
@@ -45,16 +49,16 @@ impl StunServer {
         let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 2048]; // STUN messages are typically < 2KB
 
-            let _ = status_tx
-                .send("[DEBUG] STUN receive loop started, waiting for packets...".to_string());
+            Log::new(Some(&status_tx))
+                .debug("STUN receive loop started, waiting for packets...");
 
             loop {
                 debug!("STUN calling recv_from...");
-                let _ = status_tx.send(format!("[TRACE] STUN about to call recv_from (iteration)"));
+                Log::new(Some(&status_tx)).trace("STUN about to call recv_from (iteration)");
                 match socket.recv_from(&mut buffer).await {
                     Ok((n, peer_addr)) => {
-                        let _ = status_tx.send(format!(
-                            "[TRACE] STUN recv_from returned OK: {} bytes from {}",
+                        Log::new(Some(&status_tx)).trace(format!(
+                            "STUN recv_from returned OK: {} bytes from {}",
                             n, peer_addr
                         ));
                         let data = buffer[..n].to_vec();
@@ -104,11 +108,8 @@ impl StunServer {
                                 Self::parse_stun_header(&data);
 
                             if !is_valid {
-                                debug!("STUN invalid message from {}", peer_addr);
-                                let _ = status_clone.send(format!(
-                                    "[DEBUG] STUN invalid message from {}",
-                                    peer_addr
-                                ));
+                                Log::new(Some(&status_clone))
+                                    .debug(format!("STUN invalid message from {}", peer_addr));
                                 return;
                             }
 
@@ -152,9 +153,8 @@ impl StunServer {
                                 return;
                             }
 
-                            debug!("STUN calling LLM for binding request from {}", peer_addr);
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] STUN calling LLM for binding request from {}",
+                            Log::new(Some(&status_clone)).debug(format!(
+                                "STUN calling LLM for binding request from {}",
                                 peer_addr
                             ));
 
@@ -169,28 +169,21 @@ impl StunServer {
                             .await
                             {
                                 Ok(execution_result) => {
+                                    let log = Log::new(Some(&status_clone));
+
                                     // Display messages from LLM
                                     for message in &execution_result.messages {
-                                        info!("{}", message);
-                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                        log.info(message);
                                     }
 
-                                    debug!(
+                                    log.debug(format!(
                                         "STUN parsed {} actions",
-                                        execution_result.raw_actions.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] STUN parsed {} actions",
                                         execution_result.raw_actions.len()
                                     ));
 
                                     // Process protocol results
-                                    debug!(
+                                    log.debug(format!(
                                         "STUN got {} protocol results",
-                                        execution_result.protocol_results.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] STUN got {} protocol results",
                                         execution_result.protocol_results.len()
                                     ));
 
@@ -202,24 +195,15 @@ impl StunServer {
                                                 socket_clone.send_to(output_data, peer_addr).await;
 
                                             // DEBUG: Log summary
-                                            debug!(
+                                            log.debug(format!(
                                                 "STUN sent {} bytes to {}",
-                                                output_data.len(),
-                                                peer_addr
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] STUN sent {} bytes to {}",
                                                 output_data.len(),
                                                 peer_addr
                                             ));
 
                                             // TRACE: Log full payload
                                             let hex_str = hex::encode(output_data);
-                                            trace!("STUN sent (hex): {}", hex_str);
-                                            let _ = status_clone.send(format!(
-                                                "[TRACE] STUN sent (hex): {}",
-                                                hex_str
-                                            ));
+                                            log.trace(format!("STUN sent (hex): {}", hex_str));
 
                                             let _ = status_clone.send(format!(
                                                 "→ STUN response to {} ({} bytes)",
@@ -227,11 +211,7 @@ impl StunServer {
                                                 output_data.len()
                                             ));
                                         } else {
-                                            debug!("STUN protocol result has no output data");
-                                            let _ = status_clone.send(
-                                                "[DEBUG] STUN protocol result has no output data"
-                                                    .to_string(),
-                                            );
+                                            log.debug("STUN protocol result has no output data");
                                         }
                                     }
                                 }
@@ -264,8 +244,7 @@ impl StunServer {
                         });
                     }
                     Err(e) => {
-                        error!("STUN receive error: {}", e);
-                        let _ = status_tx.send(format!("✗ STUN receive error: {}", e));
+                        Log::new(Some(&status_tx)).error(format!("STUN receive error: {}", e));
                         break;
                     }
                 }

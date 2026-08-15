@@ -17,10 +17,11 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::error;
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::server::connection::ConnectionId;
 use crate::server::SqsProtocol;
 use crate::state::app_state::AppState;
@@ -55,9 +56,10 @@ impl SqsServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("SQS connection {} from {}", connection_id, remote_addr);
-                        let _ =
-                            status_tx.send(format!("[INFO] SQS connection from {}", remote_addr));
+                        Log::new(Some(&status_tx)).info(format!(
+                            "SQS connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -124,8 +126,8 @@ impl SqsServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("[INFO] SQS connection {} closed", connection_id));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("SQS connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -184,16 +186,10 @@ async fn handle_sqs_request_with_llm(
 
     let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
-    debug!(
+    Log::new(Some(&status_tx)).debug(format!(
         "SQS request: {} {} operation={} ({} bytes)",
         method,
         uri,
-        operation,
-        body_bytes.len()
-    );
-    let _ = status_tx.send(format!(
-        "[DEBUG] SQS {} operation={} ({} bytes)",
-        method,
         operation,
         body_bytes.len()
     ));
@@ -207,8 +203,7 @@ async fn handle_sqs_request_with_llm(
         None
     };
 
-    trace!("SQS request body: {}", body_str);
-    let _ = status_tx.send(format!("[TRACE] SQS request: {}", body_str));
+    Log::new(Some(&status_tx)).trace(format!("SQS request body: {}", body_str));
 
     // Create SQS request event
     let event = crate::protocol::Event::new(
@@ -242,10 +237,9 @@ async fn handle_sqs_request_with_llm(
                                 data.get("status").and_then(|v| v.as_u64()).unwrap_or(200) as u16;
                             let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
 
-                            debug!("SQS response: status={}", status);
-                            let _ = status_tx.send(format!("[DEBUG] SQS → {} response", status));
-                            trace!("SQS response body: {}", body);
-                            let _ = status_tx.send(format!("[TRACE] SQS response: {}", body));
+                            let log = Log::new(Some(&status_tx));
+                            log.debug(format!("SQS response: status={}", status));
+                            log.trace(format!("SQS response body: {}", body));
 
                             let request_id = new_request_id();
 
@@ -259,16 +253,15 @@ async fn handle_sqs_request_with_llm(
             }
 
             // No SQS response action found, return empty success
-            debug!("SQS response: 200 (default)");
-            let _ = status_tx.send("[DEBUG] SQS → 200 response (default)".to_string());
+            Log::new(Some(&status_tx)).debug("SQS → 200 response (default)");
 
             let request_id = new_request_id();
 
             Ok(build_sqs_response(200, &request_id, "{}".to_string()))
         }
         Err(e) => {
-            error!("LLM execution failed for SQS request: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM execution failed: {}", e));
+            Log::new(Some(&status_tx))
+                .error(format!("LLM execution failed for SQS request: {}", e));
 
             let request_id = new_request_id();
 

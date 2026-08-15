@@ -26,11 +26,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::stdio::actions::{
     StdioProtocol, STDIO_INPUT_CLOSED_EVENT, STDIO_INPUT_RECEIVED_EVENT, STDIO_STARTED_EVENT,
@@ -97,8 +98,7 @@ impl StdioServer {
         // From here on we own the claim; the guard releases it on task end.
         let claim = StdioClaimGuard;
 
-        info!("stdio server claimed process stdin/stdout");
-        let _ = status_tx.send("[INFO] stdio server claimed process stdin/stdout".to_string());
+        Log::new(Some(&status_tx)).info("stdio server claimed process stdin/stdout");
 
         let protocol = Arc::new(StdioProtocol::new());
         let task_registrar = app_state.clone();
@@ -126,8 +126,7 @@ impl StdioServer {
                 match stdin.read(&mut buffer).await {
                     Ok(0) => {
                         // EOF: upstream closed the pipe. Let the model emit any final output.
-                        debug!("stdio stdin reached EOF");
-                        let _ = status_tx.send("[DEBUG] stdio stdin EOF".to_string());
+                        Log::new(Some(&status_tx)).debug("stdio stdin reached EOF");
                         let event = Event::new(&STDIO_INPUT_CLOSED_EVENT, serde_json::json!({}));
                         let _ = Self::dispatch(
                             &event,
@@ -151,9 +150,10 @@ impl StdioServer {
                             (hex::encode(data), "hex")
                         };
 
-                        debug!("stdio read {} bytes from stdin ({})", n, encoding);
-                        let _ = status_tx
-                            .send(format!("[DEBUG] stdio read {} bytes ({})", n, encoding));
+                        Log::new(Some(&status_tx)).debug(format!(
+                            "stdio read {} bytes from stdin ({})",
+                            n, encoding
+                        ));
 
                         let event = Event::new(
                             &STDIO_INPUT_RECEIVED_EVENT,
@@ -174,8 +174,7 @@ impl StdioServer {
                         }
                     }
                     Err(e) => {
-                        error!("stdio stdin read error: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] stdio read error: {e}"));
+                        Log::new(Some(&status_tx)).error(format!("stdio stdin read error: {}", e));
                         break;
                     }
                 }
@@ -222,8 +221,7 @@ impl StdioServer {
             }
             Err(e) => {
                 // Fail closed: emit nothing, report on both channels.
-                error!("LLM error for stdio event: {}", e);
-                let _ = status_tx.send(format!("[ERROR] stdio LLM error: {e}"));
+                Log::new(Some(status_tx)).error(format!("LLM error for stdio event: {}", e));
                 false
             }
         }
@@ -244,8 +242,7 @@ impl StdioServer {
                 debug!("stdio wrote {} bytes to {}", bytes.len(), dest);
             }
             Err(e) => {
-                error!("stdio write error: {}", e);
-                let _ = status_tx.send(format!("[ERROR] stdio write error: {e}"));
+                Log::new(Some(status_tx)).error(format!("stdio write error: {}", e));
             }
         }
     }
