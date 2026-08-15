@@ -16,7 +16,7 @@ The framework consists of:
 ### Running Tests
 
 ```bash
-# Use default model (qwen2.5-coder:7b)
+# Use default model (qwen3.8:27b-mlx)
 cargo test --test ollama_model_test
 
 # Use specific model
@@ -35,7 +35,7 @@ cargo test --test ollama_model_test -- --nocapture
 
 ### Environment Variables
 
-- **`OLLAMA_MODEL`** - Override default model (default: `qwen2.5-coder:7b`)
+- **`OLLAMA_MODEL`** - Override default model (default: `qwen3.8:27b-mlx`)
 - **`OLLAMA_BASE_URL`** - Ollama API endpoint (default: `http://localhost:11434`)
 
 ## Builder Pattern API
@@ -287,7 +287,7 @@ Compare different Ollama models to see which performs better:
 OLLAMA_MODEL=qwen3-coder:30b cargo test --test ollama_model_test
 
 # Test model B (alternative)
-OLLAMA_MODEL=qwen2.5-coder:7b cargo test --test ollama_model_test
+OLLAMA_MODEL=qwen3.8:27b-mlx cargo test --test ollama_model_test
 
 # Compare results
 ```

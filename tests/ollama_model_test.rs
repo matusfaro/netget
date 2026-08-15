@@ -18,7 +18,7 @@
 /// ## Running Tests
 ///
 /// ```bash
-/// # Use default model (qwen2.5-coder:7b)
+/// # Use default model (qwen3.8:27b-mlx)
 /// NETGET_USE_OLLAMA=1 cargo test --test ollama_model_test
 ///
 /// # Use specific model
@@ -33,7 +33,7 @@
 ///
 /// ## Environment Variables
 ///
-/// - `OLLAMA_MODEL`: Override the default model (default: qwen2.5-coder:7b)
+/// - `OLLAMA_MODEL`: Override the default model (default: qwen3.8:27b-mlx)
 /// - `OLLAMA_BASE_URL`: Ollama API endpoint (default: http://localhost:11434)
 ///
 /// ## Test Structure
