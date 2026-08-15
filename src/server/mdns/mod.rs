@@ -12,6 +12,8 @@ use crate::llm::action_helper::call_llm;
 #[cfg(feature = "mdns")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "mdns")]
+use crate::logging::emit::Log;
+#[cfg(feature = "mdns")]
 use crate::protocol::Event;
 #[cfg(feature = "mdns")]
 use crate::server::MdnsProtocol;
@@ -65,7 +67,7 @@ impl MdnsServer {
         };
 
         info!("mDNS server (action-based) starting");
-        let _ = status_tx.send("[INFO] mDNS server starting".to_string());
+        Log::new(Some(&status_tx)).info("mDNS server starting");
 
         let protocol = Arc::new(MdnsProtocol::new());
 
@@ -281,8 +283,8 @@ impl MdnsServer {
             "mDNS announcing on the {MDNS_GROUP} multicast group; this server binds no \
              listening socket of its own"
         );
-        let _ = status_tx.send(format!(
-            "[INFO] mDNS announcing on the {MDNS_GROUP} multicast group (not a listening \
+        Log::new(Some(&status_tx)).info(format!(
+            "mDNS announcing on the {MDNS_GROUP} multicast group (not a listening \
              endpoint: mdns-sd owns its sockets and does not expose them)"
         ));
 
@@ -368,23 +370,23 @@ fn register_service(
                         "mDNS registered service: {} ({}:{})",
                         instance_name, local_ip, port
                     );
-                    let _ = status_tx.send(format!(
-                        "[INFO] → mDNS registered service: {} ({}:{})",
+                    Log::new(Some(status_tx)).info(format!(
+                        "→ mDNS registered service: {} ({}:{})",
                         instance_name, local_ip, port
                     ));
                     Ok(())
                 }
                 Err(e) => {
                     error!("Failed to register mDNS service: {}", e);
-                    let _ =
-                        status_tx.send(format!("[ERROR] ✗ Failed to register mDNS service: {}", e));
+                    Log::new(Some(status_tx))
+                        .error(format!("✗ Failed to register mDNS service: {}", e));
                     Err(anyhow::anyhow!("Failed to register mDNS service: {}", e))
                 }
             }
         }
         Err(e) => {
             error!("Failed to create ServiceInfo: {}", e);
-            let _ = status_tx.send(format!("[ERROR] ✗ Failed to create ServiceInfo: {}", e));
+            Log::new(Some(status_tx)).error(format!("✗ Failed to create ServiceInfo: {}", e));
             Err(anyhow::anyhow!("Failed to create ServiceInfo: {}", e))
         }
     }

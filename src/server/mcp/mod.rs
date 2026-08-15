@@ -35,6 +35,8 @@ use crate::llm::action_helper::call_llm;
 #[cfg(feature = "mcp")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "mcp")]
+use crate::logging::emit::Log;
+#[cfg(feature = "mcp")]
 use crate::protocol::Event;
 #[cfg(feature = "mcp")]
 use crate::server::connection::ConnectionId;
@@ -133,9 +135,7 @@ fn mcp_error_from_action(data: &Value) -> JsonRpcError {
 fn llm_failure_error(state: &McpServerState, e: anyhow::Error) -> JsonRpcError {
     let overloaded = crate::llm::is_overload_error(&e);
     error!("MCP LLM call failed (overload={}): {}", overloaded, e);
-    let _ = state
-        .status_tx
-        .send(format!("[ERROR] MCP LLM call failed: {}", e));
+    Log::new(Some(&state.status_tx)).error(format!("MCP LLM call failed: {}", e));
 
     if overloaded {
         return JsonRpcError {
@@ -184,7 +184,7 @@ impl McpServer {
         let local_addr = listener.local_addr()?;
 
         info!("MCP server (JSON-RPC 2.0) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] MCP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("MCP server listening on {}", local_addr));
 
         let protocol = Arc::new(McpProtocol::new());
 
@@ -243,9 +243,7 @@ async fn handle_jsonrpc(
         trace_body.truncate(cut);
         trace_body.push_str("… (truncated)");
     }
-    let _ = state
-        .status_tx
-        .send(format!("[TRACE] MCP received: {}", trace_body));
+    Log::new(Some(&state.status_tx)).trace(format!("MCP received: {}", trace_body));
 
     // Parse JSON-RPC message
     let message = match JsonRpcMessage::from_value(payload.clone()) {
@@ -293,9 +291,7 @@ async fn handle_jsonrpc(
                 }
                 Err(e) => {
                     error!("MCP error: code={}, message={}", e.code, e.message);
-                    let _ = state
-                        .status_tx
-                        .send(format!("[ERROR] MCP error: {}", e.message));
+                    Log::new(Some(&state.status_tx)).error(format!("MCP error: {}", e.message));
                     JsonRpcResponse::error(request_id, e)
                 }
             };
@@ -417,10 +413,7 @@ async fn handle_initialize_inner(
     // Reuse the server's protocol instance rather than allocating a throwaway per request.
     let protocol = state.protocol.clone();
 
-    debug!("MCP calling LLM for initialize request");
-    let _ = state
-        .status_tx
-        .send("[DEBUG] MCP calling LLM for initialize request".to_string());
+    Log::new(Some(&state.status_tx)).debug("MCP calling LLM for initialize request");
 
     // Call LLM with action system
     let execution_result = match call_llm(
@@ -440,17 +433,13 @@ async fn handle_initialize_inner(
     };
 
     // Display messages from LLM
+    let log = Log::new(Some(&state.status_tx));
     for message in &execution_result.messages {
-        info!("{}", message);
-        let _ = state.status_tx.send(format!("[INFO] {}", message));
+        log.info(format!("{}", message));
     }
 
-    debug!(
+    log.debug(format!(
         "MCP got {} protocol results",
-        execution_result.protocol_results.len()
-    );
-    let _ = state.status_tx.send(format!(
-        "[DEBUG] MCP got {} protocol results",
         execution_result.protocol_results.len()
     ));
 
@@ -507,10 +496,7 @@ fn handle_ping() -> Result<Value, JsonRpcError> {
 /// Handle resources/list request - LLM returns available resources
 #[cfg(feature = "mcp")]
 async fn handle_resources_list(state: &McpServerState) -> Result<Value, JsonRpcError> {
-    debug!("MCP resources/list");
-    let _ = state
-        .status_tx
-        .send("[DEBUG] MCP resources/list request".to_string());
+    Log::new(Some(&state.status_tx)).debug("MCP resources/list request");
 
     // Create event for LLM
     let event = Event::new(
@@ -574,10 +560,7 @@ async fn handle_resources_read(
         .and_then(|u| u.as_str())
         .ok_or_else(|| JsonRpcError::new(ErrorCode::InvalidParams))?;
 
-    debug!("MCP resources/read: uri={}", uri);
-    let _ = state
-        .status_tx
-        .send(format!("[DEBUG] MCP resources/read: {}", uri));
+    Log::new(Some(&state.status_tx)).debug(format!("MCP resources/read: {}", uri));
 
     // Create event for LLM
     let event = Event::new(
@@ -681,10 +664,7 @@ async fn handle_resources_templates_list(_state: &McpServerState) -> Result<Valu
 /// Handle tools/list request - LLM returns available tools
 #[cfg(feature = "mcp")]
 async fn handle_tools_list(state: &McpServerState) -> Result<Value, JsonRpcError> {
-    debug!("MCP tools/list");
-    let _ = state
-        .status_tx
-        .send("[DEBUG] MCP tools/list request".to_string());
+    Log::new(Some(&state.status_tx)).debug("MCP tools/list request");
 
     // Create event for LLM
     let event = Event::new(
@@ -750,10 +730,7 @@ async fn handle_tools_call(
 
     let tool_arguments = params.as_ref().and_then(|p| p.get("arguments"));
 
-    debug!("MCP tools/call: name={}", tool_name);
-    let _ = state
-        .status_tx
-        .send(format!("[DEBUG] MCP tools/call: {}", tool_name));
+    Log::new(Some(&state.status_tx)).debug(format!("MCP tools/call: {}", tool_name));
 
     // Create event for LLM
     let event = Event::new(
@@ -813,10 +790,7 @@ async fn handle_tools_call(
 /// Handle prompts/list request - LLM returns available prompts
 #[cfg(feature = "mcp")]
 async fn handle_prompts_list(state: &McpServerState) -> Result<Value, JsonRpcError> {
-    debug!("MCP prompts/list");
-    let _ = state
-        .status_tx
-        .send("[DEBUG] MCP prompts/list request".to_string());
+    Log::new(Some(&state.status_tx)).debug("MCP prompts/list request");
 
     // Create event for LLM
     let event = Event::new(
@@ -882,10 +856,7 @@ async fn handle_prompts_get(
 
     let prompt_arguments = params.as_ref().and_then(|p| p.get("arguments"));
 
-    debug!("MCP prompts/get: name={}", prompt_name);
-    let _ = state
-        .status_tx
-        .send(format!("[DEBUG] MCP prompts/get: {}", prompt_name));
+    Log::new(Some(&state.status_tx)).debug(format!("MCP prompts/get: {}", prompt_name));
 
     // Create event for LLM
     let event = Event::new(
@@ -954,10 +925,9 @@ async fn handle_logging_set_level(
         .and_then(|l| l.as_str())
         .unwrap_or("info");
 
-    debug!("MCP logging/setLevel: level={}", level);
-    let _ = state
-        .status_tx
-        .send(format!("[INFO] MCP log level set to: {}", level));
+    // Was `debug!` on the file log but `[INFO]` on the TUI - level drift the Log facade
+    // exists to prevent. Unified to INFO on both sinks: it was already user-visible.
+    Log::new(Some(&state.status_tx)).info(format!("MCP log level set to: {}", level));
 
     Ok(serde_json::json!({}))
 }
@@ -985,20 +955,14 @@ async fn handle_completion(
 /// Handle initialized notification
 #[cfg(feature = "mcp")]
 async fn handle_initialized(state: &McpServerState) {
-    info!("MCP client initialized");
-    let _ = state
-        .status_tx
-        .send("[INFO] MCP client initialized".to_string());
+    Log::new(Some(&state.status_tx)).info("MCP client initialized");
 }
 
 /// Handle cancelled notification
 #[cfg(feature = "mcp")]
 async fn handle_cancelled(state: &McpServerState, params: Option<Value>) {
     if let Some(req_id) = params.as_ref().and_then(|p| p.get("requestId")) {
-        debug!("MCP operation cancelled: {:?}", req_id);
-        let _ = state
-            .status_tx
-            .send(format!("[DEBUG] MCP cancelled: {:?}", req_id));
+        Log::new(Some(&state.status_tx)).debug(format!("MCP cancelled: {:?}", req_id));
     }
 }
 
