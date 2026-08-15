@@ -60,11 +60,11 @@ pub mod peer;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
 use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
-use crate::{console_info, console_warn};
 use actions::{OpenvpnProtocol, OPENVPN_PEER_RESET_EVENT};
 use anyhow::{Context, Result};
 use packet::{ControlFrame, DataFrame};
@@ -73,7 +73,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 /// Maximum number of peers tracked at once. Beyond this, resets are ignored.
 const MAX_PEERS: usize = 100;
@@ -114,16 +114,15 @@ impl OpenvpnServer {
 
         let server_session_id = rand::random::<u64>();
 
-        info!(
+        let log = Log::new(Some(&status_tx));
+        log.info(format!(
             "OpenVPN control-plane responder listening on {} (session id {:016x})",
             local_addr, server_session_id
-        );
-        let _ = status_tx.send(format!("[INFO] OpenVPN listening on {}", local_addr));
-        let _ = status_tx.send(
-            "[WARN] OpenVPN is a control-plane responder only: it answers the session reset \
+        ));
+        log.warn(
+            "OpenVPN is a control-plane responder only: it answers the session reset \
              and ACKs control packets, but has no TLS control channel, no key exchange and \
-             no data channel, so no tunnel is ever established. Use WireGuard for a real VPN."
-                .to_string(),
+             no data channel, so no tunnel is ever established. Use WireGuard for a real VPN.",
         );
 
         let server = Arc::new(OpenvpnServer {
@@ -156,7 +155,7 @@ impl OpenvpnServer {
             .register_server_task(server_id, accept_handle)
             .await;
 
-        let _ = status_tx.send(format!("→ OpenVPN server ready on {}", local_addr));
+        log.info(format!("OpenVPN server ready on {}", local_addr));
         Ok(local_addr)
     }
 
@@ -184,12 +183,10 @@ impl OpenvpnServer {
             };
 
             if opcode.is_tls_crypt_v2() {
-                console_warn!(
-                    status_tx,
+                Log::new(Some(&status_tx)).warn(format!(
                     "OpenVPN: {} uses tls-crypt-v2 ({:?}), which this server cannot decode; ignoring",
-                    peer_addr,
-                    opcode
-                );
+                    peer_addr, opcode
+                ));
                 continue;
             }
 
@@ -263,15 +260,14 @@ impl OpenvpnServer {
         // the client wrapped the control channel with --tls-auth or --tls-crypt,
         // in which case the fields we just read are not the fields it wrote.
         if !frame.is_plain_reset() {
-            console_warn!(
-                status_tx,
+            Log::new(Some(&status_tx)).warn(format!(
                 "OpenVPN: reset from {} is not a plain reset ({} payload bytes, {} ACKs); \
                  the client is probably using --tls-auth or --tls-crypt, which is not \
                  supported. Ignoring rather than mis-parsing it.",
                 peer_addr,
                 frame.payload.len(),
                 frame.ack_packet_ids.len()
-            );
+            ));
             return;
         }
 
@@ -310,12 +306,10 @@ impl OpenvpnServer {
         }
 
         if self.peer_manager.count().await >= MAX_PEERS {
-            console_warn!(
-                status_tx,
+            Log::new(Some(&status_tx)).warn(format!(
                 "OpenVPN: peer table full ({}), ignoring reset from {}",
-                MAX_PEERS,
-                peer_addr
-            );
+                MAX_PEERS, peer_addr
+            ));
             return;
         }
 
@@ -323,13 +317,10 @@ impl OpenvpnServer {
         let peer = Peer::new(connection_id, peer_addr, frame.session_id, key_id);
         self.peer_manager.add_peer(peer).await;
 
-        console_info!(
-            status_tx,
+        Log::new(Some(&status_tx)).info(format!(
             "OpenVPN reset from {} (session {:016x}, {:?})",
-            peer_addr,
-            frame.session_id,
-            frame.opcode
-        );
+            peer_addr, frame.session_id, frame.opcode
+        ));
 
         // Ask the model before answering. The decision can take seconds, so it
         // runs off the receive loop.
@@ -390,18 +381,17 @@ impl OpenvpnServer {
         )
         .await;
 
+        let log = Log::new(Some(&status_tx));
         let decision = match outcome {
             Ok(result) => {
                 for message in &result.messages {
-                    info!("{}", message);
-                    let _ = status_tx.send(format!("[INFO] {}", message));
+                    log.info(message);
                 }
                 extract_decision(&result.protocol_results)
             }
             Err(e) => {
-                error!("OpenVPN: peer decision failed for {}: {}", peer_addr, e);
-                let _ = status_tx.send(format!(
-                    "[ERROR] OpenVPN: no decision for {} ({}); leaving it unanswered",
+                log.error(format!(
+                    "OpenVPN: no decision for {} ({}); leaving it unanswered",
                     peer_addr, e
                 ));
                 None
@@ -427,12 +417,11 @@ impl OpenvpnServer {
                 self.peer_manager
                     .set_admission(&peer_addr, PeerAdmission::Rejected)
                     .await;
-                console_info!(
-                    status_tx,
+                log.info(format!(
                     "OpenVPN: refused {} ({}) - no reply sent",
                     peer_addr,
                     reason.as_deref().unwrap_or("no reason given")
-                );
+                ));
             }
             None => {
                 // Distinct from an explicit rejection on purpose: this is the
@@ -441,12 +430,11 @@ impl OpenvpnServer {
                 self.peer_manager
                     .set_admission(&peer_addr, PeerAdmission::Rejected)
                     .await;
-                console_warn!(
-                    status_tx,
+                log.warn(format!(
                     "OpenVPN: no accept_peer/reject_peer decision for {}; leaving it \
                      unanswered (failing closed)",
                     peer_addr
-                );
+                ));
             }
         }
     }
@@ -478,11 +466,7 @@ impl OpenvpnServer {
         .to_vec();
 
         if let Err(e) = self.socket.send_to(&reply, peer_addr).await {
-            error!("OpenVPN: failed to answer {}: {}", peer_addr, e);
-            let _ = status_tx.send(format!(
-                "[ERROR] OpenVPN: reply to {} failed: {}",
-                peer_addr, e
-            ));
+            Log::new(Some(status_tx)).error(format!("OpenVPN: reply to {} failed: {}", peer_addr, e));
             return;
         }
 
@@ -515,13 +499,12 @@ impl OpenvpnServer {
             .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        console_info!(
-            status_tx,
+        Log::new(Some(status_tx)).info(format!(
             "OpenVPN: answered {} with HARD_RESET_SERVER_V2 ({} bytes){}",
             peer_addr,
             reply.len(),
             reason.map(|r| format!(" - {}", r)).unwrap_or_default()
-        );
+        ));
     }
 
     /// Re-send the reply we already built for a peer whose reset was
@@ -622,14 +605,13 @@ impl OpenvpnServer {
             .unwrap_or(false);
 
         if first_control {
-            console_info!(
-                status_tx,
+            Log::new(Some(status_tx)).info(format!(
                 "OpenVPN: {} sent {} ({} bytes); ACKed. No TLS control channel exists, so \
                  the handshake stops here and no tunnel is established.",
                 peer_addr,
                 hint,
                 frame.payload.len()
-            );
+            ));
         }
     }
 
@@ -684,12 +666,11 @@ impl OpenvpnServer {
         );
 
         if first {
-            console_warn!(
-                status_tx,
+            Log::new(Some(status_tx)).warn(format!(
                 "OpenVPN: {} sent a data packet, but no key exchange has taken place, so it \
                  cannot be decrypted and is dropped",
                 peer_addr
-            );
+            ));
         }
     }
 
