@@ -18,6 +18,8 @@ use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "grpc")]
 use crate::llm::ActionResult;
 #[cfg(feature = "grpc")]
+use crate::logging::emit::Log;
+#[cfg(feature = "grpc")]
 use crate::protocol::Event;
 #[cfg(feature = "grpc")]
 use crate::server::grpc::actions::GRPC_UNARY_REQUEST_EVENT;
@@ -260,9 +262,8 @@ impl GrpcServer {
                 "Missing 'proto_schema' in startup_params. LLM must provide protobuf definition.",
             )?;
 
-        debug!("Compiling protobuf schema for gRPC server");
         trace!("Proto schema:\n{}", proto_schema);
-        let _ = status_tx.send("[DEBUG] Compiling protobuf schema".to_string());
+        Log::new(Some(&status_tx)).debug("Compiling protobuf schema for gRPC server");
 
         // Compile proto schema to FileDescriptorSet
         let file_descriptor_set = Self::compile_proto_schema(&proto_schema)
@@ -281,14 +282,10 @@ impl GrpcServer {
         }
 
         info!("gRPC server starting with {} service(s)", services.len());
+        let log = Log::new(Some(&status_tx));
         for service in &services {
-            info!(
-                "  Service: {} ({} methods)",
-                service.full_name(),
-                service.methods().count()
-            );
-            let _ = status_tx.send(format!(
-                "[INFO] gRPC service: {} ({} methods)",
+            log.info(format!(
+                "gRPC service: {} ({} methods)",
                 service.full_name(),
                 service.methods().count()
             ));
@@ -314,10 +311,8 @@ impl GrpcServer {
             "gRPC server reflection is not implemented; clients must be given the schema \
              out of band (grpcurl -proto / -protoset)"
         );
-        let _ = status_tx.send(
-            "[WARN] gRPC reflection is not served; pass the schema to clients out of band"
-                .to_string(),
-        );
+        Log::new(Some(&status_tx))
+            .warn("gRPC reflection is not served; pass the schema to clients out of band");
 
         // Create dynamic gRPC service
         let dynamic_service = DynamicGrpcService {
@@ -347,8 +342,8 @@ impl GrpcServer {
                             service.app_state.get_next_unified_id().await,
                         );
                         debug!("gRPC connection {} from {}", connection_id, remote_addr);
-                        let _ =
-                            status_tx.send(format!("[DEBUG] gRPC connection from {}", remote_addr));
+                        Log::new(Some(&status_tx))
+                            .debug(format!("gRPC connection from {}", remote_addr));
 
                         // Add connection to server state
                         use crate::state::server::{
@@ -396,9 +391,8 @@ impl GrpcServer {
                             .serve_connection(io, grpc_service)
                             .await
                             {
-                                debug!("gRPC connection error: {}", e);
-                                let _ = status_tx_clone
-                                    .send(format!("[DEBUG] gRPC connection error: {}", e));
+                                Log::new(Some(&status_tx_clone))
+                                    .debug(format!("gRPC connection error: {}", e));
                             }
 
                             // Clean up connection
@@ -590,11 +584,8 @@ impl DynamicGrpcService {
             }
         };
 
-        debug!("gRPC request: {}/{}", service_name, method_name);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] gRPC request: {}/{}",
-            service_name, method_name
-        ));
+        Log::new(Some(&self.status_tx))
+            .debug(format!("gRPC request: {}/{}", service_name, method_name));
 
         // Validate content-type
         if let Some(content_type) = req.headers().get("content-type") {
@@ -651,10 +642,11 @@ impl DynamicGrpcService {
         {
             Ok(payload) => payload,
             Err(failure) => {
-                debug!("gRPC handler error: {}", failure.message);
-                let _ = self
-                    .status_tx
-                    .send(format!("[ERROR] gRPC handler error: {}", failure.message));
+                // Was `debug!` on the file log but `[ERROR]` on the TUI - exactly the
+                // level drift the Log facade exists to prevent. Reclassified to ERROR on
+                // both sinks: this is a genuine failed gRPC call reaching the client.
+                Log::new(Some(&self.status_tx))
+                    .error(format!("gRPC handler error: {}", failure.message));
                 return Ok(Self::grpc_error_response(failure.status, &failure.message));
             }
         };
@@ -670,11 +662,8 @@ impl DynamicGrpcService {
         headers.insert("content-type", HeaderValue::from_static("application/grpc"));
         headers.insert("grpc-status", HeaderValue::from_static("0"));
 
-        debug!("gRPC response: {} bytes", response_payload.len());
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] gRPC response: {} bytes",
-            response_payload.len()
-        ));
+        Log::new(Some(&self.status_tx))
+            .debug(format!("gRPC response: {} bytes", response_payload.len()));
 
         Ok(response)
     }
@@ -812,11 +801,8 @@ impl DynamicGrpcService {
         let input_desc = method_desc.input();
         let output_desc = method_desc.output();
 
-        debug!("gRPC unary call: {}/{}", service_name, method_name);
-        let _ = self.status_tx.send(format!(
-            "[DEBUG] gRPC call: {}/{}",
-            service_name, method_name
-        ));
+        Log::new(Some(&self.status_tx))
+            .debug(format!("gRPC unary call: {}/{}", service_name, method_name));
 
         // Decode request using dynamic message. A body this server cannot decode is the
         // client's malformed input, not a server fault.
@@ -831,13 +817,9 @@ impl DynamicGrpcService {
         // Convert DynamicMessage to JSON using prost-reflect's JSON serialization
         let request_json = Self::dynamic_message_to_json(&request_msg)?;
 
-        trace!(
+        Log::new(Some(&self.status_tx)).trace(format!(
             "gRPC request JSON: {}",
             serde_json::to_string_pretty(&request_json)?
-        );
-        let _ = self.status_tx.send(format!(
-            "[TRACE] Request: {}",
-            serde_json::to_string(&request_json)?
         ));
 
         // Build response schema description for LLM
@@ -908,10 +890,8 @@ impl DynamicGrpcService {
                         .encode(&mut response_bytes)
                         .map_err(anyhow::Error::from)?;
 
-                    debug!("gRPC response: {} bytes", response_bytes.len());
-                    let _ = self
-                        .status_tx
-                        .send(format!("[DEBUG] Response: {} bytes", response_bytes.len()));
+                    Log::new(Some(&self.status_tx))
+                        .debug(format!("gRPC response: {} bytes", response_bytes.len()));
 
                     return Ok(response_bytes);
                 }
