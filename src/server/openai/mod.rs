@@ -18,16 +18,16 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::openai::actions::{OpenAiProtocol, OPENAI_REQUEST_EVENT};
 use crate::state::app_state::AppState;
-use crate::{console_error, console_info};
 
 /// OpenAI-compatible API server that delegates to LLM/Ollama
 pub struct OpenAiServer;
@@ -45,7 +45,7 @@ impl OpenAiServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "OpenAI API server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("OpenAI API server listening on {}", local_addr));
 
         let protocol = Arc::new(OpenAiProtocol::new());
 
@@ -58,12 +58,10 @@ impl OpenAiServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!(
+                        Log::new(Some(&status_tx)).info(format!(
                             "OpenAI API connection {} from {}",
                             connection_id, remote_addr
-                        );
-                        let _ = status_tx
-                            .send(format!("[INFO] OpenAI API connection from {}", remote_addr));
+                        ));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -130,15 +128,14 @@ impl OpenAiServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone.send(format!(
-                                "[INFO] OpenAI API connection {} closed",
-                                connection_id
-                            ));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("OpenAI API connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept OpenAI API connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept OpenAI API connection: {}", e));
                         break;
                     }
                 }
@@ -167,15 +164,13 @@ async fn handle_openai_request(
     let uri = req.uri().clone();
     let path = uri.path().to_string();
 
-    debug!("OpenAI API request: {} {}", method, path);
-    let _ = status_tx.send(format!("[DEBUG] OpenAI API {} {}", method, path));
+    Log::new(Some(&status_tx)).debug(format!("OpenAI API request: {} {}", method, path));
 
     // Read request body
     let body_bytes = match req.collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            error!("Failed to read request body: {}", e);
-            let _ = status_tx.send(format!("[ERROR] Failed to read request body: {}", e));
+            Log::new(Some(&status_tx)).error(format!("Failed to read request body: {}", e));
             return Ok(Response::builder()
                 .status(StatusCode::BAD_REQUEST)
                 .header("Content-Type", "application/json")
@@ -232,8 +227,9 @@ async fn handle_openai_request(
             )
         }
         Err(e) => {
-            error!("LLM call failed: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM call failed: {}", e));
+            // Non-fatal: a wire fallback (JSON error response) is still delivered and the
+            // HTTP connection continues.
+            Log::new(Some(&status_tx)).warn(format!("OpenAI LLM call failed: {}", e));
 
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -275,7 +271,8 @@ fn build_openai_response(
 
                 let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
 
-                let _ = status_tx.send(format!("[DEBUG] OpenAI {} {} -> {}", method, path, status));
+                Log::new(Some(status_tx))
+                    .debug(format!("OpenAI {} {} -> {}", method, path, status));
 
                 // Build response
                 let mut response_builder = Response::builder().status(status);
@@ -298,8 +295,7 @@ fn build_openai_response(
     }
 
     // No openai_response action found - return error
-    error!("No openai_response action in LLM results");
-    let _ = status_tx.send("[ERROR] LLM did not return openai_response action".to_string());
+    Log::new(Some(status_tx)).error("No openai_response action in LLM results");
 
     Ok(Response::builder()
         .status(StatusCode::INTERNAL_SERVER_ERROR)
