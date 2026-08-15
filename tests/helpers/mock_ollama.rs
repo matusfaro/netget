@@ -789,12 +789,19 @@ async fn handle_generate(
 async fn handle_tags() -> Response {
     debug!("🔧 Mock Ollama received tags request");
 
+    // Must advertise every model name tests configure: netget validates
+    // --model against this list at startup and refuses to run otherwise.
+    // "qwen3.8:27b-mlx" is the test-helper default (tests/helpers/netget.rs);
+    // "qwen3-coder:30b" is kept for tests that pass it explicitly.
     let response = OllamaTagsResponse {
-        models: vec![OllamaModel {
-            name: "qwen3-coder:30b".to_string(),
-            modified_at: chrono::Utc::now().to_rfc3339(),
-            size: 1000000,
-        }],
+        models: ["qwen3.8:27b-mlx", "qwen3-coder:30b"]
+            .into_iter()
+            .map(|name| OllamaModel {
+                name: name.to_string(),
+                modified_at: chrono::Utc::now().to_rfc3339(),
+                size: 1000000,
+            })
+            .collect(),
     };
 
     Json(response).into_response()

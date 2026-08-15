@@ -1,6 +1,14 @@
-//! Live-LLM TCP suite: setup + one test per request-handling behavior.
+//! Live-LLM TCP suite.
+//!
+//! Setup and request handling are deliberately separate tests: setup tests
+//! evaluate the model's `open_server` behavior from a natural-language prompt
+//! (LiveProtocolTest); request tests start the server deterministically with
+//! `--server` (no model call) so the only unpredictable behavior under test
+//! is the model answering the request event (LiveRequestTest).
 
-use crate::helpers::llm_live::{as_text, expect_contains, live_llm_enabled, LiveProtocolTest};
+use crate::helpers::llm_live::{
+    as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,
+};
 use crate::helpers::E2EResult;
 
 /// Setup: a bare natural-language prompt must produce a running TCP server.
@@ -30,14 +38,12 @@ async fn tcp_echo_roundtrip() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("tcp")
-        .setup_prompt(
-            "Start a TCP server on port {AVAILABLE_PORT} that echoes back \
-             exactly the data it receives, unchanged.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "tcp",
+        "Echo back exactly the data you receive, unchanged, on every message.",
+    )
+    .start()
+    .await?;
 
     let marker = "netget-live-echo-7431";
     let response = server.tcp_roundtrip(marker.as_bytes()).await?;
@@ -55,14 +61,12 @@ async fn tcp_canned_reply() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("tcp")
-        .setup_prompt(
-            "Start a TCP server on port {AVAILABLE_PORT}. Whenever any data \
-             arrives on a connection, reply with exactly: ACK-GRANTED",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "tcp",
+        "Whenever any data arrives on a connection, reply with exactly: ACK-GRANTED",
+    )
+    .start()
+    .await?;
 
     let response = server.tcp_roundtrip(b"hello, anyone there?").await?;
     let result =
@@ -79,15 +83,13 @@ async fn tcp_conditional_reply() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("tcp")
-        .setup_prompt(
-            "Start a TCP server on port {AVAILABLE_PORT}. When a client sends \
-             the word PING reply with PONG-42. For anything else reply with \
-             UNKNOWN-COMMAND.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "tcp",
+        "When a client sends the word PING reply with PONG-42. \
+         For anything else reply with UNKNOWN-COMMAND.",
+    )
+    .start()
+    .await?;
 
     let ping = server.tcp_roundtrip(b"PING").await?;
     let ping_result = expect_contains(&as_text(&ping), "PONG-42");

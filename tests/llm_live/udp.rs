@@ -1,6 +1,10 @@
-//! Live-LLM UDP suite: setup + one test per request-handling behavior.
+//! Live-LLM UDP suite. Setup (LiveProtocolTest, model-driven) and request
+//! handling (LiveRequestTest, deterministic `--server` start) are separate
+//! tests — see tcp.rs for the rationale.
 
-use crate::helpers::llm_live::{as_text, expect_contains, live_llm_enabled, LiveProtocolTest};
+use crate::helpers::llm_live::{
+    as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,
+};
 use crate::helpers::E2EResult;
 
 /// Setup: a bare natural-language prompt must produce a running UDP server.
@@ -25,14 +29,12 @@ async fn udp_echo_roundtrip() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("udp")
-        .setup_prompt(
-            "Start a UDP server on port {AVAILABLE_PORT} that echoes each \
-             datagram back to the sender exactly as received.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "udp",
+        "Echo each datagram back to the sender exactly as received.",
+    )
+    .start()
+    .await?;
 
     let marker = "netget-live-udp-echo-5127";
     let response = server.udp_roundtrip(marker.as_bytes()).await?;
@@ -49,14 +51,12 @@ async fn udp_canned_reply() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("udp")
-        .setup_prompt(
-            "Start a UDP server on port {AVAILABLE_PORT}. Whenever a datagram \
-             arrives, reply with exactly: DATAGRAM-ACK",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "udp",
+        "Whenever a datagram arrives, reply with exactly: DATAGRAM-ACK",
+    )
+    .start()
+    .await?;
 
     let response = server.udp_roundtrip(b"status check").await?;
     let result = expect_contains(&as_text(&response), "DATAGRAM-ACK")

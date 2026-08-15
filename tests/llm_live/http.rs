@@ -1,7 +1,10 @@
-//! Live-LLM HTTP suite: setup + one test per request type (GET, JSON GET,
-//! POST with body, path-dependent status).
+//! Live-LLM HTTP suite. Setup (LiveProtocolTest, model-driven) and request
+//! handling (LiveRequestTest, deterministic `--server` start) are separate
+//! tests — see tcp.rs for the rationale.
 
-use crate::helpers::llm_live::{expect_contains, live_llm_enabled, LiveProtocolTest};
+use crate::helpers::llm_live::{
+    expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,
+};
 use crate::helpers::E2EResult;
 
 /// Setup: a bare natural-language prompt must produce a running HTTP server.
@@ -29,14 +32,13 @@ async fn http_get_root_body() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("http")
-        .setup_prompt(
-            "Start an HTTP server on port {AVAILABLE_PORT}. Respond to every \
-             request with status 200 and a body containing the text NETGET-LIVE-OK.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "http",
+        "Respond to every request with status 200 and a body containing \
+         the text NETGET-LIVE-OK.",
+    )
+    .start()
+    .await?;
 
     let (status, body) = server.http_request("GET", "/", None).await?;
     let result = (|| -> E2EResult<()> {
@@ -58,15 +60,13 @@ async fn http_json_endpoint() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("http")
-        .setup_prompt(
-            "Start an HTTP server on port {AVAILABLE_PORT}. Respond to \
-             GET /health with status 200 and a JSON body exactly like \
-             {\"status\": \"ok\"} with Content-Type application/json.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "http",
+        "Respond to GET /health with status 200 and a JSON body exactly like \
+         {\"status\": \"ok\"} with Content-Type application/json.",
+    )
+    .start()
+    .await?;
 
     let (status, body) = server.http_request("GET", "/health", None).await?;
     let result = (|| -> E2EResult<()> {
@@ -95,15 +95,13 @@ async fn http_post_echo_body() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("http")
-        .setup_prompt(
-            "Start an HTTP server on port {AVAILABLE_PORT}. For POST requests, \
-             respond with status 200 and include the request's body text \
-             verbatim in the response body.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "http",
+        "For POST requests, respond with status 200 and include the request's \
+         body text verbatim in the response body.",
+    )
+    .start()
+    .await?;
 
     let marker = "posted-payload-9218";
     let (status, body) = server
@@ -128,15 +126,13 @@ async fn http_not_found_status() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("http")
-        .setup_prompt(
-            "Start an HTTP server on port {AVAILABLE_PORT}. Respond to GET / \
-             with status 200 and body HOME. For any other path respond with \
-             status 404 and body NOT-FOUND.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "http",
+        "Respond to GET / with status 200 and body HOME. For any other path \
+         respond with status 404 and body NOT-FOUND.",
+    )
+    .start()
+    .await?;
 
     let (home_status, home_body) = server.http_request("GET", "/", None).await?;
     let (missing_status, missing_body) =

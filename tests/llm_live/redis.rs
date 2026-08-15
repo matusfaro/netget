@@ -1,7 +1,12 @@
-//! Live-LLM Redis suite. Validated with the `redis` crate — an independent
-//! RESP implementation — so the model's replies must be protocol-correct.
+//! Live-LLM Redis suite. Setup (LiveProtocolTest, model-driven) and request
+//! handling (LiveRequestTest, deterministic `--server` start) are separate
+//! tests — see tcp.rs for the rationale. Validated with the `redis` crate —
+//! an independent RESP implementation — so the model's replies must be
+//! protocol-correct.
 
-use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, FIRST_BYTE_TIMEOUT};
+use crate::helpers::llm_live::{
+    live_llm_enabled, LiveProtocolTest, LiveRequestTest, FIRST_BYTE_TIMEOUT,
+};
 use crate::helpers::E2EResult;
 
 async fn with_llm_timeout<T, F>(fut: F) -> E2EResult<T>
@@ -44,14 +49,12 @@ async fn redis_ping_pong() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("redis")
-        .setup_prompt(
-            "Start a Redis server on port {AVAILABLE_PORT}. Answer PING with \
-             PONG. Answer any CLIENT or HELLO command with OK.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "redis",
+        "Answer PING with PONG. Answer any CLIENT or HELLO command with OK.",
+    )
+    .start()
+    .await?;
 
     let result = async {
         let client = redis::Client::open(format!("redis://{}", server.addr()).as_str())?;
@@ -76,15 +79,14 @@ async fn redis_get_instructed_value() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("redis")
-        .setup_prompt(
-            "Start a Redis server on port {AVAILABLE_PORT}. When a client runs \
-             GET greeting, reply with the string value netget-live-value. \
-             Answer PING with PONG and any CLIENT or HELLO command with OK.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "redis",
+        "When a client runs GET greeting, reply with the string value \
+         netget-live-value. Answer PING with PONG and any CLIENT or HELLO \
+         command with OK.",
+    )
+    .start()
+    .await?;
 
     let result = async {
         let client = redis::Client::open(format!("redis://{}", server.addr()).as_str())?;

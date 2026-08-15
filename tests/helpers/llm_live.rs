@@ -49,6 +49,12 @@ pub const IDLE_READ_TIMEOUT: Duration = Duration::from_secs(2);
 /// so this is far above the mocked-suite default of 120s.
 pub const SETUP_TIMEOUT: Duration = Duration::from_secs(600);
 
+/// Wall-clock bound netget puts on a single backend LLM call
+/// (`--llm-request-timeout`). The binary's default of 120s is calibrated for
+/// interactive use; a 27B model answering a 30k-char setup prompt has been
+/// observed to legitimately need more.
+pub const LLM_REQUEST_TIMEOUT_SECS: u64 = 300;
+
 /// Serializes live tests within this process. Without it, every test spawns
 /// its netget at once and all their setup model calls queue behind the shared
 /// `--ollama-lock`, so most instances blow the 120s startup timeout in
@@ -125,17 +131,8 @@ pub struct LiveProtocolTest {
     setup_prompt: String,
     expected_stack: String,
     no_scripts: bool,
-    require_live_answers: bool,
     log_level: String,
 }
-
-/// Steering appended by [`LiveProtocolTest::require_live_answers`]. Without
-/// it, capable models correctly prefer installing a static/script
-/// `event_handlers` entry at setup — good netget practice, but then no model
-/// call happens per request and that is exactly what these tests grade.
-const LIVE_ANSWER_STEERING: &str = "\n\nImportant: when opening the server, do not configure any \
-     event_handlers, scripts, or static responses. Each incoming request must \
-     be handled by the live LLM reasoning about it when it arrives.";
 
 impl LiveProtocolTest {
     /// `protocol` is the registry stack name the setup must produce (e.g.
@@ -154,7 +151,6 @@ impl LiveProtocolTest {
             // model round-trip per network event instead of a generated
             // script. Use `allow_scripts()` to test script-mode setup.
             no_scripts: true,
-            require_live_answers: false,
             log_level: "debug".to_string(),
         }
     }
@@ -181,14 +177,6 @@ impl LiveProtocolTest {
         self
     }
 
-    /// Steer the model away from pre-configured handlers so every request is
-    /// answered by a live model call, and enable
-    /// [`LiveServer::expect_llm_answered`] verification.
-    pub fn require_live_answers(mut self) -> Self {
-        self.require_live_answers = true;
-        self
-    }
-
     /// Raise the netget log level (e.g. "trace") for debugging a failure.
     #[allow(dead_code)]
     pub fn log_level(mut self, level: impl Into<String>) -> Self {
@@ -205,19 +193,19 @@ impl LiveProtocolTest {
         // One live test at a time (see LIVE_TEST_LOCK).
         let serialization_guard = LIVE_TEST_LOCK.lock().await;
 
-        let mut prompt = self.setup_prompt.clone();
-        if self.require_live_answers {
-            prompt.push_str(LIVE_ANSWER_STEERING);
-        }
         println!(
-            "🤖 live-llm test: protocol={} model={} prompt={:?}",
-            self.protocol, model, prompt
+            "🤖 live-llm setup test: protocol={} model={} prompt={:?}",
+            self.protocol, model, self.setup_prompt
         );
 
-        let mut config = NetGetConfig::new(&prompt)
+        let mut config = NetGetConfig::new(&self.setup_prompt)
             .with_model(&model)
             .with_log_level(&self.log_level)
             .with_startup_timeout(SETUP_TIMEOUT)
+            .with_extra_args([
+                "--llm-request-timeout".to_string(),
+                LLM_REQUEST_TIMEOUT_SECS.to_string(),
+            ])
             .with_ollama();
         if self.no_scripts {
             config = config.with_no_scripts(true);
@@ -257,6 +245,106 @@ impl LiveProtocolTest {
         Ok(LiveServer {
             protocol: self.protocol,
             port: server.port,
+            instance,
+            _serialization_guard: serialization_guard,
+        })
+    }
+}
+
+/// Builder for request-handling tests. Unlike [`LiveProtocolTest`], the
+/// server is started **deterministically** via `netget --server <protocol>
+/// --port 0 <instruction>` — no model call happens at setup, so the test
+/// exercises exactly one unpredictable behavior: the live model answering the
+/// request event. Setup correctness has its own `*_setup_via_llm` tests;
+/// never chain the two.
+pub struct LiveRequestTest {
+    protocol: String,
+    instruction: String,
+    log_level: String,
+}
+
+impl LiveRequestTest {
+    /// `protocol` is the registry stack name (`--server` accepts it directly).
+    /// `instruction` is the server's per-request instruction, handed to the
+    /// model verbatim on every network event.
+    pub fn new(protocol: impl Into<String>, instruction: impl Into<String>) -> Self {
+        Self {
+            protocol: protocol.into(),
+            instruction: instruction.into(),
+            log_level: "debug".to_string(),
+        }
+    }
+
+    /// Raise the netget log level (e.g. "trace") for debugging a failure.
+    #[allow(dead_code)]
+    pub fn log_level(mut self, level: impl Into<String>) -> Self {
+        self.log_level = level.into();
+        self
+    }
+
+    /// Start the server directly (no model involved) and return it ready for
+    /// wire requests. Startup is deterministic, so the mocked-suite default
+    /// startup timeout applies unchanged.
+    pub async fn start(self) -> E2EResult<LiveServer> {
+        let model = live_model();
+        ensure_model_available(&model).await?;
+
+        // One live test at a time (see LIVE_TEST_LOCK): request events still
+        // queue behind the shared --ollama-lock across tests.
+        let serialization_guard = LIVE_TEST_LOCK.lock().await;
+
+        println!(
+            "🤖 live-llm request test: protocol={} model={} instruction={:?}",
+            self.protocol, model, self.instruction
+        );
+
+        // Allocate the port ourselves and treat it as authoritative: the
+        // "listening on ADDR:PORT" status line races with the "Server #N
+        // started" line (the status forwarder is a separate task), so the
+        // startup parser cannot be relied on to learn the port. If the bind
+        // fails, run_server_direct errors and no server line appears at all.
+        let port = super::common::get_available_port().await?;
+
+        let config = NetGetConfig::new(&self.instruction)
+            .with_model(&model)
+            .with_log_level(&self.log_level)
+            .with_no_scripts(true)
+            .with_extra_args([
+                "--server".to_string(),
+                self.protocol.clone(),
+                "--port".to_string(),
+                port.to_string(),
+                "--llm-request-timeout".to_string(),
+                LLM_REQUEST_TIMEOUT_SECS.to_string(),
+            ])
+            .with_ollama();
+
+        let instance = start_netget(config).await?;
+
+        let server = instance
+            .servers
+            .iter()
+            .find(|s| s.stack.eq_ignore_ascii_case(&self.protocol))
+            .cloned()
+            .ok_or_else(|| {
+                format!(
+                    "Direct start of '{}' did not report a running server. Servers: {:?}",
+                    self.protocol,
+                    instance
+                        .servers
+                        .iter()
+                        .map(|s| (s.stack.clone(), s.port))
+                        .collect::<Vec<_>>()
+                )
+            })?;
+        println!(
+            "✅ direct start: {} server #{} on port {} (no model call)",
+            server.stack, server.id, port
+        );
+
+        Ok(LiveServer {
+            protocol: self.protocol,
+            port,
             instance,
             _serialization_guard: serialization_guard,
         })
@@ -396,8 +484,8 @@ impl LiveServer {
         let scripts = self.count_in_output("Script executing").await;
         Err(format!(
             "No live model call answered any network event (static handler runs: {}, script \
-             runs: {}). The model pre-configured handlers at setup despite the steering — \
-             use .require_live_answers() on LiveProtocolTest, or the model ignored it.",
+             runs: {}). A LiveRequestTest server has no handlers, so this means the request \
+             never reached the LLM path at all — check the server logs above.",
             statics, scripts
         )
         .into())

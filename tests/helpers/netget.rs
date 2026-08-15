@@ -109,6 +109,9 @@ pub struct NetGetConfig {
     /// Raise this for real-Ollama tests: a setup conversation can take several
     /// model iterations at a minute or more each.
     pub startup_timeout: Duration,
+    /// Extra CLI arguments inserted before the prompt (e.g. `--server tcp
+    /// --port 0` for a direct, no-model-call server start).
+    pub extra_args: Vec<String>,
 }
 
 /// Detect whether tests should drive a real Ollama rather than the mock.
@@ -144,6 +147,7 @@ impl NetGetConfig {
             mock_config: None,
             force_ollama: false,
             startup_timeout: Duration::from_secs(120),
+            extra_args: Vec::new(),
         }
     }
 
@@ -162,6 +166,7 @@ impl NetGetConfig {
             mock_config: None,
             force_ollama: false,
             startup_timeout: Duration::from_secs(120),
+            extra_args: Vec::new(),
         }
     }
 
@@ -187,6 +192,7 @@ impl NetGetConfig {
             mock_config: None,
             force_ollama: false,
             startup_timeout: Duration::from_secs(120),
+            extra_args: Vec::new(),
         }
     }
 
@@ -268,6 +274,20 @@ impl NetGetConfig {
     #[allow(dead_code)]
     pub fn with_startup_timeout(mut self, timeout: Duration) -> Self {
         self.startup_timeout = timeout;
+        self
+    }
+
+    /// Insert extra CLI arguments before the prompt argument. Use
+    /// `["--server", "tcp", "--port", "0"]` to start a server directly with
+    /// no initial model call (the prompt then becomes the server's
+    /// per-request instruction).
+    #[allow(dead_code)]
+    pub fn with_extra_args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extra_args = args.into_iter().map(Into::into).collect();
         self
     }
 
@@ -394,6 +414,11 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
         cmd.arg("--ollama-url").arg(mock_server.base_url());
     }
 
+    // Add any extra args (e.g. --server/--port for direct startup)
+    for arg in &config.extra_args {
+        cmd.arg(arg);
+    }
+
     // Add the prompt as a single argument (for non-interactive mode)
     // The binary will receive this as a single command-line argument
     cmd.arg(&processed_prompt);
@@ -481,6 +506,24 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
 
 /// Parse server startup line and extract information
 fn parse_server_startup(line: &str) -> Option<(String, String, u16)> {
+    // Direct-start pattern (--server PROTOCOL): the model is never asked, and
+    // the line is "Server #N (STACK) started, skipping the initial model call."
+    // The port arrives separately via the "listening on ADDR:PORT" confirmation,
+    // which the startup loop already applies to port-0 servers.
+    if line.contains("started, skipping the initial model call") {
+        let id = line.split("Server #").nth(1).map(|rest| {
+            rest.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+        })?;
+        let stack_raw = line.split('(').nth(1)?.split(')').next()?;
+        let stack = server_registry::registry().parse_from_str(stack_raw)?;
+        if id.is_empty() {
+            return None;
+        }
+        return Some((id, stack, 0));
+    }
+
     // Look for pattern: "[SERVER] Starting server #N (STACK) on ADDR:PORT"
     if !line.contains("[SERVER]") || !line.contains("Starting server") {
         return None;

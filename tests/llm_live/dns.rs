@@ -1,7 +1,12 @@
-//! Live-LLM DNS suite. The model must answer real hickory-client queries,
-//! which means echoing the query ID and building a correct wire response.
+//! Live-LLM DNS suite. Setup (LiveProtocolTest, model-driven) and request
+//! handling (LiveRequestTest, deterministic `--server` start) are separate
+//! tests — see tcp.rs for the rationale. The model must answer real
+//! hickory-client queries, which means echoing the query ID and building a
+//! correct wire response.
 
-use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, FIRST_BYTE_TIMEOUT};
+use crate::helpers::llm_live::{
+    live_llm_enabled, LiveProtocolTest, LiveRequestTest, FIRST_BYTE_TIMEOUT,
+};
 use crate::helpers::E2EResult;
 use hickory_client::client::{AsyncClient, ClientHandle};
 use hickory_client::rr::{DNSClass, Name, RData, RecordType};
@@ -33,15 +38,13 @@ async fn dns_a_record_query() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
-    let server = LiveProtocolTest::new("dns")
-        .setup_prompt(
-            "Start a DNS server on port {AVAILABLE_PORT}. When an A record \
-             query arrives for test.netget.example, answer with the IP \
-             10.20.30.40. Answer any other query with 127.0.0.1.",
-        )
-        .require_live_answers()
-        .start()
-        .await?;
+    let server = LiveRequestTest::new(
+        "dns",
+        "When an A record query arrives for test.netget.example, answer with \
+         the IP 10.20.30.40. Answer any other query with 127.0.0.1.",
+    )
+    .start()
+    .await?;
 
     let result = query_a(&server.addr(), "test.netget.example.", "10.20.30.40")
         .await
