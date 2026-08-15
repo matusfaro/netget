@@ -13,6 +13,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::{console_error, console_info, console_trace};
@@ -273,8 +274,8 @@ impl BluetoothBle {
             .context("Failed to bring up the shared BLE radio")?;
 
         info!("Bluetooth server created on shared radio, adapter powered on");
-        let _ = status_tx.send(format!(
-            "[INFO] Bluetooth server created for device '{}'",
+        Log::new(Some(&status_tx)).info(format!(
+            "Bluetooth server created for device '{}'",
             device_name
         ));
 
@@ -337,9 +338,8 @@ impl BluetoothBle {
                     if let Err(e) =
                         Self::execute_action(&server_data, &device_name, action, &status_tx).await
                     {
-                        error!("Initial Bluetooth action failed: {}", e);
-                        let _ =
-                            status_tx.send(format!("[ERROR] Initial Bluetooth action failed: {e}"));
+                        Log::new(Some(&status_tx))
+                            .error(format!("Initial Bluetooth action failed: {e}"));
                     }
                 }
             }
@@ -349,8 +349,8 @@ impl BluetoothBle {
                      powered but has no services and is NOT advertising",
                     e, device_name
                 );
-                let _ = status_tx.send(format!(
-                    "[ERROR] Bluetooth startup configuration failed: {e}. The adapter is up but \
+                Log::new(Some(&status_tx)).error(format!(
+                    "Bluetooth startup configuration failed: {e}. The adapter is up but \
                      no services were added and it is not advertising."
                 ));
             }
@@ -414,10 +414,8 @@ impl BluetoothBle {
                 let mut retries = 0;
                 while !peripheral.is_powered().await.unwrap_or(false) {
                     if retries == 0 {
-                        warn!("Bluetooth adapter is not powered on, waiting...");
-                        let _ = status_tx.send(
-                            "[WARN] Bluetooth adapter not powered on, waiting...".to_string(),
-                        );
+                        Log::new(Some(&status_tx))
+                            .warn("Bluetooth adapter is not powered on, waiting...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
                     retries += 1;
@@ -427,7 +425,7 @@ impl BluetoothBle {
                 }
 
                 info!("Bluetooth adapter powered on (shared radio)");
-                let _ = status_tx.send("[INFO] Bluetooth adapter powered on".to_string());
+                Log::new(Some(&status_tx)).info("Bluetooth adapter powered on");
 
                 let hub = Arc::new(BleHub {
                     peripheral: Mutex::new(peripheral),
@@ -608,8 +606,8 @@ impl BluetoothBle {
                          via bluetooth_read_request instead.",
                         char_uuid_str
                     );
-                    let _ = status_tx.send(format!(
-                        "[WARN] BLE {}: initial_value ignored (macOS allows a cached value only \
+                    Log::new(Some(&status_tx)).warn(format!(
+                        "BLE {}: initial_value ignored (macOS allows a cached value only \
                          on read-only characteristics); reads are answered by the LLM",
                         char_uuid_str
                     ));
@@ -655,13 +653,8 @@ impl BluetoothBle {
                 .await
                 .context("Failed to add service to peripheral")?;
 
-            info!(
+            Log::new(Some(&status_tx)).info(format!(
                 "Added BLE service {} with {} characteristics",
-                uuid_str,
-                chars_json.len()
-            );
-            let _ = status_tx.send(format!(
-                "[INFO] Added BLE service {} with {} characteristics",
                 uuid_str,
                 chars_json.len()
             ));
@@ -726,8 +719,7 @@ impl BluetoothBle {
                 .await
                 .context("Failed to stop advertising")?;
 
-            info!("Stopped BLE advertising");
-            let _ = status_tx.send("[INFO] Stopped BLE advertising".to_string());
+            Log::new(Some(&status_tx)).info("Stopped BLE advertising");
         }
 
         Ok(())
@@ -768,13 +760,8 @@ impl BluetoothBle {
                 .await
                 .context("Failed to send notification")?;
 
-            debug!(
-                "Sent notification on {} with {} bytes",
-                char_uuid_str,
-                value.len()
-            );
-            let _ = status_tx.send(format!(
-                "[DEBUG] Sent BLE notification on {} ({} bytes)",
+            Log::new(Some(&status_tx)).debug(format!(
+                "Sent BLE notification on {} ({} bytes)",
                 char_uuid_str,
                 value.len()
             ));
@@ -837,9 +824,8 @@ impl BluetoothBle {
         while let Some(event) = event_rx.recv().await {
             match event {
                 PeripheralEvent::StateUpdate { is_powered, .. } => {
-                    info!("Bluetooth state update: powered = {}", is_powered);
-                    let _ =
-                        status_tx.send(format!("[INFO] Bluetooth state: powered = {}", is_powered));
+                    Log::new(Some(&status_tx))
+                        .info(format!("Bluetooth state update: powered = {}", is_powered));
 
                     // Create event for LLM
                     let llm_event = Event::new(
@@ -880,12 +866,8 @@ impl BluetoothBle {
                 } => {
                     let char_uuid_str = request.characteristic.to_string();
 
-                    debug!(
-                        "BLE read request on characteristic {} at offset {}",
-                        char_uuid_str, offset
-                    );
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] BLE read request on {} (offset: {})",
+                    Log::new(Some(&status_tx)).debug(format!(
+                        "BLE read request on {} (offset: {})",
                         char_uuid_str, offset
                     ));
 
@@ -1024,14 +1006,8 @@ impl BluetoothBle {
                     let char_uuid_str = request.characteristic.to_string();
                     let value_hex = hex::encode(&value);
 
-                    debug!(
-                        "BLE write request on characteristic {} with {} bytes at offset {}",
-                        char_uuid_str,
-                        value.len(),
-                        offset
-                    );
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] BLE write request on {} ({} bytes)",
+                    Log::new(Some(&status_tx)).debug(format!(
+                        "BLE write request on {} ({} bytes)",
                         char_uuid_str,
                         value.len()
                     ));

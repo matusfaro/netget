@@ -7,10 +7,11 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{error, info};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::BootpProtocol;
 use crate::state::app_state::AppState;
@@ -47,7 +48,7 @@ impl BootpServer {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
         info!("BOOTP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] BOOTP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("BOOTP server listening on {}", local_addr));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -167,9 +168,8 @@ impl BootpServer {
 
                             let event = Event::new(&BOOTP_REQUEST_EVENT, event_data);
 
-                            debug!("BOOTP calling LLM for request from {}", peer_addr);
-                            let _ = status_clone.send(format!(
-                                "[DEBUG] BOOTP calling LLM for request from {}",
+                            Log::new(Some(&status_clone)).debug(format!(
+                                "BOOTP calling LLM for request from {}",
                                 peer_addr
                             ));
 
@@ -184,17 +184,13 @@ impl BootpServer {
                             .await
                             {
                                 Ok(execution_result) => {
+                                    let log = Log::new(Some(&status_clone));
                                     for message in &execution_result.messages {
-                                        info!("{}", message);
-                                        let _ = status_clone.send(format!("[INFO] {}", message));
+                                        log.info(format!("{}", message));
                                     }
 
-                                    debug!(
+                                    log.debug(format!(
                                         "BOOTP got {} protocol results",
-                                        execution_result.protocol_results.len()
-                                    );
-                                    let _ = status_clone.send(format!(
-                                        "[DEBUG] BOOTP got {} protocol results",
                                         execution_result.protocol_results.len()
                                     ));
 
@@ -206,24 +202,15 @@ impl BootpServer {
                                                 socket_clone.send_to(output_data, peer_addr).await;
 
                                             // DEBUG: Log summary
-                                            debug!(
+                                            log.debug(format!(
                                                 "BOOTP sent {} bytes to {}",
-                                                output_data.len(),
-                                                peer_addr
-                                            );
-                                            let _ = status_clone.send(format!(
-                                                "[DEBUG] BOOTP sent {} bytes to {}",
                                                 output_data.len(),
                                                 peer_addr
                                             ));
 
                                             // TRACE: Log full payload
                                             let hex_str = hex::encode(output_data);
-                                            trace!("BOOTP sent (hex): {}", hex_str);
-                                            let _ = status_clone.send(format!(
-                                                "[TRACE] BOOTP sent (hex): {}",
-                                                hex_str
-                                            ));
+                                            log.trace(format!("BOOTP sent (hex): {}", hex_str));
 
                                             let _ = status_clone.send(format!(
                                                 "→ BOOTP response to {} ({} bytes)",
@@ -231,11 +218,7 @@ impl BootpServer {
                                                 output_data.len()
                                             ));
                                         } else {
-                                            debug!("BOOTP protocol result has no output data");
-                                            let _ = status_clone.send(
-                                                "[DEBUG] BOOTP protocol result has no output data"
-                                                    .to_string(),
-                                            );
+                                            log.debug("BOOTP protocol result has no output data");
                                         }
                                     }
                                 }
