@@ -16,16 +16,16 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
-use tracing::{debug, error, info};
+use tracing::debug;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::rtp::media::{self, AudioCodec, RtpPacketizer};
 use crate::server::RtspProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_error, console_trace};
 use actions::{
     RTSP_DESCRIBE_EVENT, RTSP_OPTIONS_EVENT, RTSP_OTHER_EVENT, RTSP_PLAY_EVENT, RTSP_SETUP_EVENT,
     RTSP_TEARDOWN_EVENT,
@@ -65,8 +65,7 @@ impl RtspServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("RTSP server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] RTSP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("RTSP server listening on {}", local_addr));
 
         let protocol = Arc::new(RtspProtocol::new());
         let task_registrar = app_state.clone();
@@ -119,12 +118,13 @@ impl RtspServer {
                             )
                             .await
                             {
-                                let _ = stx.send(format!("[DEBUG] RTSP connection closed: {}", e));
+                                Log::new(Some(&stx))
+                                    .debug(format!("RTSP connection closed: {}", e));
                             }
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "RTSP accept error: {}", e);
+                        Log::new(Some(&status_tx)).error(format!("RTSP accept error: {}", e));
                     }
                 }
             }
@@ -156,7 +156,7 @@ impl RtspServer {
             // Extract as many complete requests as the buffer holds before reading more.
             while let Some((req, consumed)) = parse_rtsp_request(&buffer) {
                 buffer.drain(..consumed);
-                console_trace!(status_tx, "RTSP {} {}", req.method, req.uri);
+                Log::new(Some(&status_tx)).trace(format!("RTSP {} {}", req.method, req.uri));
                 let response = Self::process_request(
                     &req,
                     remote_addr,
@@ -246,10 +246,9 @@ impl RtspServer {
                 Err(e) => {
                     // Fail closed: answer 503 so the client's request completes deterministically
                     // rather than hanging, and never fabricate a stream.
-                    error!("RTSP LLM error ({} {}): {}", req.method, req.uri, e);
-                    let _ = status_tx.send(format!(
-                        "[ERROR] RTSP 503 for {} (LLM failure, fail-closed): {}",
-                        req.method, e
+                    Log::new(Some(status_tx)).error(format!(
+                        "RTSP 503 for {} {} (LLM failure, fail-closed): {}",
+                        req.method, req.uri, e
                     ));
                     return build_response(503, "Service Unavailable", &req.cseq, &[], None, None);
                 }
@@ -336,10 +335,8 @@ impl RtspServer {
         let rtp_socket = match UdpSocket::bind(SocketAddr::from(([127, 0, 0, 1], 0))).await {
             Ok(s) => Arc::new(s),
             Err(e) => {
-                let _ = status_tx.send(format!(
-                    "[ERROR] RTSP SETUP could not bind RTP socket: {}",
-                    e
-                ));
+                Log::new(Some(status_tx))
+                    .error(format!("RTSP SETUP could not bind RTP socket: {}", e));
                 return build_response(500, "Internal Server Error", &req.cseq, &[], None, None);
             }
         };
@@ -364,7 +361,9 @@ impl RtspServer {
             server_rtp_port,
             server_rtp_port + 1
         );
-        let _ = status_tx.send(format!(
+        // FileOnly: the SETUP response action's own log_template already reports
+        // "-> RTSP {status_code} SETUP" to the TUI at INFO.
+        Log::new(Some(status_tx)).debug(format!(
             "RTSP SETUP session={} client_rtp={:?} server_rtp={}",
             session_id, client_rtp_port, server_rtp_port
         ));
@@ -398,8 +397,7 @@ impl RtspServer {
         ) {
             (Some(s), Some(c), Some(id)) => (s, c, id),
             _ => {
-                let _ = status_tx
-                    .send("[WARN] RTSP PLAY before a completed SETUP; refusing".to_string());
+                Log::new(Some(status_tx)).warn("RTSP PLAY before a completed SETUP; refusing");
                 return build_response(
                     455,
                     "Method Not Valid In This State",
@@ -447,7 +445,7 @@ impl RtspServer {
             let payload = match media::synthesize(codec, &content, duration_ms) {
                 Ok(p) => p,
                 Err(e) => {
-                    let _ = stx.send(format!("[WARN] RTSP PLAY synthesis: {}", e));
+                    Log::new(Some(&stx)).warn(format!("RTSP PLAY synthesis: {}", e));
                     return;
                 }
             };
@@ -471,8 +469,10 @@ impl RtspServer {
                     }
                 })
                 .await;
-            let _ = stx.send(format!(
-                "→ RTSP PLAY streamed {} RTP packet(s) to {} ({} bytes)",
+            // FileOnly: analogous to rtp's send_rtp_audio summary, kept off the TUI to avoid
+            // adding a second line alongside the PLAY response's own INFO log_template.
+            Log::new(Some(&stx)).debug(format!(
+                "RTSP PLAY streamed {} RTP packet(s) to {} ({} bytes)",
                 sent, client_addr, bytes
             ));
         });

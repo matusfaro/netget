@@ -17,14 +17,14 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::error;
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::server::connection::ConnectionId;
 use crate::server::S3Protocol;
 use crate::state::app_state::AppState;
-use crate::{console_error, console_info};
 
 /// S3 server that delegates API operations to LLM
 pub struct S3Server;
@@ -41,7 +41,7 @@ impl S3Server {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "S3 server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("S3 server listening on {}", local_addr));
 
         let protocol = Arc::new(S3Protocol::new());
 
@@ -54,9 +54,10 @@ impl S3Server {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("S3 connection {} from {}", connection_id, remote_addr);
-                        let _ =
-                            status_tx.send(format!("[INFO] S3 connection from {}", remote_addr));
+                        Log::new(Some(&status_tx)).info(format!(
+                            "S3 connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -123,13 +124,14 @@ impl S3Server {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("[INFO] S3 connection {} closed", connection_id));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("S3 connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept S3 connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept S3 connection: {}", e));
                         break;
                     }
                 }
@@ -164,30 +166,26 @@ async fn handle_s3_request_with_llm(
     // Path format: / (list buckets), /bucket (bucket ops), /bucket/key (object ops)
     let (bucket, key, operation) = parse_s3_path(&method, &path);
 
-    debug!(
+    let log = Log::new(Some(&status_tx));
+    // FileOnly: the s3_request event's own log_template already reports the request to
+    // the TUI at INFO.
+    log.debug(format!(
         "S3 request: {} {} bucket={:?} key={:?} operation={}",
         method, path, bucket, key, operation
-    );
-    let _ = status_tx.send(format!(
-        "[DEBUG] S3 {} {} operation={}",
-        method, path, operation
     ));
 
     // Read request body (for PUT operations)
     let body_bytes = match req.into_body().collect().await {
         Ok(collected) => collected.to_bytes(),
         Err(e) => {
-            console_error!(status_tx, "Failed to read S3 request body: {}", e);
+            // Non-fatal: falls back to an empty body and the request is still processed.
+            log.warn(format!("Failed to read S3 request body: {}", e));
             Bytes::new()
         }
     };
 
     if !body_bytes.is_empty() {
-        trace!("S3 request body ({} bytes)", body_bytes.len());
-        let _ = status_tx.send(format!(
-            "[TRACE] S3 request body: {} bytes",
-            body_bytes.len()
-        ));
+        log.trace(format!("S3 request body ({} bytes)", body_bytes.len()));
     }
 
     // Create S3 request event
@@ -239,8 +237,9 @@ async fn handle_s3_request_with_llm(
                 .unwrap())
         }
         Err(e) => {
-            error!("LLM error handling S3 request: {}", e);
-            let _ = status_tx.send(format!("[ERROR] LLM error: {}", e));
+            // Non-fatal: a wire fallback (500 response) is still delivered and the HTTP
+            // connection continues.
+            log.warn(format!("LLM error handling S3 request: {}", e));
 
             // Return 500 error
             Ok(Response::builder()
@@ -400,12 +399,13 @@ fn process_s3_action_result(
 
                     let etag = data.get("etag").and_then(|v| v.as_str());
 
-                    debug!(
+                    // FileOnly: the send_s3_object action's own log_template already
+                    // reports "-> S3 send object ({content_type})" to the TUI at INFO.
+                    Log::new(Some(status_tx)).debug(format!(
                         "Sending S3 object ({} bytes, {})",
                         content.len(),
                         content_type
-                    );
-                    let _ = status_tx.send(format!("[DEBUG] → S3 object {} bytes", content.len()));
+                    ));
 
                     let mut builder = Response::builder().status(StatusCode::OK);
                     builder = header_or_skip(builder, "Content-Type", content_type);
@@ -434,11 +434,10 @@ fn process_s3_action_result(
 
                     let xml = build_list_objects_xml(bucket, &objects, is_truncated);
 
-                    debug!("Sending S3 object list ({} objects)", objects.len());
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] → S3 object list: {} objects",
-                        objects.len()
-                    ));
+                    // FileOnly: the send_s3_object_list action's own log_template already
+                    // reports "-> S3 list objects (...)" to the TUI at INFO.
+                    Log::new(Some(status_tx))
+                        .debug(format!("Sending S3 object list ({} objects)", objects.len()));
 
                     Some(
                         Response::builder()
@@ -458,11 +457,10 @@ fn process_s3_action_result(
 
                     let xml = build_list_buckets_xml(&buckets);
 
-                    debug!("Sending S3 bucket list ({} buckets)", buckets.len());
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] → S3 bucket list: {} buckets",
-                        buckets.len()
-                    ));
+                    // FileOnly: the send_s3_bucket_list action's own log_template already
+                    // reports "-> S3 list buckets (...)" to the TUI at INFO.
+                    Log::new(Some(status_tx))
+                        .debug(format!("Sending S3 bucket list ({} buckets)", buckets.len()));
 
                     Some(
                         Response::builder()
@@ -491,11 +489,10 @@ fn process_s3_action_result(
 
                     let xml = build_error_xml(error_code, message);
 
-                    debug!("Sending S3 error: {} ({})", error_code, status_code);
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] → S3 error: {} {}",
-                        status_code, error_code
-                    ));
+                    // FileOnly: the send_s3_error action's own log_template already reports
+                    // "-> S3 error {error_code} (...)" to the TUI at INFO.
+                    Log::new(Some(status_tx))
+                        .debug(format!("Sending S3 error: {} ({})", error_code, status_code));
 
                     Some(
                         Response::builder()
