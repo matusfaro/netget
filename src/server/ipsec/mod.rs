@@ -33,6 +33,7 @@ pub mod actions;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use actions::{IpsecProtocol, IPSEC_HANDSHAKE_EVENT};
@@ -102,19 +103,15 @@ impl IpsecServer {
             "Starting IPSec/IKEv2 parse-and-log honeypot on {}",
             bind_addr
         );
-        let _ = status_tx.send(format!(
-            "[INFO] Starting IPSec/IKEv2 honeypot on {} (parses and logs IKE, never replies)",
+        Log::new(Some(&status_tx)).info(format!(
+            "Starting IPSec/IKEv2 honeypot on {} (parses and logs IKE, never replies)",
             bind_addr
         ));
 
         // Bind UDP socket (IKE uses UDP port 500, NAT-T uses 4500)
         let socket = UdpSocket::bind(bind_addr).await?;
         let local_addr = socket.local_addr()?;
-        info!("IPSec/IKEv2 honeypot listening on {}", local_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] IPSec/IKEv2 honeypot listening on {}",
-            local_addr
-        ));
+        Log::new(Some(&status_tx)).info(format!("IPSec/IKEv2 honeypot listening on {}", local_addr));
 
         let socket = Arc::new(socket);
 
@@ -229,8 +226,8 @@ impl IpsecServer {
                 packet_length,
                 payload_names
             );
-            let _ = status_tx.send(format!(
-                "[TRACE] IPSec: {} {} from {} ({} bytes, payloads=[{}])",
+            Log::new(Some(&status_tx)).trace(format!(
+                "IPSec: {} {} from {} ({} bytes, payloads=[{}])",
                 ike_version, exchange_name, peer_addr, len, payload_names
             ));
 
@@ -259,8 +256,8 @@ impl IpsecServer {
                     "IPSec {} {} from {} (honeypot: logged only, payloads=[{}])",
                     ike_version, exchange_name, peer_addr, payload_names
                 );
-                let _ = status_tx.send(format!(
-                    "[DEBUG] IPSec: {} {} from {} (logged, payloads=[{}])",
+                Log::new(Some(&status_tx)).debug(format!(
+                    "IPSec: {} {} from {} (logged, payloads=[{}])",
                     ike_version, exchange_name, peer_addr, payload_names
                 ));
             }
@@ -352,8 +349,8 @@ impl IpsecServer {
             "IPSec {} handshake from {} (honeypot, payloads=[{}])",
             ike_version, peer_addr, payload_names
         );
-        let _ = status_tx.send(format!(
-            "[INFO] IPSec: {} handshake from {} (payloads=[{}])",
+        Log::new(Some(status_tx)).info(format!(
+            "IPSec: {} handshake from {} (payloads=[{}])",
             ike_version, peer_addr, payload_names
         ));
 
@@ -407,9 +404,9 @@ impl IpsecServer {
         .await
         {
             Ok(result) => {
+                let log = Log::new(Some(status_tx));
                 for message in &result.messages {
-                    info!("{}", message);
-                    let _ = status_tx.send(format!("[INFO] {}", message));
+                    log.info(format!("{}", message));
                 }
                 debug!(
                     "IPSec handshake from {} produced {} action(s) (no packets sent)",
@@ -418,8 +415,8 @@ impl IpsecServer {
                 );
             }
             Err(e) => {
-                error!("IPSec handshake event handling failed: {}", e);
-                let _ = status_tx.send(format!("[ERROR] IPSec event handling failed: {}", e));
+                Log::new(Some(status_tx))
+                    .error(format!("IPSec handshake event handling failed: {}", e));
             }
         }
     }

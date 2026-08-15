@@ -33,6 +33,7 @@ use tracing::{debug, error, info, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::server::connection::ConnectionId;
 use crate::server::IppProtocol;
 use crate::state::app_state::AppState;
@@ -68,8 +69,8 @@ impl IppServer {
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("IPP connection {} from {}", connection_id, remote_addr);
-                        let _ =
-                            status_tx.send(format!("[INFO] IPP connection from {}", remote_addr));
+                        Log::new(Some(&status_tx))
+                            .info(format!("IPP connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -136,8 +137,8 @@ impl IppServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("[INFO] IPP connection {} closed", connection_id));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("IPP connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -188,14 +189,8 @@ async fn handle_ipp_request_with_llm(
         }
     };
 
-    debug!(
-        "IPP request: {} {} ({} bytes)",
-        method,
-        uri,
-        body_bytes.len()
-    );
-    let _ = status_tx.send(format!(
-        "[DEBUG] IPP {} {} ({} bytes)",
+    Log::new(Some(&status_tx)).debug(format!(
+        "IPP {} {} ({} bytes)",
         method,
         uri,
         body_bytes.len()
@@ -274,7 +269,7 @@ async fn handle_ipp_request_with_llm(
                                 request_id,
                                 body.len()
                             );
-                            let _ = status_tx.send(format!("[DEBUG] IPP → {} response", status));
+                            Log::new(Some(&status_tx)).debug(format!("IPP → {} response", status));
 
                             return Ok(ipp_http_response(status, body));
                         }
@@ -289,10 +284,9 @@ async fn handle_ipp_request_with_llm(
             // and clients report it as a truncated response, so send a well-formed
             // server-error-internal-error instead of a body the client cannot parse.
             debug!("No IPP response action from LLM, returning server-error-internal-error");
-            let _ = status_tx.send(
-                "[WARN] IPP: LLM returned no ipp_* response action, sending \
-                 server-error-internal-error"
-                    .to_string(),
+            Log::new(Some(&status_tx)).warn(
+                "IPP: LLM returned no ipp_* response action, sending \
+                 server-error-internal-error",
             );
             Ok(ipp_http_response(
                 200,
