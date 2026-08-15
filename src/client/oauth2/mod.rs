@@ -25,6 +25,7 @@ use crate::client::oauth2::actions::{
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId as NetGetClientId, ClientStatus};
@@ -133,8 +134,8 @@ impl OAuth2Client {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] OAuth2 client {} ready for {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "OAuth2 client {} ready for {}",
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -1025,13 +1026,9 @@ impl OAuth2Client {
             })
             .await;
 
-        let _ = status_tx.send(format!(
-            "[CLIENT] OAuth2 authorization URL: {}",
-            auth_url_result
-        ));
-        let _ = status_tx.send(format!(
-            "[CLIENT] Visit the URL above to authorize, then paste the code"
-        ));
+        let log = Log::new(Some(&status_tx));
+        log.info(format!("OAuth2 authorization URL: {}", auth_url_result));
+        log.info("Visit the URL above to authorize, then paste the code".to_string());
 
         Ok(())
     }
@@ -1240,9 +1237,8 @@ impl OAuth2Client {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        error!("OAuth2 client {} error: {}", client_id, error);
-
-        let _ = status_tx.send(format!("[ERROR] OAuth2 error: {}", error));
+        Log::new(Some(&status_tx))
+            .error(format!("OAuth2 client {} error: {}", client_id, error));
 
         // Call LLM with error event
         let protocol = Arc::new(OAuth2ClientProtocol::new());
