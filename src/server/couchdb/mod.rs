@@ -18,10 +18,11 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::server::connection::ConnectionId;
 use crate::server::CouchDbProtocol;
 use crate::state::app_state::AppState;
@@ -70,8 +71,8 @@ impl CouchDbServer {
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("CouchDB connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx
-                            .send(format!("[INFO] CouchDB connection from {}", remote_addr));
+                        Log::new(Some(&status_tx))
+                            .info(format!("CouchDB connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -141,10 +142,8 @@ impl CouchDbServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone.send(format!(
-                                "[INFO] CouchDB connection {} closed",
-                                connection_id
-                            ));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("CouchDB connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -205,14 +204,12 @@ async fn handle_couchdb_request_with_llm(
                 &auth_config.admin_username,
                 &auth_config.admin_password,
             ) {
-                debug!("CouchDB authentication failed");
-                let _ = status_tx.send("[DEBUG] CouchDB authentication failed".to_string());
+                Log::new(Some(&status_tx)).debug("CouchDB authentication failed");
                 return Ok(create_auth_required_response());
             }
         } else {
             // No auth header provided
-            debug!("CouchDB authentication required");
-            let _ = status_tx.send("[DEBUG] CouchDB authentication required".to_string());
+            Log::new(Some(&status_tx)).debug("CouchDB authentication required");
             return Ok(create_auth_required_response());
         }
     }
@@ -234,8 +231,8 @@ async fn handle_couchdb_request_with_llm(
         uri,
         body_bytes.len()
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] CouchDB {} {} ({} bytes)",
+    Log::new(Some(&status_tx)).debug(format!(
+        "CouchDB {} {} ({} bytes)",
         method,
         path,
         body_bytes.len()
@@ -255,8 +252,7 @@ async fn handle_couchdb_request_with_llm(
     let (operation, database, doc_id) = detect_couchdb_operation(&method, &path);
 
     if !body_str.is_empty() {
-        trace!("CouchDB request body: {}", body_str);
-        let _ = status_tx.send(format!("[TRACE] CouchDB request: {}", body_str));
+        Log::new(Some(&status_tx)).trace(format!("CouchDB request body: {}", body_str));
     }
 
     // Create CouchDB request event
@@ -300,10 +296,9 @@ async fn handle_couchdb_request_with_llm(
                                 data.get("www_authenticate").and_then(|v| v.as_str());
 
                             debug!("CouchDB response: status={}", status);
-                            let _ =
-                                status_tx.send(format!("[DEBUG] CouchDB → {} response", status));
-                            trace!("CouchDB response body: {}", body);
-                            let _ = status_tx.send(format!("[TRACE] CouchDB response: {}", body));
+                            let log = Log::new(Some(&status_tx));
+                            log.debug(format!("CouchDB → {} response", status));
+                            log.trace(format!("CouchDB response body: {}", body));
 
                             let mut builder = couchdb_response_builder(status);
 

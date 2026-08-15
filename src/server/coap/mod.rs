@@ -13,11 +13,12 @@ use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -43,8 +44,7 @@ impl CoapServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("CoAP server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] CoAP server listening on {local_addr}"));
+        Log::new(Some(&status_tx)).info(format!("CoAP server listening on {local_addr}"));
 
         let protocol = Arc::new(CoapProtocol::new());
         // Message ids for Non-confirmable replies, which do not reuse the request's.
@@ -52,8 +52,8 @@ impl CoapServer {
 
         let task_registrar = app_state.clone();
         let recv_handle = tokio::spawn(async move {
-            info!("CoAP receive loop started on {}", local_addr);
-            let _ = status_tx.send(format!("[INFO] CoAP receive loop started on {local_addr}"));
+            Log::new(Some(&status_tx))
+                .info(format!("CoAP receive loop started on {local_addr}"));
 
             // RFC 7252 §4.6: without Block-wise transfer, a message has to fit one
             // datagram; 1500 covers a full Ethernet MTU, 2048 leaves headroom.
@@ -432,21 +432,14 @@ impl CoapServer {
             )
             .await;
 
-        debug!(
-            "CoAP sent {} {} ({} bytes) to {}",
-            message.mtype.as_str(),
-            codec::code_to_string(message.code),
-            bytes.len(),
-            peer_addr
-        );
-        let _ = status_tx.send(format!(
-            "[DEBUG] CoAP sent {} {} ({} bytes) to {peer_addr}",
+        let log = Log::new(Some(&status_tx));
+        log.debug(format!(
+            "CoAP sent {} {} ({} bytes) to {peer_addr}",
             message.mtype.as_str(),
             codec::code_to_string(message.code),
             bytes.len()
         ));
-        trace!("CoAP sent (hex): {}", hex::encode(&bytes));
-        let _ = status_tx.send(format!("[TRACE] CoAP sent (hex): {}", hex::encode(&bytes)));
+        log.trace(format!("CoAP sent (hex): {}", hex::encode(&bytes)));
         let _ = status_tx.send(format!("→ CoAP response to {peer_addr}"));
     }
 }

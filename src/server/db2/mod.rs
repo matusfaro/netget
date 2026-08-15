@@ -22,11 +22,12 @@ use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::db2::actions::{Db2Protocol, DB2_CONNECT_EVENT, DB2_QUERY_EVENT};
@@ -49,8 +50,7 @@ impl Db2Server {
         let listener = TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        info!("Db2 server listening on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] Db2 server listening on {}", actual_addr));
+        Log::new(Some(&status_tx)).info(format!("Db2 server listening on {}", actual_addr));
 
         let task_registrar = app_state.clone();
         let accept_handle = tokio::spawn(async move {
