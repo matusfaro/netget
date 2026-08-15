@@ -15,14 +15,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::error;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::RtpProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_error, console_trace};
 use actions::{RTCP_RECEIVED_EVENT, RTP_RECEIVED_EVENT};
 use media::{AudioCodec, RtpPacketizer};
 
@@ -41,8 +41,7 @@ impl RtpServer {
     ) -> Result<SocketAddr> {
         let socket = Arc::new(UdpSocket::bind(listen_addr).await?);
         let local_addr = socket.local_addr()?;
-        info!("RTP server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] RTP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("RTP server listening on {}", local_addr));
 
         let protocol = Arc::new(RtpProtocol::new());
         let task_registrar = app_state.clone();
@@ -102,7 +101,7 @@ impl RtpServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "RTP recv error: {}", e);
+                        Log::new(Some(&status_tx)).error(format!("RTP recv error: {}", e));
                     }
                 }
             }
@@ -146,28 +145,18 @@ impl RtpServer {
             let parsed = match media::parse_rtp(data) {
                 Some(p) => p,
                 None => {
-                    warn!(
+                    Log::new(Some(status_tx)).warn(format!(
                         "RTP unparseable datagram from {} ({} bytes)",
                         peer_addr,
                         data.len()
-                    );
-                    let _ = status_tx.send(format!(
-                        "[WARN] RTP unparseable {}-byte datagram from {}",
-                        data.len(),
-                        peer_addr
                     ));
                     return;
                 }
             };
-            console_trace!(
-                status_tx,
+            Log::new(Some(status_tx)).trace(format!(
                 "RTP in: pt={} seq={} ts={} ssrc={:08x} len={}",
-                parsed.payload_type,
-                parsed.sequence,
-                parsed.timestamp,
-                parsed.ssrc,
-                parsed.payload_len
-            );
+                parsed.payload_type, parsed.sequence, parsed.timestamp, parsed.ssrc, parsed.payload_len
+            ));
             let mut d = base;
             d["payload_type"] = serde_json::json!(parsed.payload_type);
             d["sequence"] = serde_json::json!(parsed.sequence);
@@ -194,9 +183,8 @@ impl RtpServer {
                 // Fail closed: RTP has no error frame to send, so we emit nothing on the wire and
                 // record the failure on both channels rather than falling through to some default
                 // stream (which would fabricate media the model never authorized).
-                error!("RTP LLM error for {}: {}", peer_addr, e);
-                let _ = status_tx.send(format!(
-                    "[ERROR] RTP LLM failure for {}; no media sent (fail-closed): {}",
+                Log::new(Some(status_tx)).error(format!(
+                    "RTP LLM failure for {}; no media sent (fail-closed): {}",
                     peer_addr, e
                 ));
             }
@@ -242,14 +230,14 @@ impl RtpServer {
         {
             Ok(c) => c,
             Err(e) => {
-                let _ = status_tx.send(format!("[WARN] RTP send_rtp_audio: {}", e));
+                Log::new(Some(status_tx)).warn(format!("RTP send_rtp_audio: {}", e));
                 return;
             }
         };
         let content = match media::parse_audio_content(action) {
             Ok(c) => c,
             Err(e) => {
-                let _ = status_tx.send(format!("[WARN] RTP send_rtp_audio content: {}", e));
+                Log::new(Some(status_tx)).warn(format!("RTP send_rtp_audio content: {}", e));
                 return;
             }
         };
@@ -260,7 +248,7 @@ impl RtpServer {
         let payload = match media::synthesize(codec, &content, duration_ms) {
             Ok(p) => p,
             Err(e) => {
-                let _ = status_tx.send(format!("[WARN] RTP synthesis: {}", e));
+                Log::new(Some(status_tx)).warn(format!("RTP synthesis: {}", e));
                 return;
             }
         };
@@ -309,19 +297,14 @@ impl RtpServer {
                 }
             })
             .await;
-        debug!(
+        // FileOnly: the send_rtp_audio action's own log_template already reports
+        // "-> RTP {content} {payload_type} {duration_ms}ms" to the TUI at INFO.
+        Log::new(Some(status_tx)).debug(format!(
             "RTP sent {} {} packet(s) ({} bytes) to {}",
             sent,
             codec.rtpmap_name(),
             bytes,
             peer_addr
-        );
-        let _ = status_tx.send(format!(
-            "→ RTP {} {} packet(s) to {} ({} bytes)",
-            sent,
-            codec.rtpmap_name(),
-            peer_addr,
-            bytes
         ));
     }
 
@@ -351,10 +334,12 @@ impl RtpServer {
         let sr = media::build_rtcp_sender_report(ssrc, rtp_ts, packet_count, octet_count);
         match socket.send_to(&sr, peer_addr).await {
             Ok(w) => {
-                let _ = status_tx.send(format!("→ RTCP SR to {} ({} bytes)", peer_addr, w));
+                // FileOnly: the send_rtcp_sender_report action's own log_template already
+                // reports "-> RTCP SR" to the TUI at INFO.
+                Log::new(Some(status_tx)).debug(format!("RTCP SR to {} ({} bytes)", peer_addr, w));
             }
             Err(e) => {
-                let _ = status_tx.send(format!("[ERROR] RTCP send failed: {}", e));
+                Log::new(Some(status_tx)).error(format!("RTCP send failed: {}", e));
             }
         }
     }

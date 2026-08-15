@@ -21,7 +21,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::{debug, error, info};
+use tracing::{debug, error};
+
+use crate::logging::emit::Log;
 
 /// RSS server - generates feeds dynamically via LLM
 pub struct RssServer;
@@ -42,10 +44,7 @@ impl RssServer {
             .local_addr()
             .context("Failed to get RSS server local address")?;
 
-        info!("RSS server listening on {}", local_addr);
-        status_tx
-            .send(format!("[RSS] Server listening on {}", local_addr))
-            .ok();
+        Log::new(Some(&status_tx)).info(format!("RSS server listening on {}", local_addr));
 
         let llm_client = Arc::new(llm_client);
         let protocol = Arc::new(RssProtocol::new());
@@ -114,10 +113,9 @@ impl RssServer {
         let path = uri.path().to_string();
         let headers_map = req.headers().clone();
 
-        debug!("RSS request: {} {}", method, path);
-        status_tx
-            .send(format!("[RSS] Request: {} {}", method, path))
-            .ok();
+        // FileOnly: the rss_feed_requested event's own log_template already reports the
+        // request to the TUI at INFO.
+        Log::new(Some(&status_tx)).debug(format!("RSS request: {} {}", method, path));
 
         // Only support GET requests
         if method != hyper::Method::GET {
@@ -144,10 +142,7 @@ impl RssServer {
             }),
         );
 
-        info!("RSS calling LLM for feed: {}", path);
-        status_tx
-            .send(format!("[RSS] Calling LLM for feed: {}", path))
-            .ok();
+        Log::new(Some(&status_tx)).debug(format!("RSS calling LLM for feed: {}", path));
 
         // Call LLM to generate RSS feed
         match call_llm(
@@ -162,9 +157,9 @@ impl RssServer {
         {
             Ok(execution_result) => {
                 // Log messages
+                let log = Log::new(Some(&status_tx));
                 for message in &execution_result.messages {
-                    info!("{}", message);
-                    status_tx.send(format!("[INFO] {}", message)).ok();
+                    log.info(message);
                 }
 
                 // Process protocol results
@@ -181,18 +176,14 @@ impl RssServer {
                                 match rss_xml {
                                     Ok(xml) => {
                                         let xml_bytes = xml.into_bytes();
-                                        info!(
+                                        // FileOnly: the generate_rss_feed action's own
+                                        // log_template already reports "-> RSS feed: {title}"
+                                        // to the TUI at INFO.
+                                        Log::new(Some(&status_tx)).debug(format!(
                                             "RSS feed generated: {} ({} bytes)",
                                             path,
                                             xml_bytes.len()
-                                        );
-                                        status_tx
-                                            .send(format!(
-                                                "[RSS] Generated feed: {} ({} bytes)",
-                                                path,
-                                                xml_bytes.len()
-                                            ))
-                                            .ok();
+                                        ));
 
                                         return Ok(Response::builder()
                                             .status(StatusCode::OK)
@@ -204,13 +195,10 @@ impl RssServer {
                                             .unwrap());
                                     }
                                     Err(e) => {
-                                        error!("Failed to build RSS feed: {}", e);
-                                        status_tx
-                                            .send(format!(
-                                                "[ERROR] Failed to build RSS feed: {}",
-                                                e
-                                            ))
-                                            .ok();
+                                        // Non-fatal: falls through to the 404 fallback below
+                                        // and the HTTP connection continues.
+                                        Log::new(Some(&status_tx))
+                                            .warn(format!("Failed to build RSS feed: {}", e));
                                     }
                                 }
                             }
@@ -226,8 +214,9 @@ impl RssServer {
                     .unwrap())
             }
             Err(e) => {
-                error!("LLM error for RSS request: {}", e);
-                status_tx.send(format!("[ERROR] LLM error: {}", e)).ok();
+                // Non-fatal: a wire fallback (500 response) is still delivered and the
+                // HTTP connection continues.
+                Log::new(Some(&status_tx)).warn(format!("LLM error for RSS request: {}", e));
 
                 Ok(Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
