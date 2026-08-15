@@ -15,6 +15,7 @@ use crate::client::stun::actions::{
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -61,8 +62,8 @@ impl StunClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] STUN client {} ready for {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "STUN client {} ready for {}",
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -172,11 +173,11 @@ impl StunClient {
                 }
             }
             crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                info!("STUN client {} disconnecting", client_id);
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
-                let _ = status_tx.send(format!("[CLIENT] STUN client {} disconnected", client_id));
+                Log::new(Some(&status_tx))
+                    .info(format!("STUN client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             _ => {}
@@ -286,8 +287,10 @@ impl StunClient {
                 Ok(())
             }
             Err(e) => {
-                error!("STUN client {} binding request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] STUN binding request failed: {}", e));
+                Log::new(Some(&status_tx)).error(format!(
+                    "STUN client {} binding request failed: {}",
+                    client_id, e
+                ));
                 Err(e.into())
             }
         }
