@@ -16,6 +16,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::IsisProtocol;
 use crate::state::app_state::AppState;
@@ -107,12 +108,8 @@ impl IsisServer {
                 .get_optional_string("level")?
                 .unwrap_or_else(|| "level-2".to_string());
 
-            info!(
+            Log::new(Some(&status_tx)).info(format!(
                 "IS-IS configured: system_id={}, area={}, level={}",
-                sys_id, area, lvl
-            );
-            let _ = status_tx.send(format!(
-                "[INFO] IS-IS configured: system_id={}, area={}, level={}",
                 sys_id, area, lvl
             ));
             (sys_id, area, lvl)
@@ -281,8 +278,8 @@ impl IsisServer {
                                data.len(),
                                src_mac[0], src_mac[1], src_mac[2],
                                src_mac[3], src_mac[4], src_mac[5]);
-                        let _ =
-                            status_tx.send(format!("[DEBUG] IS-IS received {} bytes", data.len()));
+                        Log::new(Some(&status_tx))
+                            .debug(format!("IS-IS received {} bytes", data.len()));
 
                         // TRACE: Log full payload
                         let hex_str = hex::encode(&data);
@@ -318,8 +315,8 @@ impl IsisServer {
                             .await
                             {
                                 error!("IS-IS PDU handling error: {}", e);
-                                let _ =
-                                    status_clone.send(format!("[ERROR] IS-IS PDU error: {}", e));
+                                Log::new(Some(&status_clone))
+                                    .error(format!("IS-IS PDU error: {}", e));
                             }
                         });
                     }
@@ -490,8 +487,7 @@ impl IsisServer {
                 .await?;
             }
             ISIS_LSP_L1 | ISIS_LSP_L2 => {
-                info!("IS-IS LSP received (not yet handled)");
-                let _ = status_tx.send("[INFO] IS-IS LSP received".to_string());
+                Log::new(Some(status_tx)).info("IS-IS LSP received (not yet handled)");
             }
             ISIS_CSNP_L1 | ISIS_CSNP_L2 => {
                 info!("IS-IS CSNP received (not yet handled)");
@@ -616,8 +612,7 @@ impl IsisServer {
             return Ok(());
         }
 
-        debug!("IS-IS calling LLM for Hello");
-        let _ = status_tx.send("[DEBUG] IS-IS calling LLM for Hello".to_string());
+        Log::new(Some(status_tx)).debug("IS-IS calling LLM for Hello");
 
         // Call LLM to decide response
         match call_llm(
