@@ -15,10 +15,10 @@ use crate::client::openidconnect::actions::{
     OIDC_CLIENT_DISCOVERED_EVENT, OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
     OIDC_CLIENT_USERINFO_RECEIVED_EVENT,
 };
-use crate::console_error;
 use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -59,8 +59,8 @@ impl OpenIdConnectClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] OpenID Connect client {} ready for {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "OpenID Connect client {} ready for {}",
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -105,7 +105,8 @@ impl OpenIdConnectClient {
             )
             .await
             {
-                console_error!(status_tx, "Failed to discover OIDC configuration: {}", e);
+                Log::new(Some(&status_tx))
+                    .error(format!("Failed to discover OIDC configuration: {}", e));
             }
         }
 
@@ -133,8 +134,8 @@ impl OpenIdConnectClient {
                 .await
                 .context("Failed to discover OIDC provider metadata")?;
 
-        let _ = status_tx.send(format!(
-            "[CLIENT] Discovered OIDC provider: {}",
+        Log::new(Some(status_tx)).info(format!(
+            "Discovered OIDC provider: {}",
             issuer_url.as_str()
         ));
 
@@ -204,8 +205,8 @@ impl OpenIdConnectClient {
                     )
                     .await
                     {
-                        error!("Failed to execute OIDC action: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] OIDC action failed: {}", e));
+                        Log::new(Some(status_tx))
+                            .error(format!("Failed to execute OIDC action: {}", e));
                     }
                 }
             }
@@ -291,8 +292,8 @@ impl OpenIdConnectClient {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
     ) -> Result<()> {
-        let _ = status_tx.send(format!(
-            "[CLIENT] Starting device code flow for client {}",
+        Log::new(Some(status_tx)).info(format!(
+            "Starting device code flow for client {}",
             client_id
         ));
 
@@ -329,8 +330,8 @@ impl OpenIdConnectClient {
 
         // Construct device authorization endpoint URL (typically /device/code or /device/authorize)
         let device_auth_url = format!("{}/device/code", issuer_url.as_str().trim_end_matches('/'));
-        let _ = status_tx.send(format!(
-            "[CLIENT] Device authorization endpoint: {}",
+        Log::new(Some(status_tx)).info(format!(
+            "Device authorization endpoint: {}",
             device_auth_url
         ));
 
@@ -401,20 +402,18 @@ impl OpenIdConnectClient {
             .unwrap_or(300);
 
         // Display device code and verification URL to user
+        let log = Log::new(Some(status_tx));
         let _ = status_tx.send("========================================".to_string());
-        let _ = status_tx.send("[CLIENT] Device Code Flow - User Action Required".to_string());
+        log.info("Device Code Flow - User Action Required".to_string());
         let _ = status_tx.send("========================================".to_string());
-        let _ = status_tx.send("[CLIENT] 1. Open this URL in your browser:".to_string());
-        let _ = status_tx.send(format!("[CLIENT]    {}", verification_uri));
+        log.info("1. Open this URL in your browser:".to_string());
+        log.info(format!("   {}", verification_uri));
         if let Some(complete_uri) = verification_uri_complete {
-            let _ = status_tx.send(format!(
-                "[CLIENT]    Or use this direct link: {}",
-                complete_uri
-            ));
+            log.info(format!("   Or use this direct link: {}", complete_uri));
         }
-        let _ = status_tx.send(format!("[CLIENT] 2. Enter this code: {}", user_code));
+        log.info(format!("2. Enter this code: {}", user_code));
         let _ = status_tx.send("========================================".to_string());
-        let _ = status_tx.send("[CLIENT] Waiting for authorization...".to_string());
+        log.info("Waiting for authorization...".to_string());
 
         // Get token endpoint
         let token_endpoint = provider_metadata
@@ -439,12 +438,12 @@ impl OpenIdConnectClient {
             let mut poll_count = 0;
             let interval_duration = std::time::Duration::from_secs(interval);
             let expires_duration = std::time::Duration::from_secs(expires_in);
+            let log = Log::new(Some(&status_tx_clone));
 
             loop {
                 // Check if expired
                 if start_time.elapsed() > expires_duration {
-                    let _ = status_tx_clone
-                        .send("[ERROR] Device code expired. Please try again.".to_string());
+                    log.error("Device code expired. Please try again.".to_string());
                     break;
                 }
 
@@ -452,8 +451,8 @@ impl OpenIdConnectClient {
                 tokio::time::sleep(interval_duration).await;
                 poll_count += 1;
 
-                let _ = status_tx_clone.send(format!(
-                    "[CLIENT] Polling for authorization (attempt {})...",
+                log.info(format!(
+                    "Polling for authorization (attempt {})...",
                     poll_count
                 ));
 
@@ -481,9 +480,8 @@ impl OpenIdConnectClient {
                             // Success - parse tokens
                             match response.json::<serde_json::Value>().await {
                                 Ok(token_json) => {
-                                    let _ = status_tx_clone.send(
-                                        "[CLIENT] Authorization successful! Received tokens."
-                                            .to_string(),
+                                    log.info(
+                                        "Authorization successful! Received tokens.".to_string(),
                                     );
 
                                     // Convert JSON to CoreTokenResponse manually
@@ -497,17 +495,12 @@ impl OpenIdConnectClient {
                                     )
                                     .await
                                     {
-                                        error!("Failed to store tokens: {}", e);
-                                        let _ = status_tx_clone
-                                            .send(format!("[ERROR] Failed to store tokens: {}", e));
+                                        log.error(format!("Failed to store tokens: {}", e));
                                     }
                                     break;
                                 }
                                 Err(e) => {
-                                    let _ = status_tx_clone.send(format!(
-                                        "[ERROR] Failed to parse token response: {}",
-                                        e
-                                    ));
+                                    log.error(format!("Failed to parse token response: {}", e));
                                     break;
                                 }
                             }
@@ -527,26 +520,21 @@ impl OpenIdConnectClient {
                                         }
                                         "slow_down" => {
                                             // Slow down polling
-                                            let _ = status_tx_clone.send(
-                                                "[CLIENT] Slowing down polling rate...".to_string(),
-                                            );
+                                            log.info("Slowing down polling rate...".to_string());
                                             tokio::time::sleep(interval_duration).await;
                                             continue;
                                         }
                                         "expired_token" => {
-                                            let _ = status_tx_clone
-                                                .send("[ERROR] Device code expired.".to_string());
+                                            log.error("Device code expired.".to_string());
                                             break;
                                         }
                                         "access_denied" => {
-                                            let _ = status_tx_clone.send(
-                                                "[ERROR] User denied authorization.".to_string(),
-                                            );
+                                            log.error("User denied authorization.".to_string());
                                             break;
                                         }
                                         _ => {
-                                            let _ = status_tx_clone.send(format!(
-                                                "[ERROR] Authorization error: {}",
+                                            log.error(format!(
+                                                "Authorization error: {}",
                                                 error_code
                                             ));
                                             break;
@@ -554,15 +542,14 @@ impl OpenIdConnectClient {
                                     }
                                 }
                                 Err(_) => {
-                                    let _ = status_tx_clone
-                                        .send("[ERROR] Failed to parse error response".to_string());
+                                    log.error("Failed to parse error response".to_string());
                                     break;
                                 }
                             }
                         }
                     }
                     Err(e) => {
-                        let _ = status_tx_clone.send(format!("[ERROR] Polling failed: {}", e));
+                        log.error(format!("Polling failed: {}", e));
                         break;
                     }
                 }
@@ -602,8 +589,8 @@ impl OpenIdConnectClient {
             .and_then(|v| v.as_str())
             .unwrap_or("Bearer");
 
-        let _ = status_tx.send(format!(
-            "[CLIENT] Received tokens (expires_in: {:?}s)",
+        Log::new(Some(status_tx)).info(format!(
+            "Received tokens (expires_in: {:?}s)",
             expires_in
         ));
 
@@ -701,8 +688,8 @@ impl OpenIdConnectClient {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         use tokio::net::TcpListener;
 
-        let _ = status_tx.send(format!(
-            "[CLIENT] Starting authorization code flow for client {}",
+        Log::new(Some(status_tx)).info(format!(
+            "Starting authorization code flow for client {}",
             client_id
         ));
 
@@ -764,19 +751,19 @@ impl OpenIdConnectClient {
         );
 
         // Display authorization URL
+        let log = Log::new(Some(status_tx));
         let _ = status_tx.send("========================================".to_string());
-        let _ =
-            status_tx.send("[CLIENT] Authorization Code Flow - User Action Required".to_string());
+        log.info("Authorization Code Flow - User Action Required".to_string());
         let _ = status_tx.send("========================================".to_string());
-        let _ = status_tx.send("[CLIENT] 1. Open this URL in your browser:".to_string());
-        let _ = status_tx.send(format!("[CLIENT]    {}", auth_url));
-        let _ = status_tx.send(format!(
-            "[CLIENT] 2. After authorization, the browser will redirect to localhost:{}",
+        log.info("1. Open this URL in your browser:".to_string());
+        log.info(format!("   {}", auth_url));
+        log.info(format!(
+            "2. After authorization, the browser will redirect to localhost:{}",
             callback_port
         ));
         let _ = status_tx.send("========================================".to_string());
-        let _ = status_tx.send(format!(
-            "[CLIENT] Starting local callback server on port {}...",
+        log.info(format!(
+            "Starting local callback server on port {}...",
             callback_port
         ));
 
@@ -788,11 +775,11 @@ impl OpenIdConnectClient {
                 callback_port
             ))?;
 
-        let _ = status_tx.send(format!(
-            "[CLIENT] Callback server listening on http://127.0.0.1:{}/callback",
+        log.info(format!(
+            "Callback server listening on http://127.0.0.1:{}/callback",
             callback_port
         ));
-        let _ = status_tx.send("[CLIENT] Waiting for authorization...".to_string());
+        log.info("Waiting for authorization...".to_string());
 
         // Get token endpoint
         let token_endpoint = provider_metadata
@@ -812,11 +799,11 @@ impl OpenIdConnectClient {
         // dropping a JoinHandle only detaches it in Tokio.
         let task_registrar = app_state.clone();
         let task_handle = tokio::spawn(async move {
+            let log = Log::new(Some(&status_tx_clone));
             // Accept one connection
             match listener.accept().await {
                 Ok((mut socket, _addr)) => {
-                    let _ =
-                        status_tx_clone.send("[CLIENT] Received callback request...".to_string());
+                    log.info("Received callback request...".to_string());
 
                     // Read HTTP request
                     let mut buffer = vec![0u8; 4096];
@@ -859,8 +846,8 @@ impl OpenIdConnectClient {
 
                                         // Process authorization code
                                         if let Some(error_msg) = error {
-                                            let _ = status_tx_clone.send(format!(
-                                                "[ERROR] Authorization failed: {}",
+                                            log.error(format!(
+                                                "Authorization failed: {}",
                                                 error_msg
                                             ));
                                             return;
@@ -871,14 +858,14 @@ impl OpenIdConnectClient {
                                             if returned_state.as_deref()
                                                 != Some(state_clone.as_str())
                                             {
-                                                let _ = status_tx_clone.send(
-                                                    "[ERROR] State mismatch - possible CSRF attack"
+                                                log.error(
+                                                    "State mismatch - possible CSRF attack"
                                                         .to_string(),
                                                 );
                                                 return;
                                             }
 
-                                            let _ = status_tx_clone.send("[CLIENT] Authorization code received, exchanging for tokens...".to_string());
+                                            log.info("Authorization code received, exchanging for tokens...".to_string());
 
                                             // Exchange authorization code for tokens
                                             let mut token_params = vec![
@@ -907,7 +894,7 @@ impl OpenIdConnectClient {
                                                             .await
                                                         {
                                                             Ok(token_json) => {
-                                                                let _ = status_tx_clone.send("[CLIENT] Successfully exchanged code for tokens!".to_string());
+                                                                log.info("Successfully exchanged code for tokens!".to_string());
 
                                                                 if let Err(e) =
                                                                     Self::store_tokens_from_json(
@@ -920,12 +907,11 @@ impl OpenIdConnectClient {
                                                                     )
                                                                     .await
                                                                 {
-                                                                    error!("Failed to store tokens: {}", e);
-                                                                    let _ = status_tx_clone.send(format!("[ERROR] Failed to store tokens: {}", e));
+                                                                    log.error(format!("Failed to store tokens: {}", e));
                                                                 }
                                                             }
                                                             Err(e) => {
-                                                                let _ = status_tx_clone.send(format!("[ERROR] Failed to parse token response: {}", e));
+                                                                log.error(format!("Failed to parse token response: {}", e));
                                                             }
                                                         }
                                                     } else {
@@ -933,15 +919,15 @@ impl OpenIdConnectClient {
                                                             response.text().await.unwrap_or_else(
                                                                 |_| "Unknown error".to_string(),
                                                             );
-                                                        let _ = status_tx_clone.send(format!(
-                                                            "[ERROR] Token exchange failed: {}",
+                                                        log.error(format!(
+                                                            "Token exchange failed: {}",
                                                             error_text
                                                         ));
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    let _ = status_tx_clone.send(format!(
-                                                        "[ERROR] Failed to exchange code: {}",
+                                                    log.error(format!(
+                                                        "Failed to exchange code: {}",
                                                         e
                                                     ));
                                                 }
@@ -952,14 +938,12 @@ impl OpenIdConnectClient {
                             }
                         }
                         Err(e) => {
-                            let _ = status_tx_clone
-                                .send(format!("[ERROR] Failed to read request: {}", e));
+                            log.error(format!("Failed to read request: {}", e));
                         }
                     }
                 }
                 Err(e) => {
-                    let _ =
-                        status_tx_clone.send(format!("[ERROR] Failed to accept connection: {}", e));
+                    log.error(format!("Failed to accept connection: {}", e));
                 }
             }
         });
@@ -992,8 +976,8 @@ impl OpenIdConnectClient {
             .and_then(|v| v.as_str())
             .unwrap_or("openid");
 
-        let _ = status_tx.send(format!(
-            "[CLIENT] Exchanging password for tokens (user: {})",
+        Log::new(Some(status_tx)).info(format!(
+            "Exchanging password for tokens (user: {})",
             username
         ));
 
@@ -1077,8 +1061,8 @@ impl OpenIdConnectClient {
     ) -> Result<()> {
         let scopes = data.get("scopes").and_then(|v| v.as_str()).unwrap_or("");
 
-        let _ =
-            status_tx.send("[CLIENT] Exchanging client credentials for access token".to_string());
+        Log::new(Some(status_tx))
+            .info("Exchanging client credentials for access token".to_string());
 
         // Get client config and provider metadata
         let (oidc_client_id, oidc_client_secret, provider_url) = app_state
@@ -1152,7 +1136,7 @@ impl OpenIdConnectClient {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
     ) -> Result<()> {
-        let _ = status_tx.send("[CLIENT] Refreshing access token".to_string());
+        Log::new(Some(status_tx)).info("Refreshing access token".to_string());
 
         // Get refresh token and client config
         let (refresh_token_str, oidc_client_id, oidc_client_secret, provider_url) = app_state
@@ -1228,7 +1212,7 @@ impl OpenIdConnectClient {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
     ) -> Result<()> {
-        let _ = status_tx.send("[CLIENT] Fetching UserInfo".to_string());
+        Log::new(Some(status_tx)).info("Fetching UserInfo".to_string());
 
         // Get access token and provider metadata
         let (access_token_str, oidc_client_id, oidc_client_secret, provider_url) = app_state
@@ -1283,8 +1267,8 @@ impl OpenIdConnectClient {
             .await
             .context("Failed to fetch UserInfo")?;
 
-        let _ = status_tx.send(format!(
-            "[CLIENT] Received UserInfo for subject: {:?}",
+        Log::new(Some(status_tx)).info(format!(
+            "Received UserInfo for subject: {:?}",
             userinfo.subject()
         ));
 
@@ -1349,8 +1333,8 @@ impl OpenIdConnectClient {
         let expires_in = token_response.expires_in().map(|d| d.as_secs());
         let token_type = token_response.token_type().as_ref();
 
-        let _ = status_tx.send(format!(
-            "[CLIENT] Received tokens (expires_in: {:?}s)",
+        Log::new(Some(status_tx)).info(format!(
+            "Received tokens (expires_in: {:?}s)",
             expires_in
         ));
 

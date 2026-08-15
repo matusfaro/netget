@@ -16,6 +16,7 @@ use crate::client::openapi::actions::{
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -107,8 +108,8 @@ impl OpenApiClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] OpenAPI client {} ready for {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "OpenAPI client {} ready for {}",
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -479,11 +480,10 @@ impl OpenApiClient {
                 Ok(())
             }
             Err(e) => {
-                error!(
+                Log::new(Some(&status_tx)).error(format!(
                     "OpenAPI client {} request failed for '{}': {}",
                     client_id, operation_id, e
-                );
-                let _ = status_tx.send(format!("[ERROR] OpenAPI request failed: {}", e));
+                ));
                 Err(e.into())
             }
         }
