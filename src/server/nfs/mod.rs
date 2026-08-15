@@ -21,7 +21,7 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 #[cfg(feature = "nfs")]
 use async_trait::async_trait;
@@ -32,6 +32,7 @@ use nfsserve::vfs::{DirEntry, NFSFileSystem, ReadDirResult};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::NfsProtocol;
 use crate::state::app_state::AppState;
@@ -52,8 +53,8 @@ impl NfsServer {
     ) -> Result<SocketAddr> {
         use nfsserve::tcp::{NFSTcp, NFSTcpListener};
 
-        info!("NFS server (LLM-controlled) starting on {}", listen_addr);
-        let _ = status_tx.send(format!("[INFO] NFS server starting on {}", listen_addr));
+        Log::new(Some(&status_tx))
+            .info(format!("NFS server (LLM-controlled) starting on {}", listen_addr));
 
         let protocol = Arc::new(NfsProtocol::new());
 
@@ -74,8 +75,7 @@ impl NfsServer {
         let actual_port = nfs_listener.get_listen_port();
         let actual_addr = SocketAddr::new(listen_addr.ip(), actual_port);
 
-        info!("NFS server listening on {}", actual_addr);
-        let _ = status_tx.send(format!("→ NFS server listening on {}", actual_addr));
+        Log::new(Some(&status_tx)).info(format!("NFS server listening on {}", actual_addr));
 
         // Spawn server handler
         let accept_handle = tokio::spawn(async move {
@@ -83,8 +83,7 @@ impl NfsServer {
 
             // Handle connections forever (nfsserve manages connections internally)
             if let Err(e) = nfs_listener.handle_forever().await {
-                error!("NFS server error: {}", e);
-                let _ = status_tx.send(format!("✗ NFS server error: {}", e));
+                Log::new(Some(&status_tx)).error(format!("NFS server error: {}", e));
             }
         });
 
@@ -105,7 +104,7 @@ impl NfsServer {
         status_tx: mpsc::UnboundedSender<String>,
         _server_id: crate::state::ServerId,
     ) -> Result<SocketAddr> {
-        let _ = status_tx.send("[ERROR] NFS feature not enabled at compile time".to_string());
+        Log::new(Some(&status_tx)).error("NFS feature not enabled at compile time");
         Err(anyhow::anyhow!("NFS feature not enabled"))
     }
 }
@@ -145,10 +144,8 @@ impl LlmNfsFileSystem {
         operation: &str,
         params: serde_json::Value,
     ) -> Result<Vec<serde_json::Value>> {
-        debug!("Consulting LLM for NFS {} operation", operation);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] NFS {}: {:?}", operation, params));
+        Log::new(Some(&self.status_tx))
+            .debug(format!("Consulting LLM for NFS {} operation: {:?}", operation, params));
 
         // Create NFS operation event
         let event = Event::new(
@@ -159,10 +156,7 @@ impl LlmNfsFileSystem {
             }),
         );
 
-        trace!("Calling LLM for NFS {} operation", operation);
-        let _ = self
-            .status_tx
-            .send(format!("[TRACE] Calling LLM for NFS {}", operation));
+        Log::new(Some(&self.status_tx)).trace(format!("Calling LLM for NFS {} operation", operation));
 
         // Call LLM with Event-based approach
         let execution_result = call_llm(
@@ -176,9 +170,9 @@ impl LlmNfsFileSystem {
         .await?;
 
         // Display messages from LLM
+        let log = Log::new(Some(&self.status_tx));
         for message in &execution_result.messages {
-            info!("{}", message);
-            let _ = self.status_tx.send(format!("[INFO] {}", message));
+            log.info(message);
         }
 
         debug!(
@@ -208,23 +202,16 @@ impl LlmNfsFileSystem {
     /// NFS3ERR_JUKEBOX (10008) - "resource temporarily unavailable, try again later" - which
     /// is the NFS equivalent of the 503 + `Retry-After` the HTTP server sends.
     fn llm_failure(&self, operation: &str, e: &anyhow::Error) -> nfsstat3 {
+        let log = Log::new(Some(&self.status_tx));
         if crate::llm::is_overload_error(e) {
-            error!(
-                "LLM overloaded for NFS {}: {} - answering NFS3ERR_JUKEBOX",
-                operation, e
-            );
-            let _ = self.status_tx.send(format!(
-                "[ERROR] NFS {}: LLM overloaded ({}) - answered NFS3ERR_JUKEBOX, client may retry",
+            log.error(format!(
+                "NFS {}: LLM overloaded ({}) - answered NFS3ERR_JUKEBOX, client may retry",
                 operation, e
             ));
             nfsstat3::NFS3ERR_JUKEBOX
         } else {
-            error!(
-                "LLM consultation failed for NFS {}: {} - answering NFS3ERR_SERVERFAULT",
-                operation, e
-            );
-            let _ = self.status_tx.send(format!(
-                "[ERROR] NFS {}: LLM call failed ({}) - answered NFS3ERR_SERVERFAULT",
+            log.error(format!(
+                "NFS {}: LLM call failed ({}) - answered NFS3ERR_SERVERFAULT",
                 operation, e
             ));
             nfsstat3::NFS3ERR_SERVERFAULT
@@ -238,12 +225,8 @@ impl LlmNfsFileSystem {
     /// NFS3ERR_ACCES, ...). Silence is not a no, and must not be reported to the client as
     /// one, so it lands on NFS3ERR_SERVERFAULT alongside a backend failure.
     fn llm_no_answer(&self, operation: &str, expected: &str) -> nfsstat3 {
-        error!(
-            "No valid {} action in LLM response for NFS {} - answering NFS3ERR_SERVERFAULT",
-            expected, operation
-        );
-        let _ = self.status_tx.send(format!(
-            "[ERROR] NFS {}: no {} action in LLM response - answered NFS3ERR_SERVERFAULT",
+        Log::new(Some(&self.status_tx)).error(format!(
+            "NFS {}: no {} action in LLM response - answered NFS3ERR_SERVERFAULT",
             operation, expected
         ));
         nfsstat3::NFS3ERR_SERVERFAULT

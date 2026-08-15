@@ -17,11 +17,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::error;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::named_pipe::actions::{NamedPipeProtocol, NAMED_PIPE_DATA_RECEIVED_EVENT};
 use crate::state::app_state::AppState;
@@ -164,13 +165,9 @@ impl NamedPipeServer {
         };
         let cleanup = FifoCleanup(created);
 
-        info!(
+        Log::new(Some(&status_tx)).info(format!(
             "Named pipe server reading FIFO {:?} (response FIFO: {:?})",
             pipe_path, response_pipe_path
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] Named pipe server reading FIFO {}",
-            pipe_path.to_string_lossy()
         ));
 
         let protocol = Arc::new(NamedPipeProtocol::new());
@@ -226,13 +223,9 @@ impl NamedPipeServer {
                     (hex::encode(data), "hex")
                 };
 
-                debug!(
+                Log::new(Some(&status_tx)).debug(format!(
                     "Named pipe {:?} received {} bytes ({})",
                     pipe_path, n, encoding
-                );
-                let _ = status_tx.send(format!(
-                    "[DEBUG] Named pipe received {} bytes ({})",
-                    n, encoding
                 ));
 
                 let event = Event::new(
@@ -265,9 +258,10 @@ impl NamedPipeServer {
                     Err(e) => {
                         // Fail closed: write nothing, report on both channels. A FIFO reader that
                         // gets no response is exactly how the other fixed protocols behave on an
-                        // LLM failure — better than emitting a dangerous default.
-                        error!("LLM error for named pipe {:?}: {}", pipe_path, e);
-                        let _ = status_tx.send(format!("[ERROR] Named pipe LLM error: {e}"));
+                        // LLM failure — better than emitting a dangerous default. Non-fatal: the
+                        // read loop continues to the next chunk.
+                        Log::new(Some(&status_tx))
+                            .warn(format!("Named pipe LLM error for {:?}: {}", pipe_path, e));
                     }
                 }
             }
@@ -283,30 +277,24 @@ impl NamedPipeServer {
         bytes: &[u8],
         status_tx: &mpsc::UnboundedSender<String>,
     ) {
+        let log = Log::new(Some(status_tx));
         match response_file {
             Some(f) => match f.write_all(bytes).and_then(|_| f.flush()) {
                 Ok(()) => {
-                    debug!("Named pipe wrote {} bytes to response FIFO", bytes.len());
-                    let _ = status_tx.send(format!(
-                        "→ Wrote {} bytes to named pipe response FIFO",
-                        bytes.len()
-                    ));
+                    // FileOnly: the write_named_pipe_data action's own log_template already
+                    // reports "-> FIFO {data_len}B" to the TUI at INFO.
+                    log.debug(format!("Named pipe wrote {} bytes to response FIFO", bytes.len()));
                 }
                 Err(e) => {
-                    error!("Named pipe response write error: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] Named pipe response write error: {e}"));
+                    log.error(format!("Named pipe response write error: {}", e));
                 }
             },
             None => {
-                warn!(
+                log.warn(format!(
                     "Named pipe: model produced {} bytes of output but no response_pipe_path was \
                      configured; dropping it",
                     bytes.len()
-                );
-                let _ = status_tx.send(
-                    "[WARN] Named pipe output dropped: no response_pipe_path configured"
-                        .to_string(),
-                );
+                ));
             }
         }
     }
