@@ -24,6 +24,7 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -148,8 +149,7 @@ impl ArpClient {
             let device = match Self::find_device(&interface_clone) {
                 Ok(d) => d,
                 Err(e) => {
-                    error!("Failed to find device: {}", e);
-                    let _ = status_tx_clone.send(format!("[ERROR] Failed to find device: {}", e));
+                    Log::new(Some(&status_tx_clone)).error(format!("Failed to find device: {}", e));
                     return;
                 }
             };
@@ -161,16 +161,16 @@ impl ArpClient {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    error!("Failed to open capture: {}", e);
-                    let _ = status_tx_clone.send(format!("[ERROR] Failed to open capture: {}", e));
+                    Log::new(Some(&status_tx_clone))
+                        .error(format!("Failed to open capture: {}", e));
                     return;
                 }
             };
 
             // Apply ARP filter to receiving capture
             if let Err(e) = cap_rx.filter("arp", true) {
-                error!("Failed to apply ARP filter: {}", e);
-                let _ = status_tx_clone.send(format!("[ERROR] Failed to apply ARP filter: {}", e));
+                Log::new(Some(&status_tx_clone))
+                    .error(format!("Failed to apply ARP filter: {}", e));
                 return;
             }
 
@@ -181,9 +181,8 @@ impl ArpClient {
             {
                 Ok(c) => c,
                 Err(e) => {
-                    error!("Failed to open capture for sending: {}", e);
-                    let _ = status_tx_clone
-                        .send(format!("[ERROR] Failed to open capture for sending: {}", e));
+                    Log::new(Some(&status_tx_clone))
+                        .error(format!("Failed to open capture for sending: {}", e));
                     return;
                 }
             };
@@ -240,17 +239,8 @@ impl ArpClient {
                         let target_ip = arp_packet.get_target_proto_addr();
 
                         // DEBUG: Log summary
-                        debug!(
+                        Log::new(Some(&status_tx_clone)).debug(format!(
                             "ARP client {} received {} from {} ({}) for {} ({})",
-                            client_id,
-                            operation_to_string(operation),
-                            sender_mac,
-                            sender_ip,
-                            target_mac,
-                            target_ip
-                        );
-                        let _ = status_tx_clone.send(format!(
-                            "[DEBUG] ARP client {} received {} from {} ({}) for {} ({})",
                             client_id,
                             operation_to_string(operation),
                             sender_mac,
@@ -390,9 +380,8 @@ impl ArpClient {
                         continue;
                     }
                     Err(e) => {
-                        error!("ARP client {} packet capture error: {}", client_id, e);
-                        let _ = status_tx_clone.send(format!(
-                            "[ERROR] ARP client {} packet capture error: {}",
+                        Log::new(Some(&status_tx_clone)).error(format!(
+                            "ARP client {} packet capture error: {}",
                             client_id, e
                         ));
                         break;

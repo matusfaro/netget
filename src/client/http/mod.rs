@@ -15,6 +15,7 @@ use crate::client::http::actions::{
 use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -322,8 +323,8 @@ impl HttpClient {
                 Ok(())
             }
             Err(e) => {
-                error!("HTTP client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] HTTP request failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("HTTP client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
         }

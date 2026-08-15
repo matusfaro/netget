@@ -14,6 +14,7 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -283,8 +284,8 @@ impl BitcoinClient {
                 Ok(())
             }
             Err(e) => {
-                error!("Bitcoin RPC client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Bitcoin RPC request failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("Bitcoin RPC client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
         }
