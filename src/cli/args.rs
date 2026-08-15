@@ -273,6 +273,14 @@ pub struct Args {
     )]
     pub llm_agent_timeout: u64,
 
+    /// Wall-clock bound (seconds) on a single LLM backend call
+    #[clap(
+        long = "llm-request-timeout",
+        value_name = "SECONDS",
+        help = "Wall-clock bound (seconds) on a single LLM backend call before it is treated as a transport failure and retried. Default: 120. Raise for slow local models whose responses to large prompts legitimately exceed two minutes."
+    )]
+    pub llm_request_timeout: Option<u64>,
+
     /// Path to embedded GGUF model file (enables embedded LLM inference)
     #[cfg(feature = "embedded-llm")]
     #[clap(
