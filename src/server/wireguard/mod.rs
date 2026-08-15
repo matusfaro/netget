@@ -43,6 +43,7 @@ pub mod actions;
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -155,9 +156,8 @@ impl WireguardServer {
         server_id: crate::state::ServerId,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<SocketAddr> {
-        info!("Starting WireGuard VPN server on {}", bind_addr);
-        let _ = status_tx.send(format!(
-            "[INFO] Starting WireGuard VPN server on {} (full VPN tunnel support)",
+        Log::new(Some(&status_tx)).info(format!(
+            "Starting WireGuard VPN server on {} (full VPN tunnel support)",
             bind_addr
         ));
 
@@ -168,8 +168,8 @@ impl WireguardServer {
         let private_key_str = private_key.to_string();
         let public_key_str = public_key.to_string();
 
-        info!("WireGuard server public key: {}", public_key_str);
-        let _ = status_tx.send(format!("[INFO] Server public key: {}", public_key_str));
+        Log::new(Some(&status_tx))
+            .info(format!("WireGuard server public key: {}", public_key_str));
 
         // Determine interface name based on OS
         let interface_name: String = if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {
@@ -184,8 +184,8 @@ impl WireguardServer {
             ));
         };
 
-        info!("Creating WireGuard interface: {}", interface_name);
-        let _ = status_tx.send(format!("[INFO] Creating interface: {}", interface_name));
+        Log::new(Some(&status_tx))
+            .info(format!("Creating WireGuard interface: {}", interface_name));
 
         // Create WGApi instance
         #[cfg(not(target_os = "macos"))]
@@ -201,8 +201,7 @@ impl WireguardServer {
             .create_interface()
             .context("Failed to create WireGuard interface")?;
 
-        info!("WireGuard interface created successfully");
-        let _ = status_tx.send("[INFO] Interface created successfully".to_string());
+        Log::new(Some(&status_tx)).info("WireGuard interface created successfully");
 
         // Configure interface
         let listen_port = bind_addr.port();
@@ -225,12 +224,9 @@ impl WireguardServer {
             .configure_interface(&interface_config, &[])
             .context("Failed to configure WireGuard interface")?;
 
-        info!("WireGuard interface configured on port {}", listen_port);
-        let _ = status_tx.send(format!(
-            "[INFO] Interface listening on UDP port {}",
-            listen_port
-        ));
-        let _ = status_tx.send(format!("[INFO] VPN subnet: 10.20.30.0/24"));
+        let log = Log::new(Some(&status_tx));
+        log.info(format!("Interface listening on UDP port {}", listen_port));
+        log.info("VPN subnet: 10.20.30.0/24");
 
         let actual_addr = SocketAddr::new(bind_addr.ip(), listen_port);
 
@@ -273,10 +269,10 @@ impl WireguardServer {
             .register_server_task(server_id, monitor_handle)
             .await;
 
-        info!("WireGuard VPN server ready on {}", actual_addr);
-        let _ = status_tx.send(format!("→ WireGuard VPN server ready on {}", actual_addr));
-        let _ = status_tx.send(format!(
-            "[INFO] Clients can connect using server public key: {}",
+        let log = Log::new(Some(&status_tx));
+        log.info(format!("WireGuard VPN server ready on {}", actual_addr));
+        log.info(format!(
+            "Clients can connect using server public key: {}",
             public_key_str
         ));
 
@@ -301,8 +297,8 @@ impl WireguardServer {
                 match wgapi.read_interface_data() {
                     Ok(data) => data,
                     Err(e) => {
-                        error!("Failed to read WireGuard interface data: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to read interface: {}", e));
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to read WireGuard interface data: {}", e));
                         continue;
                     }
                 }
@@ -482,15 +478,14 @@ impl WireguardServer {
         {
             Ok(r) => r,
             Err(e) => {
-                error!("WireGuard peer event handling failed: {}", e);
-                let _ = status_tx.send(format!("[ERROR] WireGuard peer event failed: {}", e));
+                Log::new(Some(status_tx))
+                    .error(format!("WireGuard peer event handling failed: {}", e));
                 return;
             }
         };
 
         for message in &result.messages {
-            info!("{}", message);
-            let _ = status_tx.send(format!("[INFO] {}", message));
+            Log::new(Some(status_tx)).info(message);
         }
 
         // Apply the decided actions to the live interface.
