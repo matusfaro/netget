@@ -52,11 +52,12 @@ use std::sync::{Arc, Mutex as StdMutex};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
@@ -100,12 +101,8 @@ impl UsbSmartCardServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        info!(
-            "USB smart card (CCID) reader listening on {} (card_type={})",
-            local_addr, card_type
-        );
-        let _ = status_tx.send(format!(
-            "[INFO] USB smart card reader listening on {local_addr} (card_type={card_type}) - \
+        Log::new(Some(&status_tx)).info(format!(
+            "USB smart card reader listening on {local_addr} (card_type={card_type}) - \
              attach with: sudo usbip attach -r {} -b 0-0-0",
             local_addr.ip()
         ));
@@ -149,16 +146,12 @@ impl UsbSmartCardServer {
                 Self::apply_card_config(execution.protocol_results, &card, None, &status_tx);
             }
             Err(e) => {
-                error!(
+                Log::new(Some(&status_tx)).error(format!(
                     "USB smart card startup configuration failed ({}); the reader is listening \
                      on {} with the default ATR {} and a card inserted",
                     e,
                     local_addr,
                     hex::encode_upper(DEFAULT_ATR)
-                );
-                let _ = status_tx.send(format!(
-                    "[ERROR] USB smart card startup configuration failed: {e}. The reader is up \
-                     with its default ATR; the model did not configure the card."
                 ));
             }
         }
@@ -181,9 +174,9 @@ impl UsbSmartCardServer {
                         // A persistent accept error (EMFILE, socket torn down) recurs
                         // immediately, so continuing spins a hot loop on an unbounded status
                         // channel. Give up the listener instead.
-                        error!("USB smart card accept failed, stopping accept loop: {}", e);
-                        let _ = status_tx.send(format!(
-                            "[ERROR] USB smart card accept failed: {e}; stopping"
+                        Log::new(Some(&status_tx)).error(format!(
+                            "USB smart card accept failed, stopping accept loop: {}",
+                            e
                         ));
                         break;
                     }
@@ -604,8 +597,7 @@ impl UsbSmartCardServer {
                     Ok(atr) => {
                         let atr_hex = hex::encode_upper(&atr);
                         lock_card(card).atr = atr;
-                        let _ = status_tx.send(format!("[INFO] USB smart card ATR set: {atr_hex}"));
-                        debug!("Virtual smart card ATR set to {}", atr_hex);
+                        Log::new(Some(status_tx)).info(format!("USB smart card ATR set: {atr_hex}"));
                     }
                     Err(e) => {
                         console_error!(status_tx, "USB smart card set_atr rejected: {}", e);
@@ -617,11 +609,10 @@ impl UsbSmartCardServer {
                         if let Some(handler) = ccid_handler {
                             with_ccid_handler(handler, |h| h.note_slot_change());
                         }
-                        let _ = status_tx.send(format!(
-                            "[INFO] USB smart card slot: card {}",
+                        Log::new(Some(status_tx)).info(format!(
+                            "USB smart card slot: card {}",
                             if present { "inserted" } else { "removed" }
                         ));
-                        debug!("Virtual smart card present={}", present);
                     }
                     None => {
                         console_error!(

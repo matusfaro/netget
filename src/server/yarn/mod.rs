@@ -28,10 +28,11 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{error, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::server::connection::ConnectionId;
 use crate::server::yarn::actions::YarnProtocol;
 use crate::state::app_state::AppState;
@@ -73,9 +74,10 @@ impl YarnServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("YARN connection {} from {}", connection_id, remote_addr);
-                        let _ =
-                            status_tx.send(format!("[INFO] YARN connection from {}", remote_addr));
+                        Log::new(Some(&status_tx)).info(format!(
+                            "YARN connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         use crate::state::server::{
                             ConnectionState as ServerConnectionState, ConnectionStatus,
@@ -138,8 +140,8 @@ impl YarnServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("[INFO] YARN connection {} closed", connection_id));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("YARN connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -183,8 +185,7 @@ async fn handle_yarn_request(
     let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
     let (operation, app_id, node_id) = detect_yarn_operation(&method, &path);
-    debug!("YARN {} {} op={}", method, path, operation);
-    let _ = status_tx.send(format!("[DEBUG] YARN {} {} op={}", method, path, operation));
+    Log::new(Some(&status_tx)).debug(format!("YARN {} {} op={}", method, path, operation));
     trace!("YARN request body: {}", body_str);
 
     // Mechanical endpoints answered without an LLM call.
@@ -237,7 +238,7 @@ async fn handle_yarn_request(
                             .get("location")
                             .and_then(|v| v.as_str())
                             .map(str::to_string);
-                        let _ = status_tx.send(format!("[DEBUG] YARN -> {}", status));
+                        Log::new(Some(&status_tx)).debug(format!("YARN -> {}", status));
                         trace!("YARN response body: {}", body);
                         return Ok(build_yarn_response_str(status, body, location));
                     }
@@ -246,9 +247,8 @@ async fn handle_yarn_request(
             // Fail-closed: the model answered but produced no YARN response. Do NOT fall
             // through to a success-shaped empty cluster — that is indistinguishable from a
             // real idle cluster and is the fail-open trap.
-            error!("YARN: LLM returned no yarn_response action; answering 500");
-            let _ = status_tx
-                .send("[ERROR] YARN: model produced no response action, answering 500".to_string());
+            Log::new(Some(&status_tx))
+                .error("YARN: LLM returned no yarn_response action; answering 500");
             Ok(build_yarn_response(
                 500,
                 yarn_remote_exception(
