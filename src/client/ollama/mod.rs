@@ -15,6 +15,7 @@ use crate::client::ollama::actions::{
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -49,8 +50,8 @@ impl OllamaClientImpl {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] Ollama client {} ready (endpoint: {})",
+        Log::new(Some(&status_tx)).info(format!(
+            "Ollama client {} ready (endpoint: {})",
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -218,8 +219,8 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                error!("Ollama client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Ollama request failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("Ollama client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
         }
@@ -335,8 +336,8 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                error!("Ollama client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Ollama request failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("Ollama client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
         }
@@ -444,8 +445,8 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                error!("Ollama client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Ollama request failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("Ollama client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
         }
@@ -563,11 +564,10 @@ impl OllamaClientImpl {
                 }
             }
             Err(e) => {
-                error!(
+                Log::new(Some(&status_tx)).error(format!(
                     "Ollama client {} embeddings request failed: {}",
                     client_id, e
-                );
-                let _ = status_tx.send(format!("[ERROR] Ollama embeddings request failed: {}", e));
+                ));
                 Err(e.into())
             }
         }

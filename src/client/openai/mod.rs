@@ -15,6 +15,7 @@ use crate::client::openai::actions::{
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -77,8 +78,8 @@ impl OpenAiClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] OpenAI client {} ready (endpoint: {})",
+        Log::new(Some(&status_tx)).info(format!(
+            "OpenAI client {} ready (endpoint: {})",
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -384,8 +385,8 @@ impl OpenAiClient {
                 Ok(())
             }
             Err(e) => {
-                error!("OpenAI client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] OpenAI request failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("OpenAI client {} request failed: {}", client_id, e));
 
                 // Send error event to LLM
                 if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -559,11 +560,10 @@ impl OpenAiClient {
                 Ok(())
             }
             Err(e) => {
-                error!(
+                Log::new(Some(&status_tx)).error(format!(
                     "OpenAI client {} embedding request failed: {}",
                     client_id, e
-                );
-                let _ = status_tx.send(format!("[ERROR] OpenAI embedding request failed: {}", e));
+                ));
                 Err(e.into())
             }
         }
