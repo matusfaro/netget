@@ -15,6 +15,7 @@ use crate::client::ipp::actions::IPP_CLIENT_CONNECTED_EVENT;
 use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -322,11 +323,10 @@ impl IppClient {
                 Ok(())
             }
             Err(e) => {
-                error!(
+                Log::new(Some(&status_tx)).error(format!(
                     "IPP client {} Get-Printer-Attributes failed: {}",
                     client_id, e
-                );
-                let _ = status_tx.send(format!("[ERROR] IPP Get-Printer-Attributes failed: {}", e));
+                ));
                 Err(e.into())
             }
         }
@@ -409,8 +409,8 @@ impl IppClient {
                 Ok(())
             }
             Err(e) => {
-                error!("IPP client {} Print-Job failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] IPP Print-Job failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("IPP client {} Print-Job failed: {}", client_id, e));
                 Err(e.into())
             }
         }
@@ -479,8 +479,10 @@ impl IppClient {
                 Ok(())
             }
             Err(e) => {
-                error!("IPP client {} Get-Job-Attributes failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] IPP Get-Job-Attributes failed: {}", e));
+                Log::new(Some(&status_tx)).error(format!(
+                    "IPP client {} Get-Job-Attributes failed: {}",
+                    client_id, e
+                ));
                 Err(e.into())
             }
         }
