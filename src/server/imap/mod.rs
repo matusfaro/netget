@@ -30,6 +30,8 @@ use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "imap")]
 use crate::llm::ActionResult;
 #[cfg(feature = "imap")]
+use crate::logging::emit::Log;
+#[cfg(feature = "imap")]
 use crate::protocol::Event;
 #[cfg(feature = "imap")]
 use crate::server::connection::ConnectionId;
@@ -63,7 +65,7 @@ impl ImapServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
         info!("IMAP server (action-based) listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] IMAP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("IMAP server listening on {}", local_addr));
 
         let protocol = Arc::new(ImapProtocol::new());
 
@@ -127,8 +129,8 @@ impl ImapServer {
                             // Handle IMAP session
                             if let Err(e) = session.handle().await {
                                 error!("IMAP session error for {}: {}", connection_id, e);
-                                let _ = status_clone.send(format!(
-                                    "[ERROR] IMAP session {} error: {}",
+                                Log::new(Some(&status_clone)).error(format!(
+                                    "IMAP session {} error: {}",
                                     connection_id, e
                                 ));
                             }
@@ -148,9 +150,8 @@ impl ImapServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept IMAP connection: {}", e);
-                        let _ = status_tx
-                            .send(format!("[ERROR] Failed to accept IMAP connection: {}", e));
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept IMAP connection: {}", e));
                         break;
                     }
                 }
@@ -192,8 +193,8 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                 "IMAP greeting handler failed on connection {}: {}",
                 self.connection_id, e
             );
-            let _ = self.status_tx.send(format!(
-                "[ERROR] IMAP connection {} refused with BYE [{}]: {}",
+            Log::new(Some(&self.status_tx)).error(format!(
+                "IMAP connection {} refused with BYE [{}]: {}",
                 self.connection_id, code, e
             ));
             let bye = format!("* BYE [{}] {}\r\n", code, detail);
@@ -218,9 +219,8 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                         self.connection_id,
                         line.trim()
                     );
-                    let _ = self
-                        .status_tx
-                        .send(format!("[TRACE] IMAP command: {}", line.trim()));
+                    Log::new(Some(&self.status_tx))
+                        .trace(format!("IMAP command: {}", line.trim()));
 
                     // Update bytes received
                     self.app_state
@@ -246,8 +246,8 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                             "Error handling IMAP command on connection {}: {}",
                             self.connection_id, e
                         );
-                        let _ = self.status_tx.send(format!(
-                            "[ERROR] IMAP connection {} refusing command with NO [{}]: {}",
+                        Log::new(Some(&self.status_tx)).error(format!(
+                            "IMAP connection {} refusing command with NO [{}]: {}",
                             self.connection_id, code, e
                         ));
 
@@ -538,9 +538,7 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
             .await;
 
         trace!("IMAP sent {} bytes to {}", data.len(), self.connection_id);
-        let _ = self
-            .status_tx
-            .send(format!("[TRACE] IMAP sent {} bytes", data.len()));
+        Log::new(Some(&self.status_tx)).trace(format!("IMAP sent {} bytes", data.len()));
 
         Ok(())
     }

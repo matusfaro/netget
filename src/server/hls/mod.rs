@@ -19,10 +19,11 @@ use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::HlsProtocol;
@@ -45,8 +46,7 @@ impl HlsServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        info!("HLS server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] HLS server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("HLS server listening on {}", local_addr));
 
         let protocol = Arc::new(HlsProtocol::new());
         let task_registrar = app_state.clone();
@@ -99,7 +99,8 @@ impl HlsServer {
                             )
                             .await
                             {
-                                let _ = stx.send(format!("[DEBUG] HLS connection ended: {}", e));
+                                Log::new(Some(&stx))
+                                    .debug(format!("HLS connection ended: {}", e));
                             }
                         });
                     }
@@ -187,8 +188,8 @@ impl HlsServer {
             Err(e) => {
                 // Fail closed: 503, no fabricated media.
                 error!("HLS LLM error for {}: {}", path, e);
-                let _ = status_tx.send(format!(
-                    "[ERROR] HLS 503 for {} (LLM failure, fail-closed): {}",
+                Log::new(Some(&status_tx)).error(format!(
+                    "HLS 503 for {} (LLM failure, fail-closed): {}",
                     path, e
                 ));
                 (503, "text/plain".to_string(), b"LLM unavailable".to_vec())
