@@ -18,11 +18,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::io::unix::AsyncFd;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info};
+use tracing::{error, info};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::pty::actions::{PtyProtocol, PTY_INPUT_RECEIVED_EVENT, PTY_OPENED_EVENT};
 use crate::state::app_state::AppState;
@@ -161,8 +162,8 @@ impl PtyServer {
         let async_master = AsyncFd::new(master_file)
             .context("Failed to register PTY master with the async runtime")?;
 
-        let _ = status_tx.send(format!(
-            "[INFO] PTY server ready, slave device {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "PTY server ready, slave device {}",
             slave_path.to_string_lossy()
         ));
 
@@ -233,8 +234,8 @@ impl PtyServer {
                     (hex::encode(data), "hex")
                 };
 
-                debug!("PTY received {} bytes of input ({})", n, encoding);
-                let _ = status_tx.send(format!("[DEBUG] PTY received {} bytes ({})", n, encoding));
+                Log::new(Some(&status_tx))
+                    .debug(format!("PTY received {} bytes of input ({})", n, encoding));
 
                 let event = Event::new(
                     &PTY_INPUT_RECEIVED_EVENT,
@@ -282,8 +283,7 @@ impl PtyServer {
             }
             Err(e) => {
                 // Fail closed: put nothing on the terminal, report on both channels.
-                error!("LLM error for PTY event: {}", e);
-                let _ = status_tx.send(format!("[ERROR] PTY LLM error: {e}"));
+                Log::new(Some(status_tx)).error(format!("PTY LLM error: {e}"));
             }
         }
     }
@@ -299,8 +299,7 @@ impl PtyServer {
             let mut guard = match async_master.writable().await {
                 Ok(g) => g,
                 Err(e) => {
-                    error!("PTY master writable() error: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] PTY write error: {e}"));
+                    Log::new(Some(status_tx)).error(format!("PTY write error: {e}"));
                     return;
                 }
             };
@@ -308,14 +307,14 @@ impl PtyServer {
                 Ok(Ok(0)) => break,
                 Ok(Ok(n)) => written += n,
                 Ok(Err(e)) => {
-                    error!("PTY master write error: {}", e);
-                    let _ = status_tx.send(format!("[ERROR] PTY write error: {e}"));
+                    Log::new(Some(status_tx)).error(format!("PTY write error: {e}"));
                     return;
                 }
                 Err(_would_block) => continue,
             }
         }
-        debug!("PTY wrote {} bytes to terminal", written);
-        let _ = status_tx.send(format!("→ Wrote {written} bytes to PTY terminal"));
+        // FileOnly: the write_pty_output action's own log_template already reports
+        // "-> PTY {data_len}B" to the TUI at INFO.
+        Log::new(Some(status_tx)).debug(format!("PTY wrote {} bytes to terminal", written));
     }
 }

@@ -21,7 +21,9 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
+
+use crate::logging::emit::Log;
 
 use actions::{
     RADIUS_ACCESS_REQUEST_EVENT, RADIUS_ACCOUNTING_REQUEST_EVENT, RADIUS_STATUS_SERVER_EVENT,
@@ -125,8 +127,7 @@ impl RadiusServer {
         );
         let local_addr = socket.local_addr()?;
 
-        info!("RADIUS server listening on {}", local_addr);
-        let _ = status_tx.send(format!("[INFO] RADIUS server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("RADIUS server listening on {}", local_addr));
 
         let task_registrar = state.clone();
         let accept_handle = tokio::spawn(async move {
@@ -138,8 +139,7 @@ impl RadiusServer {
                 let (n, peer_addr) = match socket.recv_from(&mut buffer).await {
                     Ok(pair) => pair,
                     Err(e) => {
-                        error!("RADIUS receive error: {}", e);
-                        let _ = status_tx.send(format!("✗ RADIUS receive error: {}", e));
+                        Log::new(Some(&status_tx)).error(format!("RADIUS receive error: {}", e));
                         break;
                     }
                 };
@@ -155,11 +155,8 @@ impl RadiusServer {
                 let request = match RadiusPacket::decode(&data) {
                     Ok(p) => p,
                     Err(e) => {
-                        warn!("RADIUS dropped datagram from {}: {}", peer_addr, e);
-                        let _ = status_tx.send(format!(
-                            "[WARN] RADIUS dropped packet from {}: {}",
-                            peer_addr, e
-                        ));
+                        Log::new(Some(&status_tx))
+                            .warn(format!("RADIUS dropped datagram from {}: {}", peer_addr, e));
                         continue;
                     }
                 };
@@ -169,13 +166,9 @@ impl RadiusServer {
                 // this is the one inbound integrity check RADIUS actually affords.
                 if request.code == packet::CODE_ACCOUNTING_REQUEST {
                     if let Err(e) = packet::verify_accounting_request(&request, &secret) {
-                        warn!(
+                        Log::new(Some(&status_tx)).warn(format!(
                             "RADIUS dropped Accounting-Request id={} from {}: {}",
                             request.identifier, peer_addr, e
-                        );
-                        let _ = status_tx.send(format!(
-                            "[WARN] RADIUS dropped Accounting-Request from {}: {}",
-                            peer_addr, e
                         ));
                         continue;
                     }
@@ -308,15 +301,14 @@ impl RadiusServer {
             peer_addr,
             decision.as_str()
         );
+        let log = Log::new(Some(&status_tx));
         if decision.is_fail_closed() {
-            error!(
+            log.error(format!(
                 "{} (denied because no usable decision was produced)",
                 summary
-            );
-            let _ = status_tx.send(format!("✗ {}", summary));
+            ));
         } else {
-            info!("{}", summary);
-            let _ = status_tx.send(format!("→ {}", summary));
+            log.info(&summary);
         }
 
         let Some(reply) = reply else {
@@ -339,8 +331,7 @@ impl RadiusServer {
                 );
             }
             Err(e) => {
-                error!("RADIUS failed to reply to {}: {}", peer_addr, e);
-                let _ = status_tx.send(format!("✗ RADIUS send error: {}", e));
+                Log::new(Some(&status_tx)).error(format!("RADIUS failed to reply to {}: {}", peer_addr, e));
             }
         }
     }
@@ -365,17 +356,16 @@ impl RadiusServer {
     ) -> (Decision, Option<Vec<u8>>) {
         let is_authorization = packet::is_authorization_request(request.code);
 
+        let log = Log::new(Some(status_tx));
         let execution = match llm_outcome {
             Ok(result) => {
                 for message in &result.messages {
-                    info!("{}", message);
-                    let _ = status_tx.send(format!("[INFO] {}", message));
+                    log.info(message);
                 }
                 result
             }
             Err(e) => {
-                error!("RADIUS LLM call failed for {}: {}", peer_addr, e);
-                let _ = status_tx.send(format!("✗ RADIUS LLM error: {}", e));
+                log.error(format!("RADIUS LLM call failed for {}: {}", peer_addr, e));
                 return (
                     Decision::FailClosedLlmError,
                     Self::synthesised_reject(request, protocol, is_authorization),
