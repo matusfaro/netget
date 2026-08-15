@@ -26,10 +26,11 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{error, trace};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::server::connection::ConnectionId;
 use crate::server::spark::actions::SparkProtocol;
 use crate::state::app_state::AppState;
@@ -63,9 +64,10 @@ impl SparkServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("Spark connection {} from {}", connection_id, remote_addr);
-                        let _ =
-                            status_tx.send(format!("[INFO] Spark connection from {}", remote_addr));
+                        Log::new(Some(&status_tx)).info(format!(
+                            "Spark connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         use crate::state::server::{
                             ConnectionState as ServerConnectionState, ConnectionStatus,
@@ -128,8 +130,8 @@ impl SparkServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("[INFO] Spark connection {} closed", connection_id));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("Spark connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -173,11 +175,7 @@ async fn handle_spark_request(
     let body_str = String::from_utf8_lossy(&body_bytes).to_string();
 
     let (operation, app_id) = detect_spark_operation(&method, &path);
-    debug!("Spark {} {} op={}", method, path, operation);
-    let _ = status_tx.send(format!(
-        "[DEBUG] Spark {} {} op={}",
-        method, path, operation
-    ));
+    Log::new(Some(&status_tx)).debug(format!("Spark {} {} op={}", method, path, operation));
     trace!("Spark request body: {}", body_str);
 
     if operation == "version" {
@@ -228,7 +226,7 @@ async fn handle_spark_request(
                             .get("content_type")
                             .and_then(|v| v.as_str())
                             .unwrap_or("application/json");
-                        let _ = status_tx.send(format!("[DEBUG] Spark -> {}", status));
+                        Log::new(Some(&status_tx)).debug(format!("Spark -> {}", status));
                         trace!("Spark response body: {}", body);
                         return Ok(build_spark_response(status, body, ct));
                     }
@@ -237,10 +235,8 @@ async fn handle_spark_request(
             // Fail-closed: the model answered but produced no Spark response. A bare `[]` with
             // 200 is a valid "no applications/jobs" result and a client cannot tell it from a
             // backend that never ran — so answer 500 instead of that empty array.
-            error!("Spark: LLM returned no spark_response action; answering 500");
-            let _ = status_tx.send(
-                "[ERROR] Spark: model produced no response action, answering 500".to_string(),
-            );
+            Log::new(Some(&status_tx))
+                .error("Spark: LLM returned no spark_response action; answering 500");
             Ok(build_spark_error(
                 500,
                 "netget: model produced no Spark response",

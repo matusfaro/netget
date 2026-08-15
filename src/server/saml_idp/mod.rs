@@ -18,9 +18,10 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::llm::action_helper::call_llm;
+use crate::logging::emit::Log;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
@@ -84,9 +85,7 @@ impl SamlIdpServer {
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
 
-        // Dual logging: tracing macro + status_tx
-        info!("SAML IDP server listening on {}", local_addr);
-        let _ = status_tx.send(format!("SAML IDP server listening on {}", local_addr));
+        Log::new(Some(&status_tx)).info(format!("SAML IDP server listening on {}", local_addr));
 
         let protocol = Arc::new(SamlIdpProtocol::new());
 
@@ -100,13 +99,8 @@ impl SamlIdpServer {
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
 
-                        // Dual logging
-                        info!(
+                        Log::new(Some(&status_tx)).info(format!(
                             "Accepted SAML IDP connection {} from {}",
-                            connection_id, remote_addr
-                        );
-                        let _ = status_tx.send(format!(
-                            "SAML IDP connection {} from {}",
                             connection_id, remote_addr
                         ));
 
@@ -188,9 +182,8 @@ impl SamlIdpServer {
                         });
                     }
                     Err(e) => {
-                        error!("Failed to accept SAML IDP connection: {}", e);
-                        let _ =
-                            status_tx.send(format!("Failed to accept SAML IDP connection: {}", e));
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept SAML IDP connection: {}", e));
                     }
                 }
             }
@@ -220,9 +213,10 @@ async fn handle_saml_idp_request(
     let path = req.uri().path().to_string();
     let query = req.uri().query().map(|q| q.to_string());
 
-    // Dual logging: DEBUG level for request summaries
-    debug!("SAML IDP {} {} from {}", method, path, remote_addr);
-    let _ = status_tx.send(format!("SAML IDP {} {}", method, path));
+    Log::new(Some(&status_tx)).debug(format!(
+        "SAML IDP {} {} from {}",
+        method, path, remote_addr
+    ));
 
     // Extract headers
     let headers: Vec<(String, String)> = req
@@ -347,11 +341,10 @@ async fn handle_saml_idp_request(
             // this path can produce one.
             let overloaded = crate::llm::is_overload_error(&e);
             let status = if overloaded { 503 } else { 500 };
-            error!(
+            Log::new(Some(&status_tx)).error(format!(
                 "LLM error for SAML IDP request (overload={}, status {}): {}",
                 overloaded, status, e
-            );
-            let _ = status_tx.send(format!("[ERROR] SAML IDP failing with {}: {}", status, e));
+            ));
             let reason =
                 crate::utils::truncate_for_log(&e.to_string(), 200).replace(['\r', '\n'], " ");
             build_safe_response(

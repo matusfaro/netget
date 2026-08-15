@@ -5,11 +5,13 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{error, warn};
 
 use crate::console_debug;
 #[cfg(feature = "smtp")]
 use crate::llm::action_helper::call_llm;
+#[cfg(feature = "smtp")]
+use crate::logging::emit::Log;
 #[cfg(feature = "smtp")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "smtp")]
@@ -47,17 +49,15 @@ impl SmtpServer {
         let local_addr = listener.local_addr()?;
 
         if tls_config.is_some() {
-            info!(
+            Log::new(Some(&status_tx)).info(format!(
                 "SMTPS server (TLS, action-based) listening on {}",
                 local_addr
-            );
-            let _ = status_tx.send(format!("[INFO] SMTPS server listening on {}", local_addr));
+            ));
         } else {
-            info!(
+            Log::new(Some(&status_tx)).info(format!(
                 "SMTP server (plain, action-based) listening on {}",
                 local_addr
-            );
-            let _ = status_tx.send(format!("[INFO] SMTP server listening on {}", local_addr));
+            ));
         }
 
         let protocol = Arc::new(SmtpProtocol::new());
@@ -89,12 +89,8 @@ impl SmtpServer {
                             if let Some(ref acceptor) = tls_acceptor_clone {
                                 match acceptor.accept(stream).await {
                                     Ok(tls_stream) => {
-                                        debug!(
+                                        Log::new(Some(&status_clone)).debug(format!(
                                             "TLS handshake completed for connection {}",
-                                            connection_id
-                                        );
-                                        let _ = status_clone.send(format!(
-                                            "[DEBUG] TLS handshake completed for connection {}",
                                             connection_id
                                         ));
                                         if let Err(e) = SmtpSession::handle_session(
@@ -108,18 +104,15 @@ impl SmtpServer {
                                         )
                                         .await
                                         {
-                                            error!("SMTP session error: {}", e);
-                                            let _ = status_clone
-                                                .send(format!("[ERROR] SMTP session error: {}", e));
+                                            Log::new(Some(&status_clone))
+                                                .error(format!("SMTP session error: {}", e));
                                         }
                                     }
                                     Err(e) => {
-                                        error!(
+                                        Log::new(Some(&status_clone)).error(format!(
                                             "TLS handshake failed for connection {}: {}",
                                             connection_id, e
-                                        );
-                                        let _ = status_clone
-                                            .send(format!("[ERROR] TLS handshake failed: {}", e));
+                                        ));
                                     }
                                 }
                             } else {
@@ -134,9 +127,8 @@ impl SmtpServer {
                                 )
                                 .await
                                 {
-                                    error!("SMTP session error: {}", e);
-                                    let _ = status_clone
-                                        .send(format!("[ERROR] SMTP session error: {}", e));
+                                    Log::new(Some(&status_clone))
+                                        .error(format!("SMTP session error: {}", e));
                                 }
                             };
                         });
@@ -256,11 +248,10 @@ impl SmtpSession {
                     //
                     // It also fails closed: a 4xx is never mistaken for acceptance, so an
                     // outage cannot silently look like a delivered message.
-                    error!(
+                    Log::new(Some(&status_tx)).error(format!(
                         "SMTP connection {} got no response for {:?}: {:#}",
                         connection_id, command, e
-                    );
-                    let _ = status_tx.send(format!("[ERROR] SMTP LLM error: {:#}", e));
+                    ));
 
                     // 4.3.2 is "system not accepting network messages" (RFC 3463), which is
                     // the truthful enhanced code for capacity exhaustion; 4.3.0 covers the
@@ -295,7 +286,7 @@ impl SmtpSession {
         server_id: crate::state::ServerId,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
-        _status_tx: &mpsc::UnboundedSender<String>,
+        status_tx: &mpsc::UnboundedSender<String>,
         protocol: &Arc<SmtpProtocol>,
     ) -> Result<()>
     where
@@ -333,11 +324,10 @@ impl SmtpSession {
                 // to decline one: a 421 greeting, after which the connection closes. Writing
                 // nothing (the previous behaviour) left the peer waiting for a 220 until its
                 // own timeout, with no way to tell an overloaded server from a black hole.
-                error!(
+                Log::new(Some(status_tx)).error(format!(
                     "SMTP greeting for connection {} failed: {:#}",
                     connection_id, e
-                );
-                let _ = _status_tx.send(format!("[ERROR] SMTP greeting failed: {:#}", e));
+                ));
 
                 let reply: &[u8] = if crate::llm::is_overload_error(&e) {
                     warn!(
@@ -350,7 +340,7 @@ impl SmtpSession {
                 };
                 stream.write_all(reply).await?;
                 stream.flush().await?;
-                let _ = _status_tx.send(format!(
+                let _ = status_tx.send(format!(
                     "→ SMTP {} to connection {}",
                     String::from_utf8_lossy(reply).trim(),
                     connection_id
