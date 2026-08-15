@@ -20,15 +20,15 @@ use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde_json::json;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{error, trace};
 
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::EventType;
 use crate::server::connection::ConnectionId;
 use crate::server::npm::actions::NpmProtocol;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error, console_info};
 
 /// NPM registry server that delegates to LLM
 pub struct NpmServer;
@@ -45,7 +45,7 @@ impl NpmServer {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "NPM registry server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("NPM registry server listening on {}", local_addr));
 
         let protocol = Arc::new(NpmProtocol::new());
 
@@ -58,9 +58,10 @@ impl NpmServer {
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
-                        info!("NPM connection {} from {}", connection_id, remote_addr);
-                        let _ =
-                            status_tx.send(format!("[INFO] NPM connection from {}", remote_addr));
+                        Log::new(Some(&status_tx)).info(format!(
+                            "NPM connection {} from {}",
+                            connection_id, remote_addr
+                        ));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -127,13 +128,14 @@ impl NpmServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("[INFO] NPM connection {} closed", connection_id));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("NPM connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "Failed to accept NPM connection: {}", e);
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to accept NPM connection: {}", e));
                         break;
                     }
                 }
@@ -164,8 +166,7 @@ async fn handle_npm_request(
     let path = uri.path();
     let query = uri.query().unwrap_or("");
 
-    debug!("NPM request: {} {}", method, path);
-    let _ = status_tx.send(format!("[DEBUG] NPM {} {}", method, path));
+    Log::new(Some(&status_tx)).debug(format!("NPM request: {} {}", method, path));
 
     // Only handle GET requests
     if method != Method::GET {
@@ -252,12 +253,8 @@ async fn handle_npm_request(
         }),
     );
 
-    console_debug!(
-        status_tx,
-        "Calling LLM for NPM request: {} {}",
-        method,
-        path
-    );
+    Log::new(Some(&status_tx))
+        .debug(format!("Calling LLM for NPM request: {} {}", method, path));
 
     // Call LLM
     let llm_result = call_llm(
@@ -294,7 +291,9 @@ async fn handle_npm_request(
                 .unwrap())
         }
         Err(e) => {
-            console_error!(status_tx, "LLM call failed: {}", e);
+            // Non-fatal: a wire fallback (JSON error response) is still delivered and the
+            // HTTP connection continues.
+            Log::new(Some(&status_tx)).warn(format!("NPM LLM call failed: {}", e));
             let error_response = json!({
                 "error": format!("LLM error: {}", e)
             });
@@ -329,8 +328,9 @@ async fn process_npm_action_result(
                         .context("Missing metadata in npm_package_metadata")
                         .unwrap();
 
-                    debug!("NPM package metadata response");
-                    let _ = status_tx.send("[DEBUG] Sending NPM package metadata".to_string());
+                    // FileOnly: the npm_package_metadata action's own log_template already
+                    // reports "-> NPM package metadata" to the TUI at INFO.
+                    Log::new(Some(status_tx)).debug("NPM package metadata response");
                     Some(
                         Response::builder()
                             .status(StatusCode::OK)
@@ -351,11 +351,10 @@ async fn process_npm_action_result(
                         .decode(tarball_data)
                         .unwrap_or_default();
 
-                    debug!("NPM package tarball response: {} bytes", decoded.len());
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] Sending NPM tarball: {} bytes",
-                        decoded.len()
-                    ));
+                    // FileOnly: the npm_package_tarball action's own log_template already
+                    // reports "-> NPM tarball (...)" to the TUI at INFO.
+                    Log::new(Some(status_tx))
+                        .debug(format!("NPM package tarball response: {} bytes", decoded.len()));
                     Some(
                         Response::builder()
                             .status(StatusCode::OK)
@@ -370,8 +369,9 @@ async fn process_npm_action_result(
                         .context("Missing packages in npm_package_list")
                         .unwrap();
 
-                    debug!("NPM package list response");
-                    let _ = status_tx.send("[DEBUG] Sending NPM package list".to_string());
+                    // FileOnly: the npm_package_list action's own log_template already
+                    // reports "-> NPM package list" to the TUI at INFO.
+                    Log::new(Some(status_tx)).debug("NPM package list response");
                     Some(
                         Response::builder()
                             .status(StatusCode::OK)
@@ -386,8 +386,9 @@ async fn process_npm_action_result(
                         .context("Missing results in npm_package_search")
                         .unwrap();
 
-                    debug!("NPM package search response");
-                    let _ = status_tx.send("[DEBUG] Sending NPM search results".to_string());
+                    // FileOnly: the npm_package_search action's own log_template already
+                    // reports "-> NPM search results" to the TUI at INFO.
+                    Log::new(Some(status_tx)).debug("NPM package search response");
                     Some(
                         Response::builder()
                             .status(StatusCode::OK)
@@ -406,8 +407,10 @@ async fn process_npm_action_result(
                         .and_then(|v| v.as_u64())
                         .unwrap_or(500) as u16;
 
-                    debug!("NPM error: {} ({})", error_message, status_code);
-                    let _ = status_tx.send(format!("[DEBUG] NPM error: {}", error_message));
+                    // FileOnly: the npm_error action's own log_template already reports
+                    // "-> NPM error {status_code}: {error}" to the TUI at INFO.
+                    Log::new(Some(status_tx))
+                        .debug(format!("NPM error: {} ({})", error_message, status_code));
                     let error_response = json!({
                         "error": error_message
                     });

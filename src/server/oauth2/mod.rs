@@ -21,9 +21,9 @@ use serde_json::json;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-use crate::console_info;
 use crate::llm::action_helper::call_llm;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::oauth2::actions::{
@@ -145,7 +145,7 @@ impl OAuth2Server {
         let listener =
             crate::server::socket_helpers::create_reusable_tcp_listener(listen_addr).await?;
         let local_addr = listener.local_addr()?;
-        console_info!(status_tx, "OAuth2 server listening on {}", local_addr);
+        Log::new(Some(&status_tx)).info(format!("OAuth2 server listening on {}", local_addr));
 
         let protocol = Arc::new(OAuth2Protocol::new());
 
@@ -228,8 +228,8 @@ impl OAuth2Server {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone
-                                .send(format!("✗ OAuth2 connection {connection_id} closed"));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("OAuth2 connection {connection_id} closed"));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -263,8 +263,7 @@ async fn handle_oauth2_request(
     let uri = req.uri().clone();
     let path = uri.path();
 
-    debug!("OAuth2 request: {} {}", method, path);
-    let _ = status_tx.send(format!("[DEBUG] OAuth2 {} {}", method, path));
+    Log::new(Some(&status_tx)).debug(format!("OAuth2 request: {} {}", method, path));
 
     // Track request in connection info
     app_state
@@ -383,12 +382,7 @@ async fn handle_authorize_request(
         }
     };
 
-    debug!("OAuth2 authorize request: {:?}", params);
-    let _ = status_tx.send(format!(
-        "[DEBUG] OAuth2 authorize: response_type={:?}, client_id={:?}",
-        params.get("response_type"),
-        params.get("client_id")
-    ));
+    Log::new(Some(&status_tx)).debug(format!("OAuth2 authorize request: {:?}", params));
 
     // Create LLM event
     let event = Event::new(
@@ -494,9 +488,8 @@ async fn handle_authorize_request(
             // `server_error` with 500 and `temporarily_unavailable` with 503 for exactly this
             // distinction, and no branch here can produce an authorization code.
             let (status, code) = oauth2_backend_failure(&e);
-            error!("OAuth2 authorization error (status {}): {}", status, e);
-            let _ = status_tx.send(format!(
-                "[ERROR] OAuth2 /authorize failing with {} {}: {}",
+            Log::new(Some(&status_tx)).error(format!(
+                "OAuth2 /authorize failing with {} {}: {}",
                 status, code, e
             ));
             Ok(json_response(
@@ -563,12 +556,7 @@ async fn handle_token_request(
     let body_str = String::from_utf8_lossy(&body_bytes);
     let params = parse_query_params(&body_str);
 
-    debug!("OAuth2 token request: {:?}", params);
-    let _ = status_tx.send(format!(
-        "[DEBUG] OAuth2 token: grant_type={:?}, client_id={:?}",
-        params.get("grant_type"),
-        params.get("client_id")
-    ));
+    Log::new(Some(&status_tx)).debug(format!("OAuth2 token request: {:?}", params));
 
     // Create LLM event
     let event = Event::new(
@@ -640,11 +628,8 @@ async fn handle_token_request(
             // permanently, and the damage would outlive the outage. A backend failure is a
             // server error, and clients retry those.
             let (status, code) = oauth2_backend_failure(&e);
-            error!("OAuth2 token error (status {}): {}", status, e);
-            let _ = status_tx.send(format!(
-                "[ERROR] OAuth2 /token failing with {} {}: {}",
-                status, code, e
-            ));
+            Log::new(Some(&status_tx))
+                .error(format!("OAuth2 /token failing with {} {}: {}", status, code, e));
             Ok(json_response(
                 status,
                 json!({
@@ -743,11 +728,8 @@ async fn handle_introspect_request(
             // the introspection did not happen, which every resource server already treats as
             // "cannot validate" and therefore also refuses.
             let (status, code) = oauth2_backend_failure(&e);
-            error!("OAuth2 introspect error (status {}): {}", status, e);
-            let _ = status_tx.send(format!(
-                "[ERROR] OAuth2 /introspect failing with {} {}: {}",
-                status, code, e
-            ));
+            Log::new(Some(&status_tx))
+                .error(format!("OAuth2 /introspect failing with {} {}: {}", status, code, e));
             Ok(json_response(
                 status,
                 json!({
@@ -809,11 +791,8 @@ async fn handle_revoke_request(
         // processed the request - the model never saw it, so nothing was revoked, and the
         // client would stop trying.
         let (status, code) = oauth2_backend_failure(&e);
-        error!("OAuth2 revoke error (status {}): {}", status, e);
-        let _ = status_tx.send(format!(
-            "[ERROR] OAuth2 /revoke failing with {} {}: {}",
-            status, code, e
-        ));
+        Log::new(Some(&status_tx))
+            .error(format!("OAuth2 /revoke failing with {} {}: {}", status, code, e));
         return Ok(json_response(
             status,
             json!({
