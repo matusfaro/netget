@@ -17,6 +17,7 @@ use crate::client::xmlrpc::actions::{
 use crate::llm::actions::client_trait::Client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -60,8 +61,8 @@ impl XmlRpcClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] XML-RPC client {} ready for {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "XML-RPC client {} ready for {}",
             client_id, server_url
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -406,8 +407,8 @@ impl XmlRpcClient {
                 Err(anyhow::anyhow!("XML-RPC error: {}", fault_msg))
             }
             Err(e) => {
-                error!("XML-RPC client {} call failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] XML-RPC call failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("XML-RPC client {} call failed: {}", client_id, e));
                 Err(e.into())
             }
         }
