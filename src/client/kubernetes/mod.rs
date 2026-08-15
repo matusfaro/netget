@@ -13,6 +13,7 @@ use crate::client::kubernetes::actions::K8S_CLIENT_RESOURCE_RECEIVED_EVENT;
 use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -82,8 +83,8 @@ impl KubernetesClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] Kubernetes client {} ready for cluster",
+        Log::new(Some(&status_tx)).info(format!(
+            "Kubernetes client {} ready for cluster",
             client_id
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -254,8 +255,10 @@ impl KubernetesClient {
                 Ok(())
             }
             Err(e) => {
-                error!("Kubernetes client {} operation failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] Kubernetes operation failed: {}", e));
+                Log::new(Some(&status_tx)).error(format!(
+                    "Kubernetes client {} operation failed: {}",
+                    client_id, e
+                ));
                 Err(e)
             }
         }

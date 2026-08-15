@@ -14,9 +14,9 @@ use tracing::{debug, error, info};
 
 use crate::client::llm_budget::call_llm_for_client;
 use crate::client::mcp::actions::{MCP_CLIENT_CONNECTED_EVENT, MCP_CLIENT_RESPONSE_RECEIVED_EVENT};
-use crate::console_error;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -150,8 +150,8 @@ impl McpClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] MCP client {} initialized with server {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "MCP client {} initialized with server {}",
             client_id, server_name
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -217,12 +217,12 @@ impl McpClient {
                     )
                     .await
                     {
-                        error!("Failed to execute LLM actions: {}", e);
-                        let _ = status_tx.send(format!("[ERROR] Failed to execute actions: {}", e));
+                        Log::new(Some(&status_tx))
+                            .error(format!("Failed to execute LLM actions: {}", e));
                     }
                 }
                 Err(e) => {
-                    console_error!(status_tx, "Failed to call LLM: {}", e);
+                    Log::new(Some(&status_tx)).error(format!("Failed to call LLM: {}", e));
                 }
             }
 
@@ -283,7 +283,7 @@ impl McpClient {
         };
 
         debug!("Sending initialize request: {:?}", request);
-        let _ = status_tx.send("[CLIENT] Sending MCP initialize request".to_string());
+        Log::new(Some(status_tx)).info("Sending MCP initialize request".to_string());
 
         let response = http_client
             .post(base_url)
@@ -333,7 +333,7 @@ impl McpClient {
         };
 
         debug!("Sending initialized notification: {:?}", notification);
-        let _ = status_tx.send("[CLIENT] Sending MCP initialized notification".to_string());
+        Log::new(Some(status_tx)).info("Sending MCP initialized notification".to_string());
 
         http_client
             .post(base_url)
@@ -364,12 +364,11 @@ impl McpClient {
 
                 match action_result {
                     ClientActionResult::Disconnect => {
-                        info!("Disconnecting MCP client {}", client_id);
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;
-                        let _ = status_tx
-                            .send(format!("[CLIENT] MCP client {} disconnected", client_id));
+                        Log::new(Some(status_tx))
+                            .info(format!("MCP client {} disconnected", client_id));
                         break;
                     }
                     ClientActionResult::Custom { name, data } => {
@@ -444,9 +443,10 @@ impl McpClient {
                                 }
                             }
                             Err(e) => {
-                                error!("Failed to execute MCP action {}: {}", name, e);
-                                let _ = status_tx
-                                    .send(format!("[ERROR] Failed to execute {}: {}", name, e));
+                                Log::new(Some(status_tx)).error(format!(
+                                    "Failed to execute MCP action {}: {}",
+                                    name, e
+                                ));
                             }
                         }
                     }
@@ -539,7 +539,7 @@ impl McpClient {
         };
 
         debug!("Sending MCP request: {:?}", request);
-        let _ = status_tx.send(format!("[CLIENT] Sending MCP request: {}", method));
+        Log::new(Some(status_tx)).info(format!("Sending MCP request: {}", method));
 
         let response = http_client
             .post(&base_url)
