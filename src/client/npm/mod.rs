@@ -15,6 +15,7 @@ use crate::client::npm::actions::{
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -66,8 +67,8 @@ impl NpmClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] NPM client {} ready for {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "NPM client {} ready for {}",
             client_id, registry_url
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -146,13 +147,9 @@ impl NpmClient {
                         .text()
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
-                    error!(
+                    Log::new(Some(&status_tx)).error(format!(
                         "NPM client {} failed to get package {}: {} - {}",
                         client_id, package_name, status, error_text
-                    );
-                    let _ = status_tx.send(format!(
-                        "[ERROR] NPM request failed: {} - {}",
-                        status, error_text
                     ));
                     return Err(anyhow::anyhow!("NPM request failed: {}", status));
                 }
@@ -250,8 +247,8 @@ impl NpmClient {
                 Ok(())
             }
             Err(e) => {
-                error!("NPM client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] NPM request failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("NPM client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
         }
@@ -298,13 +295,9 @@ impl NpmClient {
                         .text()
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
-                    error!(
+                    Log::new(Some(&status_tx)).error(format!(
                         "NPM client {} search failed: {} - {}",
                         client_id, status, error_text
-                    );
-                    let _ = status_tx.send(format!(
-                        "[ERROR] NPM search failed: {} - {}",
-                        status, error_text
                     ));
                     return Err(anyhow::anyhow!("NPM search failed: {}", status));
                 }
@@ -387,8 +380,8 @@ impl NpmClient {
                 Ok(())
             }
             Err(e) => {
-                error!("NPM client {} search failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] NPM search failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("NPM client {} search failed: {}", client_id, e));
                 Err(e.into())
             }
         }
@@ -472,13 +465,9 @@ impl NpmClient {
             .await
             .context("Failed to write tarball")?;
 
-        info!(
+        Log::new(Some(&status_tx)).info(format!(
             "NPM client {} downloaded tarball to: {}",
             client_id, output_path
-        );
-        let _ = status_tx.send(format!(
-            "[CLIENT] NPM tarball downloaded to: {}",
-            output_path
         ));
 
         Ok(())

@@ -13,6 +13,7 @@ use tracing::{error, info, trace};
 use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client as ClientTrait, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -42,13 +43,9 @@ impl NfsClient {
         // Format: server:port:/export/path or server:/export/path (default port 2049)
         let (server_addr, export_path) = Self::parse_nfs_address(&remote_addr)?;
 
-        info!(
+        Log::new(Some(&status_tx)).info(format!(
             "NFS client {} attempting to connect to {} for export {}",
             client_id, server_addr, export_path
-        );
-        let _ = status_tx.send(format!(
-            "[CLIENT] NFS client {} connecting to {}",
-            client_id, server_addr
         ));
 
         // Extract just the server part (remove port if present)
@@ -60,12 +57,8 @@ impl NfsClient {
             .await
             .context("Failed to mount NFS export")?;
 
-        info!(
-            "NFS client {} successfully mounted {}",
-            client_id, export_path
-        );
-        let _ = status_tx.send(format!(
-            "[CLIENT] NFS client {} mounted export {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "NFS client {} successfully mounted export {}",
             client_id, export_path
         ));
 
@@ -187,8 +180,7 @@ impl NfsClient {
             )
             .await
             {
-                error!("NFS operation error: {}", e);
-                let _ = status_tx.send(format!("[ERROR] NFS operation failed: {}", e));
+                Log::new(Some(&status_tx)).error(format!("NFS operation failed: {}", e));
             }
         }
 
@@ -741,7 +733,7 @@ impl NfsClient {
         status_tx: mpsc::UnboundedSender<String>,
         _client_id: ClientId,
     ) -> Result<SocketAddr> {
-        let _ = status_tx.send("[ERROR] NFS feature not enabled at compile time".to_string());
+        Log::new(Some(&status_tx)).error("NFS feature not enabled at compile time".to_string());
         Err(anyhow::anyhow!("NFS feature not enabled"))
     }
 }
