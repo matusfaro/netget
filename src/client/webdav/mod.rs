@@ -13,6 +13,7 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::client::webdav::actions::WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -58,8 +59,8 @@ impl WebdavClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] WebDAV client {} ready for {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "WebDAV client {} ready for {}",
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -249,12 +250,11 @@ impl WebdavClient {
                 .await?;
             }
             ClientActionResult::Disconnect => {
-                info!("WebDAV client {} disconnecting", client_id);
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
-                let _ =
-                    status_tx.send(format!("[CLIENT] WebDAV client {} disconnected", client_id));
+                Log::new(Some(status_tx))
+                    .info(format!("WebDAV client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             _ => {
@@ -408,8 +408,8 @@ impl WebdavClient {
                 Ok(())
             }
             Err(e) => {
-                error!("WebDAV client {} request failed: {}", client_id, e);
-                let _ = status_tx.send(format!("[ERROR] WebDAV request failed: {}", e));
+                Log::new(Some(&status_tx))
+                    .error(format!("WebDAV client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
         }

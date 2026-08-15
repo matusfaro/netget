@@ -17,6 +17,7 @@ use crate::client::turn::actions::{
 };
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
@@ -70,8 +71,8 @@ impl TurnClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        let _ = status_tx.send(format!(
-            "[CLIENT] TURN client {} connected to {}",
+        Log::new(Some(&status_tx)).info(format!(
+            "TURN client {} connected to {}",
             client_id, remote_sock_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -219,13 +220,9 @@ impl TurnClient {
                             }
                             "AllocateError" | "RefreshError" | "CreatePermissionError" => {
                                 let error_code = Self::extract_error_code(&data).unwrap_or(400);
-                                error!(
+                                Log::new(Some(&status_clone)).error(format!(
                                     "TURN client {} received error: {} (code: {})",
                                     client_id, message_type, error_code
-                                );
-                                let _ = status_clone.send(format!(
-                                    "[ERROR] TURN {} error code {}",
-                                    message_type, error_code
                                 ));
                                 None
                             }
@@ -369,13 +366,9 @@ impl TurnClient {
                     let message = Self::build_allocate_request(lifetime as u32)?;
                     socket.send_to(&message, remote_addr).await?;
 
-                    debug!(
+                    Log::new(Some(status_tx)).debug(format!(
                         "TURN client {} sent Allocate request (lifetime: {}s)",
                         client_id, lifetime
-                    );
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] TURN Allocate request sent ({}s lifetime)",
-                        lifetime
                     ));
                 }
                 "create_permission" => {
@@ -390,13 +383,9 @@ impl TurnClient {
                     let message = Self::build_create_permission_request(peer_addr)?;
                     socket.send_to(&message, remote_addr).await?;
 
-                    debug!(
+                    Log::new(Some(status_tx)).debug(format!(
                         "TURN client {} sent CreatePermission for {}",
                         client_id, peer_addr
-                    );
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] TURN CreatePermission sent for {}",
-                        peer_addr
                     ));
                 }
                 "send_indication" => {
@@ -421,14 +410,9 @@ impl TurnClient {
                     let message = Self::build_send_indication(peer_addr, &send_data)?;
                     socket.send_to(&message, remote_addr).await?;
 
-                    trace!(
+                    Log::new(Some(status_tx)).debug(format!(
                         "TURN client {} sent {} bytes via SendIndication to {}",
                         client_id,
-                        send_data.len(),
-                        peer_addr
-                    );
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] TURN sent {} bytes to {}",
                         send_data.len(),
                         peer_addr
                     ));
@@ -442,13 +426,9 @@ impl TurnClient {
                     let message = Self::build_refresh_request(lifetime as u32)?;
                     socket.send_to(&message, remote_addr).await?;
 
-                    debug!(
+                    Log::new(Some(status_tx)).debug(format!(
                         "TURN client {} sent Refresh request (lifetime: {}s)",
                         client_id, lifetime
-                    );
-                    let _ = status_tx.send(format!(
-                        "[DEBUG] TURN Refresh sent ({}s lifetime)",
-                        lifetime
                     ));
                 }
                 _ => {
@@ -460,11 +440,10 @@ impl TurnClient {
                 let message = Self::build_refresh_request(0)?;
                 socket.send_to(&message, remote_addr).await?;
 
-                info!(
+                Log::new(Some(status_tx)).info(format!(
                     "TURN client {} disconnecting (sent Refresh with lifetime=0)",
                     client_id
-                );
-                let _ = status_tx.send(format!("[INFO] TURN client {} disconnecting", client_id));
+                ));
             }
             _ => {}
         }
