@@ -16,10 +16,11 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::server::connection::ConnectionId;
 use crate::server::ElasticsearchProtocol;
 use crate::state::app_state::AppState;
@@ -61,10 +62,8 @@ impl ElasticsearchServer {
                             "Elasticsearch connection {} from {}",
                             connection_id, remote_addr
                         );
-                        let _ = status_tx.send(format!(
-                            "[INFO] Elasticsearch connection from {}",
-                            remote_addr
-                        ));
+                        Log::new(Some(&status_tx))
+                            .info(format!("Elasticsearch connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -131,8 +130,8 @@ impl ElasticsearchServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone.send(format!(
-                                "[INFO] Elasticsearch connection {} closed",
+                            Log::new(Some(&status_tx_clone)).info(format!(
+                                "Elasticsearch connection {} closed",
                                 connection_id
                             ));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
@@ -194,8 +193,8 @@ async fn handle_elasticsearch_request_with_llm(
         uri,
         body_bytes.len()
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] Elasticsearch {} {} ({} bytes)",
+    Log::new(Some(&status_tx)).debug(format!(
+        "Elasticsearch {} {} ({} bytes)",
         method,
         path,
         body_bytes.len()
@@ -204,8 +203,7 @@ async fn handle_elasticsearch_request_with_llm(
     // Detect operation type from path and method
     let (operation, index, doc_id) = detect_elasticsearch_operation(&method, &path);
 
-    trace!("Elasticsearch request body: {}", body_str);
-    let _ = status_tx.send(format!("[TRACE] Elasticsearch request: {}", body_str));
+    Log::new(Some(&status_tx)).trace(format!("Elasticsearch request body: {}", body_str));
 
     // Create Elasticsearch request event
     let event = crate::protocol::Event::new(
@@ -243,11 +241,9 @@ async fn handle_elasticsearch_request_with_llm(
                             let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
 
                             debug!("Elasticsearch response: status={}", status);
-                            let _ = status_tx
-                                .send(format!("[DEBUG] Elasticsearch → {} response", status));
-                            trace!("Elasticsearch response body: {}", body);
-                            let _ =
-                                status_tx.send(format!("[TRACE] Elasticsearch response: {}", body));
+                            let log = Log::new(Some(&status_tx));
+                            log.debug(format!("Elasticsearch → {} response", status));
+                            log.trace(format!("Elasticsearch response body: {}", body));
 
                             return Ok(build_es_response(status, body.to_string()));
                         }

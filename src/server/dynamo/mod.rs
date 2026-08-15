@@ -17,10 +17,11 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ActionResult;
+use crate::logging::emit::Log;
 use crate::server::connection::ConnectionId;
 use crate::server::DynamoProtocol;
 use crate::state::app_state::AppState;
@@ -56,8 +57,8 @@ impl DynamoServer {
                             ConnectionId::new(app_state.get_next_unified_id().await);
                         let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         info!("DynamoDB connection {} from {}", connection_id, remote_addr);
-                        let _ = status_tx
-                            .send(format!("[INFO] DynamoDB connection from {}", remote_addr));
+                        Log::new(Some(&status_tx))
+                            .info(format!("DynamoDB connection from {}", remote_addr));
 
                         // Add connection to ServerInstance
                         use crate::state::server::{
@@ -124,10 +125,8 @@ impl DynamoServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            let _ = status_tx_clone.send(format!(
-                                "[INFO] DynamoDB connection {} closed",
-                                connection_id
-                            ));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("DynamoDB connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }
@@ -189,8 +188,8 @@ async fn handle_dynamo_request_with_llm(
         operation,
         body_bytes.len()
     );
-    let _ = status_tx.send(format!(
-        "[DEBUG] DynamoDB {} operation={} ({} bytes)",
+    Log::new(Some(&status_tx)).debug(format!(
+        "DynamoDB {} operation={} ({} bytes)",
         method,
         operation,
         body_bytes.len()
@@ -209,8 +208,7 @@ async fn handle_dynamo_request_with_llm(
         None
     };
 
-    trace!("DynamoDB request body: {}", body_str);
-    let _ = status_tx.send(format!("[TRACE] DynamoDB request: {}", body_str));
+    Log::new(Some(&status_tx)).trace(format!("DynamoDB request body: {}", body_str));
 
     // Create DynamoDB request event
     let event = crate::protocol::Event::new(
@@ -245,10 +243,9 @@ async fn handle_dynamo_request_with_llm(
                             let body = data.get("body").and_then(|v| v.as_str()).unwrap_or("{}");
 
                             debug!("DynamoDB response: status={}", status);
-                            let _ =
-                                status_tx.send(format!("[DEBUG] DynamoDB → {} response", status));
-                            trace!("DynamoDB response body: {}", body);
-                            let _ = status_tx.send(format!("[TRACE] DynamoDB response: {}", body));
+                            let log = Log::new(Some(&status_tx));
+                            log.debug(format!("DynamoDB → {} response", status));
+                            log.trace(format!("DynamoDB response body: {}", body));
 
                             return Ok(build_dynamo_response(status, body.to_string()));
                         }
