@@ -4,10 +4,10 @@ pub mod actions;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error};
 use actions::{MssqlProtocol, MSSQL_QUERY_EVENT};
 use anyhow::Result;
 use std::net::SocketAddr;
@@ -65,8 +65,7 @@ impl MssqlServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        info!("MSSQL server starting on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] MSSQL server listening on {}", actual_addr));
+        Log::new(Some(&status_tx)).info(format!("MSSQL server listening on {}", actual_addr));
 
         let server = Arc::new(MssqlServer::new(
             llm_client,
@@ -83,7 +82,7 @@ impl MssqlServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        console_debug!(status_tx, "MSSQL connection from {}", addr);
+                        Log::new(Some(&status_tx)).info(format!("MSSQL connection from {}", addr));
 
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
@@ -131,7 +130,7 @@ impl MssqlServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "MSSQL accept error: {}", e);
+                        Log::new(Some(&status_tx)).error(format!("MSSQL accept error: {}", e));
                     }
                 }
             }
@@ -355,9 +354,7 @@ impl MssqlHandler {
 
     /// Send Login response (accept all logins)
     async fn send_login_response(&self, stream: &mut TcpStream) -> Result<()> {
-        let _ = self
-            .status_tx
-            .send("[DEBUG] MSSQL → Login accepted".to_string());
+        Log::new(Some(&self.status_tx)).info("MSSQL \u{2192} Login accepted");
 
         let mut response = Vec::new();
 
@@ -670,19 +667,16 @@ impl MssqlHandler {
                 } else {
                     MSSQL_ERROR_GENERIC
                 };
-                error!(
-                    "LLM error for MSSQL query (overload={}, number {}): {}",
-                    overloaded, number, e
-                );
                 let reason = crate::utils::truncate_for_log(&e.to_string(), 200);
                 let message = if overloaded {
                     format!("netget: backend at capacity, retry later: {reason}")
                 } else {
                     format!("netget: {reason}")
                 };
-                let _ = self
-                    .status_tx
-                    .send(format!("[ERROR] MSSQL replying error {number}: {message}"));
+                // Non-fatal: a wire fallback (TDS ERROR token) is still delivered and the
+                // connection stays open, so this is recovered rather than a hard failure.
+                Log::new(Some(&self.status_tx))
+                    .warn(format!("MSSQL replying error {number}: {message}"));
                 self.send_error(stream, number, &message, 16).await?;
                 Ok(false)
             }

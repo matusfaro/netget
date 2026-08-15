@@ -4,10 +4,10 @@ pub mod actions;
 use crate::llm::action_helper::call_llm;
 use crate::llm::actions::protocol_trait::ActionResult;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use crate::{console_debug, console_error};
 use actions::{MysqlProtocol, MYSQL_QUERY_EVENT};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -20,7 +20,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{error, trace, warn};
 
 /// Cap on prepared statements retained per connection.
 ///
@@ -64,8 +64,7 @@ impl MysqlServer {
         let listener = TcpListener::bind(listen_addr).await?;
         let actual_addr = listener.local_addr()?;
 
-        info!("MySQL server starting on {}", actual_addr);
-        let _ = status_tx.send(format!("[INFO] MySQL server listening on {}", actual_addr));
+        Log::new(Some(&status_tx)).info(format!("MySQL server listening on {}", actual_addr));
 
         let server = Arc::new(MysqlServer::new(
             llm_client,
@@ -82,7 +81,7 @@ impl MysqlServer {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
-                        console_debug!(status_tx, "MySQL connection from {}", addr);
+                        Log::new(Some(&status_tx)).info(format!("MySQL connection from {}", addr));
 
                         let connection_id =
                             ConnectionId::new(app_state.get_next_unified_id().await);
@@ -143,7 +142,7 @@ impl MysqlServer {
                         });
                     }
                     Err(e) => {
-                        console_error!(status_tx, "MySQL accept error: {}", e);
+                        Log::new(Some(&status_tx)).error(format!("MySQL accept error: {}", e));
                     }
                 }
             }
@@ -215,10 +214,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
         query: &'a str,
         info: StatementMetaWriter<'a, W>,
     ) -> io::Result<()> {
-        debug!("MySQL PREPARE: {}", query);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] MySQL PREPARE: {}", query));
+        Log::new(Some(&self.status_tx)).debug(format!("MySQL PREPARE: {}", query));
 
         // Store the prepared statement
         let mut next_id = self.next_stmt_id.lock().await;
@@ -253,10 +249,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
         _params: ParamParser<'a>,
         results: QueryResultWriter<'a, W>,
     ) -> io::Result<()> {
-        debug!("MySQL EXECUTE statement {}", stmt_id);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] MySQL EXECUTE statement {}", stmt_id));
+        Log::new(Some(&self.status_tx)).debug(format!("MySQL EXECUTE statement {}", stmt_id));
 
         // Get the prepared statement
         let stmts = self.prepared_statements.lock().await;
@@ -282,10 +275,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
     }
 
     async fn on_close(&mut self, stmt_id: u32) {
-        debug!("MySQL CLOSE statement {}", stmt_id);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] MySQL CLOSE statement {}", stmt_id));
+        Log::new(Some(&self.status_tx)).debug(format!("MySQL CLOSE statement {}", stmt_id));
 
         let mut stmts = self.prepared_statements.lock().await;
         stmts.remove(&stmt_id);
@@ -296,10 +286,9 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
         query: &'a str,
         results: QueryResultWriter<'a, W>,
     ) -> io::Result<()> {
-        debug!("MySQL QUERY: {}", query);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] MySQL QUERY: {}", query));
+        // FileOnly: the mysql_query event's log_template already reports the query to the
+        // TUI at INFO when call_llm dispatches it (see actions.rs).
+        Log::new(Some(&self.status_tx)).debug(format!("MySQL QUERY: {}", query));
 
         self.handle_query(query, results).await
     }
@@ -309,10 +298,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
         _database: &'a str,
         writer: InitWriter<'a, W>,
     ) -> io::Result<()> {
-        debug!("MySQL INIT DB: {}", _database);
-        let _ = self
-            .status_tx
-            .send(format!("[DEBUG] MySQL INIT DB: {}", _database));
+        Log::new(Some(&self.status_tx)).debug(format!("MySQL INIT DB: {}", _database));
 
         writer.ok().await
     }
@@ -398,10 +384,12 @@ impl MysqlHandler {
                                     // has existed since opensrv-mysql 0.4; the previous code
                                     // (and the protocol docs) claimed the library could only
                                     // send OK, which silently swallowed every LLM error.
-                                    let _ = self.status_tx.send(format!(
-                                        "[ERROR] MySQL error {}: {}",
-                                        error_code, message
-                                    ));
+                                    //
+                                    // Non-fatal: this is the model's own deliberate
+                                    // mysql_error_response, answered on the wire and the
+                                    // connection continues.
+                                    Log::new(Some(&self.status_tx))
+                                        .warn(format!("MySQL error {}: {}", error_code, message));
                                     return finish_query(
                                         results
                                             .error(mysql_error_kind(error_code), message.as_bytes())
@@ -478,15 +466,7 @@ impl MysqlHandler {
                 // treats as "transient, safe to retry", rather than 1105 which reads as a
                 // permanent server fault.
                 let overloaded = crate::llm::is_overload_error(&e);
-                error!(
-                    "LLM error for MySQL query on connection {} (overload={}): {}",
-                    self.connection_id, overloaded, e
-                );
                 let (kind, message) = if overloaded {
-                    warn!(
-                        "MySQL connection {}: LLM capacity exhausted, replying 1205",
-                        self.connection_id
-                    );
                     (
                         ErrorKind::ER_LOCK_WAIT_TIMEOUT,
                         format!("netget: backend at capacity, retry: {}", e),
@@ -494,9 +474,10 @@ impl MysqlHandler {
                 } else {
                     (ErrorKind::ER_UNKNOWN_ERROR, format!("netget: {}", e))
                 };
-                let _ = self
-                    .status_tx
-                    .send(format!("[ERROR] MySQL replying with error: {}", message));
+                // Non-fatal: a wire fallback (ERR packet) is still delivered and the
+                // connection continues.
+                Log::new(Some(&self.status_tx))
+                    .warn(format!("MySQL replying with error: {}", message));
                 results.error(kind, message.as_bytes()).await
             }
         }
