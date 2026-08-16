@@ -285,7 +285,7 @@ pub struct Args {
     #[clap(
         long = "llm-max-tokens",
         value_name = "TOKENS",
-        help = "Completion tokens a single LLM call may produce. Default: 2048. A reasoning model spends this budget on its thinking block AND its answer, so 2048 can truncate the action JSON mid-object; raise it (e.g. 8192) for such models."
+        help = "Completion tokens a single LLM call may produce before it is cut off. This is a runaway guard, not a working budget: the default (32768) sits far above any legitimate answer so it never truncates one, and --llm-request-timeout is the primary backstop. Lower it only to bound a model you expect to ramble."
     )]
     pub llm_max_tokens: Option<u32>,
 

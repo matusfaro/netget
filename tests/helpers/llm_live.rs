@@ -36,10 +36,21 @@ use tokio::net::{TcpStream, UdpSocket};
 /// Default model for live-LLM integration tests.
 pub const DEFAULT_LIVE_MODEL: &str = "qwen3.8:27b-mlx";
 
-/// How long a wire client waits for the first response byte. Generous because
-/// each response is a real model round-trip (cold model load can take a while,
-/// and `--ollama-lock` serializes calls across concurrent tests).
-pub const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(180);
+/// Wall-clock bound netget puts on a single backend LLM call
+/// (`--llm-request-timeout`). The binary's default of 120s is calibrated for
+/// interactive use; a 27B model answering a 30k-char setup prompt has been
+/// observed to legitimately need more.
+pub const LLM_REQUEST_TIMEOUT_SECS: u64 = 300;
+
+/// How long a wire client waits for the first response byte.
+///
+/// Must exceed [`LLM_REQUEST_TIMEOUT_SECS`], the bound netget itself puts on a
+/// backend call: a client that gives up first reports "the model never
+/// answered" for an exchange the server was still legitimately working on.
+/// That is exactly what happened to the IRC and NNTP suites at 180s against a
+/// 300s server bound, where a slow first event pushed the second past the
+/// client's patience.
+pub const FIRST_BYTE_TIMEOUT: Duration = Duration::from_secs(LLM_REQUEST_TIMEOUT_SECS + 30);
 
 /// After the first byte, how long a read stays idle before we consider the
 /// response complete (protocols here don't frame their responses for us).
@@ -49,18 +60,6 @@ pub const IDLE_READ_TIMEOUT: Duration = Duration::from_secs(2);
 /// iterations (read_documentation → open_server), each a slow live inference,
 /// so this is far above the mocked-suite default of 120s.
 pub const SETUP_TIMEOUT: Duration = Duration::from_secs(600);
-
-/// Wall-clock bound netget puts on a single backend LLM call
-/// (`--llm-request-timeout`). The binary's default of 120s is calibrated for
-/// interactive use; a 27B model answering a 30k-char setup prompt has been
-/// observed to legitimately need more.
-pub const LLM_REQUEST_TIMEOUT_SECS: u64 = 300;
-
-/// Completion-token budget per model call (`--llm-max-tokens`). netget's
-/// default of 2048 is spent on a reasoning model's thinking block *and* its
-/// answer, which truncates the action JSON mid-object; the live suite found
-/// exactly that with qwen3.8 on four protocols.
-pub const LLM_MAX_TOKENS: u32 = 8192;
 
 /// Serializes live tests within this process. Without it, every test spawns
 /// its netget at once and all their setup model calls queue behind the shared
@@ -232,8 +231,6 @@ impl LiveProtocolTest {
             .with_extra_args([
                 "--llm-request-timeout".to_string(),
                 LLM_REQUEST_TIMEOUT_SECS.to_string(),
-                "--llm-max-tokens".to_string(),
-                LLM_MAX_TOKENS.to_string(),
             ])
             .with_ollama();
         if self.no_scripts {
@@ -351,8 +348,6 @@ impl LiveRequestTest {
             port.to_string(),
             "--llm-request-timeout".to_string(),
             LLM_REQUEST_TIMEOUT_SECS.to_string(),
-            "--llm-max-tokens".to_string(),
-            LLM_MAX_TOKENS.to_string(),
         ];
         if let Some(params) = &self.server_params {
             extra_args.push("--server-params".to_string());

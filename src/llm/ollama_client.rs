@@ -777,12 +777,19 @@ pub const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::fr
 
 /// Default completion-token budget for one backend call.
 ///
-/// A **reasoning** model spends this budget twice: once on its thinking block
-/// and once on the answer. At 2048 a 27B reasoning model was observed emitting
-/// a full `<reasoning>` section and then a JSON action list truncated
-/// mid-object — which surfaces as an unparseable (or empty) response, not as
-/// an obvious limit. Raise it with `--llm-max-tokens` for such models.
-pub const DEFAULT_MAX_TOKENS: u32 = 2048;
+/// This is a **runaway guard**, not a working budget: it exists to stop a
+/// model that has started generating without end, and should sit far above any
+/// legitimate answer so it never truncates one. The wall-clock
+/// `--llm-request-timeout` is the primary backstop; this is the secondary.
+///
+/// It used to be 2048, which is inside the range of ordinary answers. A
+/// **reasoning** model spends the budget twice — once on its thinking block and
+/// once on the answer — so a 27B model was observed emitting a full
+/// `<reasoning>` section followed by a JSON action list truncated mid-object.
+/// That surfaces as an unparseable (or empty) response, never as an obvious
+/// limit, which is the worst way for a cap to fail. Override with
+/// `--llm-max-tokens`.
+pub const DEFAULT_MAX_TOKENS: u32 = 32768;
 
 /// LLM API client supporting Ollama and OpenAI-compatible backends
 #[derive(Clone)]

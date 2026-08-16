@@ -26,8 +26,7 @@
 
 use super::common::E2EResult;
 use super::llm_live::{
-    ensure_model_available, live_llm_enabled, live_model, live_test_lock, LLM_MAX_TOKENS,
-    LLM_REQUEST_TIMEOUT_SECS,
+    ensure_model_available, live_llm_enabled, live_model, live_test_lock, LLM_REQUEST_TIMEOUT_SECS,
 };
 use super::ollama_test_builder::parse_actions_from_response;
 use netget::llm::actions::{get_network_event_common_actions, normalize_action_object};
@@ -285,11 +284,11 @@ impl EventCase {
             .unwrap_or_else(|_| "http://localhost:11434".to_string());
         // Reasoning models spend the completion budget twice; the default 2048
         // truncates the action JSON mid-object.
-        // Reasoning models spend the completion budget twice; the default 2048
-        // truncates the action JSON mid-object, and a bigger budget needs more
-        // than the default 120s wall clock to produce.
+        // Deliberately does NOT override the completion-token budget: the
+        // shipped default is what users get, so it is what the suite grades.
+        // Only the wall clock is raised, because a live 27B answer legitimately
+        // outruns the interactive 120s default.
         let client = OllamaClient::new(base_url)
-            .with_max_tokens(LLM_MAX_TOKENS)
             .with_request_timeout(std::time::Duration::from_secs(LLM_REQUEST_TIMEOUT_SECS));
         let response = client
             .generate_with_retry(&model, &prompt, "JSON response with actions array", 0)
