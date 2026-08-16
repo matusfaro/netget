@@ -187,8 +187,15 @@ async fn handle_whois_connection(
                             execution_result.protocol_results.len()
                         ));
 
-                        // Send all outputs to client and check for close
+                        // Send all outputs to client and check for close.
+                        //
+                        // WHOIS is one query, one response, then close (RFC 3912),
+                        // so a connection that closes without writing anything is
+                        // indistinguishable to the client from a server that is
+                        // broken. Track whether anything reached the wire and
+                        // answer below if nothing did.
                         let mut should_close = false;
+                        let mut wrote_output = false;
                         for protocol_result in execution_result.protocol_results {
                             match protocol_result {
                                 crate::llm::actions::protocol_trait::ActionResult::Output(output_data) => {
@@ -196,6 +203,7 @@ async fn handle_whois_connection(
                                         log.error(format!("WHOIS write error: {}", e));
                                         return;
                                     }
+                                    wrote_output = true;
 
                                     // Update connection stats
                                     app_state
@@ -233,13 +241,37 @@ async fn handle_whois_connection(
                             }
                         }
 
+                        // Nothing reached the wire: the model answered with only a
+                        // close, or with actions that all failed. Say so in a WHOIS
+                        // comment line rather than hanging up silently — '%' is the
+                        // conventional comment marker, so a client reads it as a
+                        // remark and never as a record.
+                        if !wrote_output {
+                            log.warn(format!(
+                                "WHOIS produced no response for {} ({} failed action(s)); \
+                                 answering with a comment instead of closing silently",
+                                peer_addr,
+                                execution_result.failures.len()
+                            ));
+                            let notice = b"% netget: no data was produced for this query\r\n";
+                            if writer.write_all(notice).await.is_err() {
+                                return;
+                            }
+                            let _ = writer.flush().await;
+                        }
+
                         // Break loop if LLM requested connection close
                         if should_close {
                             break;
                         }
                     }
                     Err(e) => {
+                        // Same reasoning as above: the client is waiting for a
+                        // response it will otherwise never get.
                         log.warn(format!("WHOIS LLM call failed: {}", e));
+                        let notice = b"% netget: the query could not be answered\r\n";
+                        let _ = writer.write_all(notice).await;
+                        let _ = writer.flush().await;
                         break;
                     }
                 }

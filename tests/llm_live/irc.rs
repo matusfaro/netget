@@ -39,9 +39,11 @@ async fn irc_registration_welcome_numeric() -> E2EResult<()> {
     }
     let server = LiveRequestTest::new(
         "irc",
-        "You are an IRC server named irc.netget.example. When a client \
-         completes registration by sending NICK and USER, welcome it with the \
-         001 welcome numeric addressed to that nickname.",
+        "You are an IRC server named irc.netget.example. A client registers by \
+         sending NICK and then USER; once the USER line arrives, registration \
+         is complete and you must immediately send the 001 welcome numeric \
+         addressed to that nickname. Do not wait for anything further — the \
+         client cannot proceed until it sees 001.",
     )
     .start()
     .await?;

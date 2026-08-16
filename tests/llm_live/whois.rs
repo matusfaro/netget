@@ -34,8 +34,10 @@ async fn whois_query_instructed_record() -> E2EResult<()> {
     }
     let server = LiveRequestTest::new(
         "whois",
-        "For whois queries about netget-live.example, reply with a whois \
-         record whose registrar line reads: Registrar: NETGET-LIVE-REGISTRAR",
+        "For whois queries about netget-live.example, always send back a whois \
+         record whose registrar line reads: Registrar: NETGET-LIVE-REGISTRAR. \
+         Send the record itself — closing the connection without one leaves the \
+         client with nothing.",
     )
     .start()
     .await?;
