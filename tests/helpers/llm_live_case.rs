@@ -329,45 +329,79 @@ impl EventCase {
             .map(normalize_action_object)
             .collect();
 
-        let chosen = actions
+        // A model may legitimately emit several actions of the same type — a BLE
+        // server laying out Generic Access (0x1800) before its profile's own
+        // service, say. Checking only the first would fail the case for an
+        // answer that is correct, so every candidate is tried and the one that
+        // satisfies the checks wins; the failure report keeps the last one's
+        // detail when none does.
+        let candidates: Vec<&Value> = actions
             .iter()
-            .find(|a| {
+            .filter(|a| {
                 a["type"]
                     .as_str()
                     .map(|t| accepted.iter().any(|n| n == t))
                     .unwrap_or(false)
             })
-            .ok_or_else(|| {
-                format!(
-                    "model did not use {} for event '{}'. It answered: {}",
-                    accepted
-                        .iter()
-                        .map(|n| format!("'{}'", n))
-                        .collect::<Vec<_>>()
-                        .join(" or "),
-                    self.event_id,
-                    serde_json::to_string_pretty(&actions).unwrap_or_default()
-                )
-            })?;
+            .collect();
+        let chosen = candidates.first().copied().ok_or_else(|| {
+            format!(
+                "model did not use {} for event '{}'. It answered: {}",
+                accepted
+                    .iter()
+                    .map(|n| format!("'{}'", n))
+                    .collect::<Vec<_>>()
+                    .join(" or "),
+                self.event_id,
+                serde_json::to_string_pretty(&actions).unwrap_or_default()
+            )
+        })?;
 
         let mut failures = Vec::new();
-        for (describe, check) in &self.action_checks {
-            match check(chosen) {
-                Ok(()) => println!("  ✅ {}", describe),
-                Err(e) => {
-                    println!("  ❌ {} — {}", describe, e);
-                    failures.push(format!("{} — {}", describe, e));
+        let mut chosen = chosen;
+        for (index, candidate) in candidates.iter().enumerate() {
+            let mut attempt_failures = Vec::new();
+            for (describe, check) in &self.action_checks {
+                if let Err(e) = check(candidate) {
+                    attempt_failures.push(format!("{} — {}", describe, e));
                 }
+            }
+            for pc in &self.param_checks {
+                let value = candidate.get(pc.name).cloned().unwrap_or(Value::Null);
+                if let Err(e) = (pc.check)(&value) {
+                    attempt_failures.push(format!("{} — {}", pc.describe, e));
+                }
+            }
+            chosen = candidate;
+            failures = attempt_failures;
+            if failures.is_empty() {
+                if index > 0 {
+                    println!(
+                        "  (matched the {}{} action of this type)",
+                        index + 1,
+                        match index + 1 {
+                            2 => "nd",
+                            3 => "rd",
+                            _ => "th",
+                        }
+                    );
+                }
+                break;
+            }
+        }
+        for (describe, check) in &self.action_checks {
+            if check(chosen).is_ok() {
+                println!("  ✅ {}", describe);
+            } else {
+                println!("  ❌ {}", describe);
             }
         }
         for pc in &self.param_checks {
             let value = chosen.get(pc.name).cloned().unwrap_or(Value::Null);
-            match (pc.check)(&value) {
-                Ok(()) => println!("  ✅ {}", pc.describe),
-                Err(e) => {
-                    println!("  ❌ {} — {}", pc.describe, e);
-                    failures.push(format!("{} — {}", pc.describe, e));
-                }
+            if (pc.check)(&value).is_ok() {
+                println!("  ✅ {}", pc.describe);
+            } else {
+                println!("  ❌ {}", pc.describe);
             }
         }
         if failures.is_empty() {

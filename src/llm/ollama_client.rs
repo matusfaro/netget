@@ -35,6 +35,49 @@ enum LlmBackend {
 /// Strip markdown code fences (```json ... ``` or ``` ... ```) from text
 /// This helps handle cases where the LLM wraps JSON responses in markdown formatting
 /// Handles multiple trailing backticks (e.g., ```\n```)
+/// Pull the outermost JSON object out of a response that carries prose around
+/// it.
+///
+/// A **reasoning** model answers with its thinking first and the JSON after
+/// (`<reasoning>…</reasoning>\n{"actions": [...]}`), and prose that happens to
+/// contain an angle bracket or an unbalanced tag defeats the XML-reference
+/// stripping that runs before validation. The answer is then correct and
+/// rejected, which surfaces as "LLM failed to provide valid format after
+/// retry" — a hard failure over formatting, not content.
+///
+/// Braces are matched over `char_indices` so the slice lands on a character
+/// boundary: a model writing an em dash inside a string would otherwise
+/// truncate the object mid-character.
+fn extract_embedded_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, c) in text[start..].char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[start..=start + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn strip_markdown_fences(text: &str) -> String {
     let mut result = text.trim();
 
@@ -1862,6 +1905,24 @@ impl OllamaClient {
             // Strip markdown code fences if present (```json ... ``` or ``` ... ```)
             // LLMs sometimes wrap JSON in markdown formatting which causes parse errors
             let json_cleaned = strip_markdown_fences(&json_only);
+
+            // A reasoning model puts its thinking before the JSON, so accept an
+            // answer that is embedded in prose rather than failing it for
+            // formatting. Strict parsing is still tried first.
+            let json_cleaned = match ActionResponse::from_str(&json_cleaned) {
+                Ok(_) => json_cleaned,
+                Err(_) => match extract_embedded_json_object(&json_cleaned) {
+                    Some(embedded) if ActionResponse::from_str(embedded).is_ok() => {
+                        debug!(
+                            "Recovered the action JSON from a response that wrapped it in prose \
+                             ({} chars of surrounding text)",
+                            json_cleaned.len().saturating_sub(embedded.len())
+                        );
+                        embedded.to_string()
+                    }
+                    _ => json_cleaned,
+                },
+            };
 
             // Try to parse cleaned JSON as ActionResponse to check format
             match ActionResponse::from_str(&json_cleaned) {
