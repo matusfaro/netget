@@ -63,6 +63,19 @@ pub const LLM_REQUEST_TIMEOUT_SECS: u64 = 300;
 /// one at a time no matter what `--test-threads` says.
 static LIVE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Canonicalize a stack name via the server registry, so "jsonrpc" matches
+/// the registry's reported "JSON-RPC". Falls back to the input unchanged.
+fn canonical_stack(name: &str) -> String {
+    netget::protocol::server_registry::registry()
+        .parse_from_str(name)
+        .unwrap_or_else(|| name.to_string())
+}
+
+fn stacks_match(reported: &str, expected: &str) -> bool {
+    reported.eq_ignore_ascii_case(expected)
+        || canonical_stack(reported).eq_ignore_ascii_case(&canonical_stack(expected))
+}
+
 /// Resolve the model to use for live tests.
 pub fn live_model() -> String {
     std::env::var("NETGET_LLM_TEST_MODEL")
@@ -217,7 +230,7 @@ impl LiveProtocolTest {
         let server = instance
             .servers
             .iter()
-            .find(|s| s.stack.eq_ignore_ascii_case(&self.expected_stack))
+            .find(|s| stacks_match(&s.stack, &self.expected_stack))
             .cloned()
             .ok_or_else(|| {
                 format!(
@@ -324,7 +337,7 @@ impl LiveRequestTest {
         let server = instance
             .servers
             .iter()
-            .find(|s| s.stack.eq_ignore_ascii_case(&self.protocol))
+            .find(|s| stacks_match(&s.stack, &self.protocol))
             .cloned()
             .ok_or_else(|| {
                 format!(
@@ -374,39 +387,38 @@ impl LiveServer {
         let mut stream = TcpStream::connect(self.addr()).await?;
         stream.write_all(payload).await?;
         stream.flush().await?;
-
-        let mut response = Vec::new();
-        let mut buf = [0u8; 4096];
-        let mut deadline = FIRST_BYTE_TIMEOUT;
-        loop {
-            match tokio::time::timeout(deadline, stream.read(&mut buf)).await {
-                Ok(Ok(0)) => break, // peer closed
-                Ok(Ok(n)) => {
-                    response.extend_from_slice(&buf[..n]);
-                    deadline = IDLE_READ_TIMEOUT;
-                }
-                Ok(Err(e)) => {
-                    if response.is_empty() {
-                        return Err(format!("TCP read error before any response: {}", e).into());
-                    }
-                    break;
-                }
-                Err(_) if response.is_empty() => {
-                    return Err(format!(
-                        "No TCP response within {:?} (model never answered the event)",
-                        FIRST_BYTE_TIMEOUT
-                    )
-                    .into());
-                }
-                Err(_) => break, // idle after data: response complete
-            }
-        }
+        let response = read_until_idle(&mut stream, "response").await?;
         println!(
             "📥 tcp response ({} bytes): {:?}",
             response.len(),
             String::from_utf8_lossy(&response)
         );
         Ok(response)
+    }
+
+    /// TCP dialogue for greeting-first protocols (SMTP, POP3, FTP…): connect,
+    /// read the server's greeting (itself a live model call on the
+    /// connection-open event), then send `payload` and read the reply.
+    /// Returns `(greeting, response)`.
+    pub async fn tcp_greeting_roundtrip(&self, payload: &[u8]) -> E2EResult<(Vec<u8>, Vec<u8>)> {
+        let mut stream = TcpStream::connect(self.addr()).await?;
+
+        let greeting = read_until_idle(&mut stream, "greeting").await?;
+        println!(
+            "📥 greeting ({} bytes): {:?}",
+            greeting.len(),
+            String::from_utf8_lossy(&greeting)
+        );
+
+        stream.write_all(payload).await?;
+        stream.flush().await?;
+        let response = read_until_idle(&mut stream, "response").await?;
+        println!(
+            "📥 response ({} bytes): {:?}",
+            response.len(),
+            String::from_utf8_lossy(&response)
+        );
+        Ok((greeting, response))
     }
 
     /// UDP request/response: send one datagram, wait for one reply.
@@ -495,6 +507,38 @@ impl LiveServer {
     pub async fn finish(self) -> E2EResult<()> {
         self.instance.stop().await
     }
+}
+
+/// Shared read loop: first byte within [`FIRST_BYTE_TIMEOUT`], then keep
+/// reading until [`IDLE_READ_TIMEOUT`] passes with no data or the peer closes.
+async fn read_until_idle(stream: &mut TcpStream, what: &str) -> E2EResult<Vec<u8>> {
+    let mut data = Vec::new();
+    let mut buf = [0u8; 4096];
+    let mut deadline = FIRST_BYTE_TIMEOUT;
+    loop {
+        match tokio::time::timeout(deadline, stream.read(&mut buf)).await {
+            Ok(Ok(0)) => break,
+            Ok(Ok(n)) => {
+                data.extend_from_slice(&buf[..n]);
+                deadline = IDLE_READ_TIMEOUT;
+            }
+            Ok(Err(e)) => {
+                if data.is_empty() {
+                    return Err(format!("TCP read error before any {}: {}", what, e).into());
+                }
+                break;
+            }
+            Err(_) if data.is_empty() => {
+                return Err(format!(
+                    "No {} within {:?} (model never answered the event)",
+                    what, FIRST_BYTE_TIMEOUT
+                )
+                .into());
+            }
+            Err(_) => break,
+        }
+    }
+    Ok(data)
 }
 
 // ---------------------------------------------------------------------------

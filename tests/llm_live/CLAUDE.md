@@ -29,6 +29,27 @@ necessarily takes the live-LLM path; `server.expect_llm_answered()` verifies
 that from the debug logs ("LLM call for event") as a harness sanity check.
 Use `.allow_scripts()` on `LiveProtocolTest` to evaluate script-mode setup.
 
+## Coverage
+
+Covered (15): tcp, udp, http, dns, redis, whois, memcached, smtp, pop3, ftp,
+ntp, stun, sip, jsonrpc, rss. Assertions include protocol correlation fields
+where the protocol has them: DNS query ID (via hickory-client), STUN
+transaction ID + magic cookie, SIP Call-ID/CSeq echo, JSON-RPC id echo, NTP
+mode/stratum bits, RESP framing (via the redis crate).
+
+Not yet covered, live-testable the same way (~45): telnet, imap, nntp, irc,
+rtsp, socks5, proxy, websocket, http2, xmlrpc, oauth2/openid/openapi, the
+HTTP-API family (s3, sqs, dynamo, elasticsearch, couchdb, kubernetes, npm,
+pypi, maven, oci-registry, openai, ollama, hls, webdav, torrent-tracker,
+git/mercurial smart-HTTP), syslog, tftp, dhcp/bootp, mqtt, coap (`coap-lite`
+dev-dep exists), modbus (`tokio-modbus` dev-dep exists), amqp (`lapin`).
+
+Blocked on this machine (hardware/root/system libs, ~26): bluetooth_ble* (16),
+usb* (6), nfc, arp/datalink/isis (pcap+root), icmp/igmp/ospf (raw sockets),
+wireguard/openvpn/ipsec. Needs dedicated client machinery first (~15):
+ssh/ssh-agent, tls/dot/doh/quic, grpc/etcd/zookeeper (protoc), kafka,
+mysql/mssql/db2/postgresql/cassandra, vnc/rdp, bitcoin, webrtc.
+
 ## Running
 
 ```bash
