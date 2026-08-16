@@ -75,13 +75,19 @@ pub mod xmlrpc;
 // Event-level suites — no feature gate needed: each case resolves its protocol
 // in the registry at runtime and skips cleanly when it is not compiled in.
 // ---------------------------------------------------------------------------
+pub mod bigdata;
 pub mod ble_profiles;
 pub mod bluetooth_ble;
 pub mod datastores;
+pub mod dns_secure;
+pub mod federation;
 pub mod http_apis;
 pub mod netservices;
 pub mod nfc;
+pub mod p2p;
 pub mod rawnet;
+pub mod realtime;
+pub mod remote_access;
 pub mod routing;
 pub mod streams;
 pub mod usb;

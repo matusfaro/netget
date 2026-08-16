@@ -222,8 +222,16 @@ pub static USB_SMARTCARD_APDU_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::ne
 pub static USB_SMARTCARD_DETACHED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "usb_smartcard_detached",
-        "The host detached from the virtual CCID reader",
-        json!({ "type": "wait_for_more" }),
+        "The host detached from the virtual CCID reader. Nothing can be written to a reader no \
+         host is attached to, so this is informational: note it in the log or in memory.",
+        // Must be one of the *common* actions. The event is `with_no_actions()`, so
+        // `call_llm` offers the model nothing but the common set — an example naming
+        // `wait_for_more` (which this protocol neither declares nor executes) told the
+        // model to answer with an action that would be rejected as unknown.
+        json!({
+            "type": "append_to_log",
+            "message": "smart card host {{event.connection_id}} detached"
+        }),
     )
     .with_parameters(vec![Parameter {
         name: "connection_id".to_string(),

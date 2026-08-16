@@ -600,3 +600,37 @@ async fn usb_smartcard_attach_inserts_card() -> E2EResult<()> {
     .run()
     .await
 }
+
+/// The host is gone. Nothing can be written to a reader no host is attached
+/// to, so the event is `with_no_actions()` and the model is offered only the
+/// common actions — recording the detach is the one correct answer, and
+/// reaching for a CCID action would produce an unknown-action rejection.
+#[tokio::test]
+async fn usb_smartcard_detach_is_recorded() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "usb-smartcard",
+        "You are a virtual smart card reader. Keep a record of every host \
+         that attaches to you and every host that goes away, naming the \
+         connection.",
+        "usb_smartcard_detached",
+        json!({ "connection_id": "conn-2" }),
+    )
+    .expect_action("append_to_log")
+    .or_action("append_memory")
+    .or_action("show_message")
+    .check_action(|a| {
+        if a.to_string().contains("conn-2") {
+            Ok(())
+        } else {
+            Err(format!(
+                "the record should name the connection that detached (conn-2), got {}",
+                a
+            ))
+        }
+    })
+    .run()
+    .await
+}

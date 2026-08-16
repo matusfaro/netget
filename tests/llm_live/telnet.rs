@@ -9,7 +9,7 @@
 //! A Telnet client sends bare-LF lines; a well-formed answer comes back
 //! CRLF-framed. The tests assert that framing, not just the text.
 //!
-//! COVERS: telnet: telnet_message_received
+//! COVERS: telnet: telnet_message_received, telnet_connection_opened
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,
@@ -91,6 +91,48 @@ async fn telnet_command_dispatch() -> E2EResult<()> {
 
     let result = expect_contains(&time_reply, "TIME-OK")
         .and(expect_contains(&other_reply, "UNKNOWN-COMMAND"))
+        .and(server.expect_llm_answered().await);
+
+    server.finish().await?;
+    result
+}
+
+/// `telnet_connection_opened` fires only under `send_first`, and it is the
+/// only chance to show a login banner before the user types. A prompt must
+/// *not* end with a newline — `send_telnet_prompt` writes verbatim so the
+/// cursor stays on the prompt line, which is what a real terminal expects.
+#[tokio::test]
+async fn telnet_connection_opened_shows_a_login_prompt() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    let server = LiveRequestTest::new(
+        "telnet",
+        "You are a Telnet login service. The moment a client connects, before \
+         it types anything, show one banner line reading NETGET-LOGIN-7431 \
+         and then the prompt 'login: ' on its own, with no newline after the \
+         prompt so the cursor stays on that line.",
+    )
+    .server_params(serde_json::json!({ "send_first": true }))
+    .start()
+    .await?;
+
+    let mut session = server.tcp_session().await?;
+    let greeting = session.read("connect-time banner").await?;
+
+    let framing = if greeting.trim_end().ends_with(':') || greeting.ends_with(' ') {
+        Ok(())
+    } else {
+        Err(format!(
+            "the prompt must be written without a trailing newline \
+             (send_telnet_prompt), or the user types on the line below it. Got: {:?}",
+            greeting
+        )
+        .into())
+    };
+
+    let result = expect_contains(&greeting, "NETGET-LOGIN-7431")
+        .and(framing)
         .and(server.expect_llm_answered().await);
 
     server.finish().await?;

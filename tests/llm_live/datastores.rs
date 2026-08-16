@@ -1112,3 +1112,45 @@ async fn memcached_unknown_command_is_refused() -> E2EResult<()> {
     .run()
     .await
 }
+
+/// The socket is already closed by the time this fires — the event is
+/// `with_no_actions()`, so a MongoDB wire-protocol reply is not merely
+/// pointless but unavailable. Recording why the client went away is the
+/// answer, and `reason` distinguishes a clean client disconnect from a
+/// protocol error the server itself raised.
+#[tokio::test]
+async fn mongodb_disconnect_is_recorded_with_its_reason() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "mongodb",
+        "You are a MongoDB server. Keep a record of how each client session \
+         ended, so a malformed-message disconnect can be told apart from a \
+         client that simply closed.",
+        "mongodb_disconnected",
+        json!({
+            "reason": "malformed_op_msg",
+            "client_ip": "203.0.113.140:49700",
+            "connection_id": "conn-3"
+        }),
+    )
+    .expect_action("append_to_log")
+    .or_action("append_memory")
+    .or_action("show_message")
+    .check_action(|a| {
+        let flat = a.to_string().to_lowercase();
+        if flat.contains("malformed") {
+            Ok(())
+        } else {
+            Err(format!(
+                "the record must keep the reason the connection ended \
+                 (malformed_op_msg) — that is the only thing distinguishing a protocol \
+                 error from a normal close. Got {}",
+                a
+            ))
+        }
+    })
+    .run()
+    .await
+}

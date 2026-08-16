@@ -1714,3 +1714,41 @@ async fn tracker_scrape_is_keyed_by_info_hash() -> E2EResult<()> {
     .run()
     .await
 }
+
+/// RFC 7009 §2.2 fixes the revocation response: **200 whether or not the
+/// token existed**, so an attacker cannot probe token validity through this
+/// endpoint. netget sends that reply itself and the event is
+/// `with_no_actions()` — so the model must not try to shape a response, and
+/// the useful thing it can do is record the revocation.
+#[tokio::test]
+async fn oauth2_revoke_is_recorded_not_answered() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "oauth2",
+        "You are an OAuth2 authorization server. Keep track of which tokens \
+         have been revoked so you can stop honouring them later.",
+        "oauth2_revoke",
+        json!({
+            "token": "ACCESS_netget7431",
+            "token_type_hint": "access_token"
+        }),
+    )
+    .expect_action("append_memory")
+    .or_action("set_memory")
+    .or_action("append_to_log")
+    .check_action(|a| {
+        if a.to_string().contains("ACCESS_netget7431") {
+            Ok(())
+        } else {
+            Err(format!(
+                "the note must name the revoked token (ACCESS_netget7431) or it cannot \
+                 be honoured later; got {}",
+                a
+            ))
+        }
+    })
+    .run()
+    .await
+}

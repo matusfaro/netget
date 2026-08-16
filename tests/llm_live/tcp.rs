@@ -6,7 +6,7 @@
 //! `--server` (no model call) so the only unpredictable behavior under test
 //! is the model answering the request event (LiveRequestTest).
 //!
-//! COVERS: tcp: tcp_data_received
+//! COVERS: tcp: tcp_data_received, tcp_connection_opened
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,
@@ -103,4 +103,34 @@ async fn tcp_conditional_reply() -> E2EResult<()> {
     server.finish().await?;
     ping_result?;
     other_result
+}
+
+/// Request type: the connection-open event. With `send_first` the server
+/// raises `tcp_connection_opened` before the client has said anything, so the
+/// model must produce a banner unprompted — nothing in the event describes
+/// what to send, only the instruction does.
+#[tokio::test]
+async fn tcp_connection_opened_sends_a_banner() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    let server = LiveRequestTest::new(
+        "tcp",
+        "As soon as a client connects, greet it — before it sends anything — \
+         with exactly: NETGET-BANNER-7431",
+    )
+    // Without send_first the server stays silent until the first byte
+    // arrives and tcp_connection_opened never fires at all.
+    .server_params(serde_json::json!({ "send_first": true }))
+    .start()
+    .await?;
+
+    let mut session = server.tcp_session().await?;
+    let greeting = session.read("connect-time banner").await?;
+
+    let result = expect_contains(&greeting, "NETGET-BANNER-7431")
+        .and(server.expect_llm_answered().await);
+
+    server.finish().await?;
+    result
 }

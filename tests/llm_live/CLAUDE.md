@@ -50,6 +50,27 @@ Those parameter checks are the point. Examples in the tree:
 | USB FIDO2 | approval quotes the event's own `approval_id`; a denial is `deny_request`, not silence |
 | USB smartcard / NFC | refusals carry a real ISO 7816 status word (`69 xx`), never `90 00` |
 | WireGuard | authorization quotes the peer's public key and pins non-empty allowed IPs |
+| TURN | response echoes the 24-hex transaction id **and** copies `relay_address` verbatim (NetGet bound that socket; any other value is refused with 508) |
+| Torrent-DHT | KRPC reply echoes `t` byte-for-byte; node ids are 40 hex chars; a bad announce token is error **203**, not silence |
+| Torrent-Peer | handshake echoes the peer's `info_hash` (or it disconnects); a `piece` echoes the request's `index`/`begin` |
+| Bitcoin | `pong` carries the ping's nonce — bitcoind matches its outstanding ping on it |
+| RTP | media is *described* (`content`/`tone_hz`/`digits`), never sampled; only `content: raw` may carry hex bytes |
+| WebRTC | a media-only offer this server cannot serve is refused explicitly, not accepted |
+| RDP | selects a protocol **the client offered**; an unacceptable offer is refused with `HYBRID_REQUIRED_BY_SERVER` |
+| VNC | the framebuffer is redrawn from scratch, so a keystroke redraw must repaint the fixed chrome too |
+| gRPC | response satisfies the event's declared schema, unwrapped; a missing record is `NOT_FOUND`, not a 200 |
+| Snowflake | `rowset` row width equals `rowtype` column count (the driver indexes rows by position) |
+| YARN | `state` and `finalStatus` are distinct enumerations; ids are `application_<ts>_<seq>` |
+| SAML | RelayState comes back unchanged; the assertion posts to the SP's ACS; `/metadata` is an `EntityDescriptor`, not an assertion |
+| DoH / DoT | answer with the **DNS** actions they delegate (not something HTTP-shaped), echoing `query_id` |
+
+Events declared `with_no_actions()` (MongoDB disconnect, OAuth2 revoke,
+WebRTC-signaling disconnect, USB smart-card detach) are graded too: the model
+is offered *only* the common actions there, so the correct answer is an
+observation, and reaching for a protocol action would be rejected as unknown.
+Writing those cases is what surfaced `usb_smartcard_detached`'s
+`response_example` naming `wait_for_more` — an action that protocol neither
+declares nor executes.
 
 ## Running
 
