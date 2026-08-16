@@ -64,7 +64,7 @@ fn claimed_pairs() -> BTreeSet<(String, String)> {
         let mut rest = source.as_str();
         while let Some(idx) = rest.find("EventCase::new(") {
             rest = &rest[idx + "EventCase::new(".len()..];
-            let literals = leading_string_literals(rest, 2);
+            let literals = call_arguments(rest);
             if let [proto, event] = literals.as_slice() {
                 claims.insert((proto.clone(), event.clone()));
             }
@@ -73,56 +73,73 @@ fn claimed_pairs() -> BTreeSet<(String, String)> {
     claims
 }
 
-/// The first `count` string literals appearing in `text`, in order. Good
-/// enough for the call shapes this suite uses (a protocol name, then a
-/// possibly-multi-line instruction, then the event id).
-fn leading_string_literals(text: &str, count: usize) -> Vec<String> {
-    let mut out = Vec::new();
+/// The protocol and event id from one `EventCase::new(...)` call.
+///
+/// The scan stops at the call's own closing paren. It used to run on to a
+/// fixed byte budget, which read the *next* literal in the file — inside a
+/// macro body, where the event id is a macro variable rather than a literal,
+/// that picked up a `ParamCheck` argument and reported it as a bogus event.
+/// A macro-generated case contributes no claim from here; those suites declare
+/// their pairs with a `COVERS:` line instead.
+fn call_arguments(text: &str) -> Vec<String> {
+    let mut literals = Vec::new();
+    let mut depth = 1usize; // we start just inside `EventCase::new(`
     let bytes = text.as_bytes();
     let mut i = 0;
-    // Only look at the head of the call; a whole file's worth would drift.
-    let limit = text.len().min(4000);
-    while i < limit && out.len() < count + 1 {
-        if bytes[i] == b'"' {
-            let mut j = i + 1;
-            let mut literal = String::new();
-            let mut escaped = false;
-            while j < text.len() {
-                let c = bytes[j] as char;
-                if escaped {
-                    // A `\` + newline continuation joins lines in Rust source.
-                    if c != '\n' {
+    while i < text.len() {
+        match bytes[i] as char {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            '"' => {
+                let mut j = i + 1;
+                let mut literal = String::new();
+                let mut escaped = false;
+                while j < text.len() {
+                    let c = bytes[j] as char;
+                    if escaped {
+                        if c != '\n' {
+                            literal.push(c);
+                        }
+                        escaped = false;
+                    } else if c == '\\' {
+                        escaped = true;
+                    } else if c == '"' {
+                        break;
+                    } else {
                         literal.push(c);
                     }
-                    escaped = false;
-                } else if c == '\\' {
-                    escaped = true;
-                } else if c == '"' {
-                    break;
-                } else {
-                    literal.push(c);
+                    j += 1;
                 }
-                j += 1;
+                literals.push(literal.trim().to_string());
+                i = j;
             }
-            out.push(literal.trim().to_string());
-            i = j + 1;
-        } else {
-            i += 1;
+            _ => {}
         }
+        i += 1;
     }
-    // Literal 0 is the protocol; the instruction is literal 1; the event id is
-    // the first literal that looks like an identifier after it.
-    if out.is_empty() {
+
+    if literals.is_empty() {
         return Vec::new();
     }
-    let protocol = out[0].clone();
-    let event = out
+    let protocol = literals[0].clone();
+    // The event id is the first argument after the instruction that reads like
+    // an identifier.
+    let event = literals
         .iter()
         .skip(1)
         .find(|s| {
             !s.is_empty()
-                && s.chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && s.chars().all(|c| {
+                    c.is_ascii_lowercase()
+                        || c.is_ascii_uppercase()
+                        || c.is_ascii_digit()
+                        || c == '_'
+                })
         })
         .cloned();
     match event {

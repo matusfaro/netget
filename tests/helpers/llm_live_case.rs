@@ -248,7 +248,17 @@ impl EventCase {
         }
         let mut accepted: Vec<String> = vec![self.expect_action.clone()];
         accepted.extend(self.also_accept.iter().cloned());
+        // Common actions are offered on every event alongside the protocol's
+        // own, and are the only thing an event marked `with_no_actions()` can
+        // be answered with (LDAP's unbind, which RFC 4511 forbids replying to).
+        let common: Vec<String> = get_network_event_common_actions()
+            .into_iter()
+            .map(|a| a.name)
+            .collect();
         for name in &accepted {
+            if common.contains(name) {
+                continue;
+            }
             if !advertised.iter().any(|a| &a.name == name) {
                 return Err(format!(
                     "case bug: event '{}' of '{}' does not advertise action '{}'. Advertised: {:?}",
