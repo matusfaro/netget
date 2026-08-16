@@ -281,6 +281,14 @@ pub struct Args {
     )]
     pub llm_request_timeout: Option<u64>,
 
+    /// Completion-token budget for a single LLM call
+    #[clap(
+        long = "llm-max-tokens",
+        value_name = "TOKENS",
+        help = "Completion tokens a single LLM call may produce. Default: 2048. A reasoning model spends this budget on its thinking block AND its answer, so 2048 can truncate the action JSON mid-object; raise it (e.g. 8192) for such models."
+    )]
+    pub llm_max_tokens: Option<u32>,
+
     /// Path to embedded GGUF model file (enables embedded LLM inference)
     #[cfg(feature = "embedded-llm")]
     #[clap(

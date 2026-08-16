@@ -775,6 +775,15 @@ impl std::str::FromStr for CommandInterpretation {
 /// Default per-request wall-clock bound for a backend call.
 pub const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Default completion-token budget for one backend call.
+///
+/// A **reasoning** model spends this budget twice: once on its thinking block
+/// and once on the answer. At 2048 a 27B reasoning model was observed emitting
+/// a full `<reasoning>` section and then a JSON action list truncated
+/// mid-object — which surfaces as an unparseable (or empty) response, not as
+/// an obvious limit. Raise it with `--llm-max-tokens` for such models.
+pub const DEFAULT_MAX_TOKENS: u32 = 2048;
+
 /// LLM API client supporting Ollama and OpenAI-compatible backends
 #[derive(Clone)]
 pub struct OllamaClient {
@@ -786,6 +795,8 @@ pub struct OllamaClient {
     breaker: std::sync::Arc<CircuitBreaker>,
     /// Wall-clock bound on a single backend call.
     request_timeout: std::time::Duration,
+    /// Completion-token budget for a single backend call.
+    max_tokens: u32,
 }
 
 impl OllamaClient {
@@ -823,6 +834,7 @@ impl OllamaClient {
             app_state: None,
             breaker: std::sync::Arc::new(CircuitBreaker::default()),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 
@@ -837,6 +849,7 @@ impl OllamaClient {
             app_state: None,
             breaker: std::sync::Arc::new(CircuitBreaker::default()),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 
@@ -863,6 +876,7 @@ impl OllamaClient {
             app_state: None,
             breaker: std::sync::Arc::new(CircuitBreaker::default()),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 
@@ -879,6 +893,7 @@ impl OllamaClient {
             app_state: None,
             breaker: std::sync::Arc::new(CircuitBreaker::default()),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 
@@ -1094,6 +1109,15 @@ impl OllamaClient {
         self
     }
 
+    /// Override the completion-token budget for a single backend call
+    /// (default [`DEFAULT_MAX_TOKENS`]). Reasoning models need more than the
+    /// default, because their thinking block is spent from the same budget as
+    /// the answer.
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
     /// Replace the circuit breaker (thresholds are per-breaker; see
     /// [`crate::llm::circuit_breaker`]).
     ///
@@ -1234,8 +1258,9 @@ impl OllamaClient {
                     "model": model,
                     "prompt": prompt,
                     "stream": true,
-                    // num_predict allows longer responses (esp. binary protocol data).
-                    "options": { "num_predict": 2048 },
+                    // num_predict allows longer responses (esp. binary protocol
+                    // data, and reasoning models that think before answering).
+                    "options": { "num_predict": self.max_tokens },
                 });
                 if format.is_some() {
                     body["format"] = serde_json::json!("json");
@@ -1303,7 +1328,7 @@ impl OllamaClient {
                 let mut body = serde_json::json!({
                     "model": model,
                     "messages": [{ "role": "user", "content": prompt }],
-                    "max_tokens": 2048,
+                    "max_tokens": self.max_tokens,
                     // Stream so reasoning appears live; ask for usage in the final frame.
                     "stream": true,
                     "stream_options": { "include_usage": true },

@@ -32,11 +32,14 @@ use crate::ui::App;
 
 /// Create the LLM client from CLI args, branching on --openai-url vs --ollama-url
 pub fn create_llm_client(args: &Args, lock_enabled: bool) -> Result<OllamaClient> {
-    let client = create_llm_client_inner(args, lock_enabled)?;
-    Ok(match args.llm_request_timeout {
-        Some(secs) => client.with_request_timeout(std::time::Duration::from_secs(secs)),
-        None => client,
-    })
+    let mut client = create_llm_client_inner(args, lock_enabled)?;
+    if let Some(secs) = args.llm_request_timeout {
+        client = client.with_request_timeout(std::time::Duration::from_secs(secs));
+    }
+    if let Some(max_tokens) = args.llm_max_tokens {
+        client = client.with_max_tokens(max_tokens);
+    }
+    Ok(client)
 }
 
 fn create_llm_client_inner(args: &Args, lock_enabled: bool) -> Result<OllamaClient> {
