@@ -612,7 +612,14 @@ pub fn open_server_action(
             Parameter {
                 name: "startup_params".to_string(),
                 type_hint: "object".to_string(),
-                description: "Optional protocol-specific startup parameters. See protocol documentation for available parameters.".to_string(),
+                description: "Optional protocol-specific startup parameters. ONLY the \
+                              parameters the protocol's documentation declares are accepted: an \
+                              undeclared key is refused by name and THE SERVER DOES NOT START. \
+                              A protocol that declares none takes no startup_params at all. \
+                              Anything the protocol does not declare - what the server should \
+                              answer, which mailbox or database exists, what data to serve - \
+                              belongs in 'instruction', not here."
+                    .to_string(),
                 required: false,
             },
             Parameter {
@@ -829,7 +836,12 @@ pub fn open_client_action(
         Parameter {
             name: "startup_params".to_string(),
             type_hint: "object".to_string(),
-            description: "Optional protocol-specific startup parameters. For example, HTTP clients may accept default headers or user agent settings.".to_string(),
+            description: "Optional protocol-specific startup parameters. ONLY the parameters \
+                          the protocol's documentation declares are accepted; an undeclared key \
+                          is refused by name and the client does not connect. Behavioural \
+                          detail belongs in 'instruction', not here. For example, HTTP clients \
+                          may accept default headers or user agent settings."
+                .to_string(),
             required: false,
         },
         Parameter {
