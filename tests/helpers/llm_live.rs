@@ -28,6 +28,7 @@
 
 use super::common::E2EResult;
 use super::netget::{start_netget, NetGetConfig, NetGetInstance};
+use serde_json::Value;
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
@@ -54,6 +55,12 @@ pub const SETUP_TIMEOUT: Duration = Duration::from_secs(600);
 /// interactive use; a 27B model answering a 30k-char setup prompt has been
 /// observed to legitimately need more.
 pub const LLM_REQUEST_TIMEOUT_SECS: u64 = 300;
+
+/// Completion-token budget per model call (`--llm-max-tokens`). netget's
+/// default of 2048 is spent on a reasoning model's thinking block *and* its
+/// answer, which truncates the action JSON mid-object; the live suite found
+/// exactly that with qwen3.8 on four protocols.
+pub const LLM_MAX_TOKENS: u32 = 8192;
 
 /// Serializes live tests within this process. Without it, every test spawns
 /// its netget at once and all their setup model calls queue behind the shared
@@ -225,6 +232,8 @@ impl LiveProtocolTest {
             .with_extra_args([
                 "--llm-request-timeout".to_string(),
                 LLM_REQUEST_TIMEOUT_SECS.to_string(),
+                "--llm-max-tokens".to_string(),
+                LLM_MAX_TOKENS.to_string(),
             ])
             .with_ollama();
         if self.no_scripts {
@@ -281,6 +290,7 @@ pub struct LiveRequestTest {
     protocol: String,
     instruction: String,
     log_level: String,
+    server_params: Option<Value>,
 }
 
 impl LiveRequestTest {
@@ -292,7 +302,16 @@ impl LiveRequestTest {
             protocol: protocol.into(),
             instruction: instruction.into(),
             log_level: "debug".to_string(),
+            server_params: None,
         }
+    }
+
+    /// Startup parameters for the server (`--server-params`), e.g. SOCKS5's
+    /// `{"filter_mode": "ask_llm"}` — without which that protocol never
+    /// consults the model at all.
+    pub fn server_params(mut self, params: Value) -> Self {
+        self.server_params = Some(params);
+        self
     }
 
     /// Raise the netget log level (e.g. "trace") for debugging a failure.
@@ -325,18 +344,26 @@ impl LiveRequestTest {
         // fails, run_server_direct errors and no server line appears at all.
         let port = super::common::get_available_port().await?;
 
+        let mut extra_args = vec![
+            "--server".to_string(),
+            self.protocol.clone(),
+            "--port".to_string(),
+            port.to_string(),
+            "--llm-request-timeout".to_string(),
+            LLM_REQUEST_TIMEOUT_SECS.to_string(),
+            "--llm-max-tokens".to_string(),
+            LLM_MAX_TOKENS.to_string(),
+        ];
+        if let Some(params) = &self.server_params {
+            extra_args.push("--server-params".to_string());
+            extra_args.push(params.to_string());
+        }
+
         let config = NetGetConfig::new(&self.instruction)
             .with_model(&model)
             .with_log_level(&self.log_level)
             .with_no_scripts(true)
-            .with_extra_args([
-                "--server".to_string(),
-                self.protocol.clone(),
-                "--port".to_string(),
-                port.to_string(),
-                "--llm-request-timeout".to_string(),
-                LLM_REQUEST_TIMEOUT_SECS.to_string(),
-            ])
+            .with_extra_args(extra_args)
             .with_ollama();
 
         let instance = start_netget(config).await?;
@@ -428,6 +455,15 @@ impl LiveServer {
         Ok((greeting, response))
     }
 
+    /// Open a persistent TCP session for protocols whose dialogue spans
+    /// several exchanges on one connection (IMAP tag correlation, IRC's
+    /// NICK+USER registration burst, NNTP's greeting-then-command flow).
+    pub async fn tcp_session(&self) -> E2EResult<TcpSession> {
+        Ok(TcpSession {
+            stream: TcpStream::connect(self.addr()).await?,
+        })
+    }
+
     /// UDP request/response: send one datagram, wait for one reply.
     pub async fn udp_roundtrip(&self, payload: &[u8]) -> E2EResult<Vec<u8>> {
         let socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -513,6 +549,38 @@ impl LiveServer {
     /// Stop netget, ignoring shutdown errors.
     pub async fn finish(self) -> E2EResult<()> {
         self.instance.stop().await
+    }
+}
+
+/// A persistent TCP connection for multi-exchange protocol dialogues.
+/// Each `read`/`exchange` waits up to [`FIRST_BYTE_TIMEOUT`] for the first
+/// byte (a live model call) and then drains until idle.
+pub struct TcpSession {
+    stream: TcpStream,
+}
+
+impl TcpSession {
+    /// Read one server message (e.g. a greeting the model produced on the
+    /// connection-open event).
+    pub async fn read(&mut self, what: &str) -> E2EResult<String> {
+        let bytes = read_until_idle(&mut self.stream, what).await?;
+        let text = String::from_utf8_lossy(&bytes).to_string();
+        println!("📥 {} ({} bytes): {:?}", what, bytes.len(), text);
+        Ok(text)
+    }
+
+    /// Write without waiting for a reply (e.g. IRC's NICK before USER).
+    pub async fn send(&mut self, payload: &[u8]) -> E2EResult<()> {
+        self.stream.write_all(payload).await?;
+        self.stream.flush().await?;
+        println!("📤 sent: {:?}", String::from_utf8_lossy(payload));
+        Ok(())
+    }
+
+    /// Send and read the reply.
+    pub async fn exchange(&mut self, payload: &[u8], what: &str) -> E2EResult<String> {
+        self.send(payload).await?;
+        self.read(what).await
     }
 }
 

@@ -558,15 +558,19 @@ pub fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
         // Try to find JSON object with "actions" field
         // This handles responses like: <reasoning>...</reasoning>\n{...JSON...}\n<script>...</script>
         // Find matching closing brace by counting braces
+        // char_indices, not chars().enumerate(): the index is used as a BYTE
+        // offset into json_only, and a single multi-byte character anywhere in
+        // the response (a model writing an em dash, say) makes a char counter
+        // point mid-JSON and truncates it.
         let mut depth = 0;
         let mut end_pos = start;
-        for (i, c) in json_only[start..].chars().enumerate() {
+        for (offset, c) in json_only[start..].char_indices() {
             match c {
                 '{' => depth += 1,
                 '}' => {
                     depth -= 1;
                     if depth == 0 {
-                        end_pos = start + i;
+                        end_pos = start + offset;
                         break;
                     }
                 }
