@@ -28,6 +28,57 @@ impl XmlRpcProtocol {
         Self
     }
 
+    /// Read an integer the model may have written as a JSON string.
+    ///
+    /// Models routinely quote numbers (`"8"` for `8`), and refusing that turns
+    /// an otherwise correct answer into an XML-RPC fault the caller cannot act
+    /// on. The rest of the tree already coerces this way (usb-fido2's
+    /// `approval_id` takes a number or a numeric string), so accept it here
+    /// too. Anything that is not a whole number is still refused.
+    fn as_integer(value: &serde_json::Value, what: &str) -> Result<i64> {
+        value
+            .as_i64()
+            .or_else(|| value.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+            .with_context(|| {
+                format!(
+                    "value must be an integer for value_type '{}', got {}",
+                    what, value
+                )
+            })
+    }
+
+    /// Same for doubles: `"19.99"` is a number a model plausibly quotes.
+    fn as_double(value: &serde_json::Value) -> Result<f64> {
+        value
+            .as_f64()
+            .or_else(|| value.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+            .with_context(|| {
+                format!(
+                    "value must be a number for value_type 'double', got {}",
+                    value
+                )
+            })
+    }
+
+    /// Same for booleans: XML-RPC itself writes them as 0/1, and models mirror
+    /// that or quote `"true"`.
+    fn as_boolean(value: &serde_json::Value) -> Result<bool> {
+        if let Some(b) = value.as_bool() {
+            return Ok(b);
+        }
+        if let Some(i) = value.as_i64() {
+            return Ok(i != 0);
+        }
+        match value.as_str().map(|s| s.trim().to_ascii_lowercase()) {
+            Some(ref s) if s == "true" || s == "1" => Ok(true),
+            Some(ref s) if s == "false" || s == "0" => Ok(false),
+            _ => Err(anyhow::anyhow!(
+                "value must be a boolean for value_type 'boolean', got {}",
+                value
+            )),
+        }
+    }
+
     fn execute_success_response(&self, action: serde_json::Value) -> Result<ActionResult> {
         let value_type = action
             .get("value_type")
@@ -41,9 +92,7 @@ impl XmlRpcProtocol {
             "int" | "i4" => {
                 // Range-checked, not cast: `as i32` silently wrapped, so 5000000000
                 // went on the wire as 705032704.
-                let i = value
-                    .as_i64()
-                    .context("value must be an integer for value_type 'int'")?;
+                let i = Self::as_integer(value, value_type)?;
                 let i = i32::try_from(i).map_err(|_| {
                     anyhow::anyhow!(
                         "{} does not fit in an XML-RPC <int> (-2147483648..2147483647); use value_type 'i8'",
@@ -53,11 +102,11 @@ impl XmlRpcProtocol {
                 XmlRpcValue::Int(i)
             }
             "i8" => {
-                let i = value.as_i64().context("Invalid i8 value")?;
+                let i = Self::as_integer(value, "i8")?;
                 XmlRpcValue::I8(i)
             }
             "boolean" | "bool" => {
-                let b = value.as_bool().context("Invalid boolean value")?;
+                let b = Self::as_boolean(value)?;
                 XmlRpcValue::Boolean(b)
             }
             "string" => {
@@ -65,7 +114,7 @@ impl XmlRpcProtocol {
                 XmlRpcValue::String(s.to_string())
             }
             "double" => {
-                let d = value.as_f64().context("Invalid double value")?;
+                let d = Self::as_double(value)?;
                 if !d.is_finite() {
                     // NaN/inf render as "NaN"/"inf", which is not valid <double>.
                     return Err(anyhow::anyhow!("double value must be finite"));
