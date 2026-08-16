@@ -34,8 +34,13 @@ pub static NPM_PACKAGE_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
 pub static NPM_TARBALL_REQUEST: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "NPM_TARBALL_REQUEST",
-        "Triggered when a client requests a package tarball (GET /{package}/-/{tarball})",
-        json!({"type": "npm_package_tarball", "tarball_data": "H4sIAAAAAAAAA..."}),
+        "A client is downloading a package tarball (GET /{package}/-/{tarball}). Answer with \
+         npm_package_tarball only if the base64-encoded .tgz was given to you — it is binary \
+         and cannot be invented. Otherwise answer npm_error with 404.",
+        json!({
+            "type": "npm_package_tarball",
+            "tarball_data": "H4sIAI0lgmoC/+3NvQrCMBSG4cxehZxZYxJrB+8myKHUn7Q0tYt470YdBGcRwfdZ3sO3nD7uDrHRVf+s3ecumQ9zRV1VjxbvdW7jX/d9974Owcyd+YJzHuNQ3pv/dJEUTypbSTo2Oi6P7aSykEmH3Hap7N4Gu5brzAAAAAAAAAAAAAAAAAAAfskNxBOA2gAoAAA="
+        }),
     )
     .with_actions(vec![package_tarball_action(), npm_error_action()])
 });
@@ -318,16 +323,27 @@ fn package_metadata_action() -> ActionDefinition {
 fn package_tarball_action() -> ActionDefinition {
     ActionDefinition {
         name: "npm_package_tarball".to_string(),
-        description: "Return NPM package tarball (.tgz file)".to_string(),
+        description: "Return the package tarball (.tgz). A tarball is binary, so base64 is the \
+                      only faithful form — but that also makes it the one npm response you \
+                      cannot invent: send it only when the encoded bytes were given to you. \
+                      With no tarball to serve, answer npm_error (404) instead."
+            .to_string(),
         parameters: vec![Parameter {
             name: "tarball_data".to_string(),
             type_hint: "string".to_string(),
-            description: "Base64-encoded tarball data (.tgz file contents)".to_string(),
+            description: "The complete .tgz contents, base64-encoded. It is decoded before it \
+                          reaches the client, so it must be valid base64 in full: an \
+                          abbreviation ending in \"...\" is refused with a 500, not sent."
+                .to_string(),
             required: true,
         }],
+        // A real, decodable base64 string (a 32-byte gzip stream), not an elided one.
+        // The previous "H4sIAAAAAAAAA..." example was itself undecodable, so a model
+        // that copied its shape produced exactly the malformed answer that used to be
+        // served as an empty 200.
         example: json!({
             "type": "npm_package_tarball",
-            "tarball_data": "H4sIAAAAAAAAA..."
+            "tarball_data": "H4sIAI0lgmoC/+3NvQrCMBSG4cxehZxZYxJrB+8myKHUn7Q0tYt470YdBGcRwfdZ3sO3nD7uDrHRVf+s3ecumQ9zRV1VjxbvdW7jX/d9974Owcyd+YJzHuNQ3pv/dJEUTypbSTo2Oi6P7aSykEmH3Hap7N4Gu5brzAAAAAAAAAAAAAAAAAAAfskNxBOA2gAoAAA="
         }),
         log_template: Some(
             LogTemplate::new()

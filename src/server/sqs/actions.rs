@@ -28,8 +28,16 @@ impl SqsProtocol {
 pub static SQS_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "sqs_request",
-        "SQS API request received",
-        json!({"type": "placeholder", "event_id": "sqs_request"}),
+        "An SQS API request arrived. Answer in the **AWS JSON protocol**: this server replies \
+         with Content-Type application/x-amz-json-1.0, so the body is a JSON object \
+         (`{\"MessageId\": \"...\"}`). SQS also has an older Query API that answers with XML \
+         (<SendMessageResponse xmlns=\"http://queue.amazonaws.com/doc/2012-11-05/\">…) — that \
+         is a different protocol and a client here cannot parse it, however well-formed it is.",
+        json!({
+            "type": "send_sqs_response",
+            "status_code": 200,
+            "body": "{\"MessageId\": \"59c5d728-17e6-4355-a298-1a9364790137\", \"MD5OfMessageBody\": \"5d41402abc4b2a76b9719d911017c592\"}"
+        }),
     )
     .with_parameters(vec![
         Parameter {
@@ -64,7 +72,11 @@ pub static SQS_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 fn send_sqs_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_sqs_response".to_string(),
-        description: "Send SQS JSON response with HTTP status code".to_string(),
+        description: "Send an SQS response. The body is sent as \
+                      Content-Type: application/x-amz-json-1.0, so it must be a JSON object — \
+                      never the legacy Query API's XML, which a client on this endpoint cannot \
+                      parse."
+            .to_string(),
         parameters: vec![
             Parameter {
                 name: "status_code".to_string(),
@@ -75,7 +87,11 @@ fn send_sqs_response_action() -> ActionDefinition {
             Parameter {
                 name: "body".to_string(),
                 type_hint: "string".to_string(),
-                description: "JSON response body".to_string(),
+                description: "Response body as a JSON object, serialized to a string. This is \
+                              the AWS JSON protocol (application/x-amz-json-1.0): a SendMessage \
+                              reply is {\"MessageId\": \"...\", \"MD5OfMessageBody\": \"...\"}, \
+                              not an <SendMessageResponse> XML document."
+                    .to_string(),
                 required: true,
             },
         ],

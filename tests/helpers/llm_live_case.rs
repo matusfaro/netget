@@ -28,9 +28,9 @@ use super::common::E2EResult;
 use super::llm_live::{
     ensure_model_available, live_llm_enabled, live_model, live_test_lock, LLM_REQUEST_TIMEOUT_SECS,
 };
-use super::ollama_test_builder::parse_actions_from_response;
 use netget::llm::actions::{get_network_event_common_actions, normalize_action_object};
-use netget::llm::{prompt::PromptBuilder, OllamaClient};
+use netget::llm::{prompt::PromptBuilder, ConversationHandler, OllamaClient, RequestSource};
+use netget::state::app_state::WebSearchMode;
 use netget::protocol::server_registry::registry;
 use netget::state::app_state::AppState;
 use netget::state::ServerId;
@@ -295,36 +295,57 @@ impl EventCase {
             .await;
         let mut all_actions = get_network_event_common_actions();
         all_actions.extend(advertised);
-        let system_prompt = PromptBuilder::build_network_event_action_prompt_for_server(
-            &state,
-            server_id,
-            all_actions,
-        )
-        .await;
+
+        // Build the prompt exactly as `call_llm` does, and — critically — keep
+        // the list it actually advertises. `advertised_network_event_actions`
+        // adds the network-event *tools* (`generate_random`, `read_file`, …),
+        // so the model is genuinely offered them here too.
+        let (system_prompt, advertised_actions) =
+            PromptBuilder::build_network_event_action_prompt_for_server_with_actions(
+                &state,
+                server_id,
+                all_actions,
+            )
+            .await;
         let event_message = PromptBuilder::build_event_trigger_message_with_id(
             &event_type.id,
             &event_type.description,
             self.event_data.clone(),
         );
-        let prompt = format!("{}\n\n# Network Event\n\n{}", system_prompt, event_message);
 
         let base_url = std::env::var("OLLAMA_BASE_URL")
             .unwrap_or_else(|_| "http://localhost:11434".to_string());
-        // Reasoning models spend the completion budget twice; the default 2048
-        // truncates the action JSON mid-object.
         // Deliberately does NOT override the completion-token budget: the
         // shipped default is what users get, so it is what the suite grades.
         // Only the wall clock is raised, because a live 27B answer legitimately
         // outruns the interactive 120s default.
         let client = OllamaClient::new(base_url)
             .with_request_timeout(std::time::Duration::from_secs(LLM_REQUEST_TIMEOUT_SECS));
-        let response = client
-            .generate_with_retry(&model, &prompt, "JSON response with actions array", 0)
-            .await
-            .map_err(|e| format!("model call failed: {}", e))?;
 
-        let actions: Vec<Value> = parse_actions_from_response(&response)
-            .map_err(|e| format!("unparseable model response: {}\nRaw: {}", e, response))?
+        // Go through `ConversationHandler::generate_with_tools_and_retry`, which
+        // is what `call_llm` calls — not the one-shot `generate_with_retry`.
+        //
+        // The difference is not cosmetic and this suite proved it: the
+        // network-event prompt advertises tools, so a model answering "issue a
+        // session token" or "sign this assertion" quite reasonably asks for
+        // `generate_random` first. Production runs that tool and lets the model
+        // finish; the one-shot path could only fail. Two cases (Snowflake login,
+        // SAML SSO) failed here for a reason that does not exist in the server,
+        // which is a harness bug reported as a model bug — the worst kind.
+        let mut conversation = ConversationHandler::new(
+            system_prompt,
+            std::sync::Arc::new(client),
+            model.clone(),
+            state.get_rate_limiter().await,
+            RequestSource::Network,
+        )
+        .with_native_tools(&advertised_actions);
+        conversation.add_user_message(event_message);
+
+        let actions: Vec<Value> = conversation
+            .generate_with_tools_and_retry(None, WebSearchMode::Off, advertised_actions)
+            .await
+            .map_err(|e| format!("model call failed: {}", e))?
             .iter()
             .map(normalize_action_object)
             .collect();

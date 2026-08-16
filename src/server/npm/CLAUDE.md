@@ -60,6 +60,17 @@ The LLM controls all NPM registry responses through 5 actions:
     - Parameters: `tarball_data` (base64-encoded .tgz file)
     - Response: HTTP 200 with `application/octet-stream` content
     - Used for: `GET /{package}/-/{tarball}.tgz` requests
+    - **This is the one npm response the model cannot author.** A .tgz is
+      binary, so it can only be *relayed* from bytes the operator supplied.
+      Undecodable or empty `tarball_data` is now a 500 naming the decode
+      failure; it used to be `unwrap_or_default()`, which served **HTTP 200
+      with a zero-byte body** — `npm install` then failed inside tar
+      extraction with nothing pointing back at the model's answer, and an
+      empty package was indistinguishable from a real one. The action's own
+      example made that likely rather than theoretical: it showed an elided
+      `"H4sIAAAAAAAAA..."`, which does not decode. Both examples now carry a
+      complete, verified .tgz, and the action tells the model to answer
+      `npm_error` 404 when it has no tarball to serve.
 
 3. **npm_package_list** - Return list of all packages
     - Parameters: `packages` (JSON object mapping package names to metadata)
@@ -121,13 +132,17 @@ Each connection tracks:
 
 - Unexpected HTTP methods (POST, PUT, DELETE)
 - Malformed requests
-- Base64 decode failures
 
 ### ERROR Level
 
 - LLM call failures
 - Server accept() failures
 - Unexpected action results
+- A response action missing the field it needs, or `tarball_data` that does
+  not decode. Each answers HTTP 500 naming the problem. These branches used to
+  `.unwrap()`, which panicked the per-connection tokio task — the panic is
+  swallowed by `tokio::spawn`, so the server kept reporting `Running` while the
+  client hung until its own timeout, with nothing in the log connecting the two.
 
 ## Example Prompts
 

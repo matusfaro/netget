@@ -169,19 +169,34 @@ async fn vnc_key_event_redraws_the_full_screen() -> E2EResult<()> {
     .expect_action("vnc_render_display")
     .check(commands_are_renderable(800, 600))
     .check_action(|a| {
-        let flat = a.to_string().to_uppercase();
         // Both, because the render replaces the entire framebuffer: showing
         // only the new key would wipe the heading off the screen.
-        if !flat.contains("KEY-TESTER") {
+        if !a.to_string().to_uppercase().contains("KEY-TESTER") {
             return Err(format!(
                 "the render replaces the whole framebuffer, so the fixed heading \
                  KEY-TESTER must be redrawn too; got {}",
                 a
             ));
         }
-        if !flat.contains("\"Q\"") && !flat.contains("Q<") && !flat.contains(" Q") {
+        // Look for a standalone `q` inside the drawn text only — scanning the
+        // whole JSON would match the `q` in any key name the model invented.
+        let shows_key = a
+            .get("commands")
+            .and_then(|c| c.as_array())
+            .map(|cmds| {
+                cmds.iter()
+                    .filter_map(|c| c.get("text").and_then(|t| t.as_str()))
+                    .any(|t| {
+                        t.to_lowercase()
+                            .split(|c: char| !c.is_alphanumeric())
+                            .any(|w| w == "q")
+                    })
+            })
+            .unwrap_or(false);
+        if !shows_key {
             return Err(format!(
-                "the screen should show the key that was pressed (q); got {}",
+                "the screen should show the key that was pressed (q) in its drawn text; \
+                 got {}",
                 a
             ));
         }
@@ -388,11 +403,22 @@ async fn tor_circuit_created_is_recorded() -> E2EResult<()> {
     .or_action("append_to_log")
     .or_action("append_memory")
     .check_action(|a| {
+        // The circuit id as the event spelled it, or the bare number it
+        // denotes — but not merely "a 5 appears somewhere in the JSON".
         let flat = a.to_string().to_lowercase();
-        if flat.contains("5") {
+        let named = flat.contains("0x00000005")
+            || flat.contains("circuit 5")
+            || flat.contains("circuit_id\":\"5")
+            || flat.contains("circuit id 5")
+            || flat.contains("circuit 0x5");
+        if named {
             Ok(())
         } else {
-            Err(format!("the note should name the circuit id, got {}", a))
+            Err(format!(
+                "the note should name the circuit that was built (0x00000005), or a \
+                 later note about the same circuit cannot be tied to it; got {}",
+                a
+            ))
         }
     })
     .run()

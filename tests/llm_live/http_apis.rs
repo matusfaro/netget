@@ -212,15 +212,34 @@ async fn npm_package_metadata_names_the_package() -> E2EResult<()> {
     .await
 }
 
+/// The real .tgz used by the tarball cases: a gzipped tar holding one
+/// `package/package.json`. Generated once and pinned, because the point of
+/// the test is that the model relays the bytes *given to it* — a tarball is
+/// the one npm response that cannot be invented.
+const NETGET_LIVE_TGZ_B64: &str = "H4sIAI0lgmoC/+3NvQrCMBSG4cxehZxZYxJrB+8myKHUn7Q0tYt470YdBGcRwfdZ3sO3nD7uDrHRVf+s3\
+    ecumQ9zRV1VjxbvdW7jX/d9974Owcyd+YJzHuNQ3pv/dJEUTypbSTo2Oi6P7aSykEmH3Hap7N4Gu5brzAAAAAAAAAAAAAAAAAAAfskNxBOA2gAoAAA=";
+
+/// Serving a tarball is *relaying*, not authoring: the encoded bytes are in
+/// the instruction and must come back byte-for-byte.
+///
+/// This asserts more than "looks like base64" now, because a lenient check is
+/// what let the real bug hide — netget used to `unwrap_or_default()` the
+/// decode, so anything undecodable became an **HTTP 200 with a zero-byte
+/// body** and `npm install` failed deep inside tar extraction with nothing
+/// pointing back at the model's answer.
 #[tokio::test]
-async fn npm_tarball_is_base64() -> E2EResult<()> {
+async fn npm_tarball_relays_the_supplied_bytes() -> E2EResult<()> {
     if !live_llm_enabled() {
         return Ok(());
     }
     EventCase::new(
         "NPM",
-        "You are an npm registry. Serve the tarball for netget-live 1.2.3; the \
-         bytes are supplied base64-encoded.",
+        format!(
+            "You are an npm registry serving exactly one package, netget-live \
+             1.2.3. Its tarball, base64-encoded, is:\n{}\nServe that package \
+             when it is requested.",
+            NETGET_LIVE_TGZ_B64
+        ),
         "NPM_TARBALL_REQUEST",
         json!({
             "method": "GET",
@@ -232,22 +251,77 @@ async fn npm_tarball_is_base64() -> E2EResult<()> {
     .expect_action("npm_package_tarball")
     .check(ParamCheck::custom(
         "tarball_data",
-        "is a non-empty base64 string the server can decode",
+        "the supplied base64, complete and unaltered",
         |v| {
             let s = v
                 .as_str()
                 .ok_or_else(|| format!("tarball_data must be a base64 string, got {}", v))?;
-            if s.trim().is_empty() {
-                return Err("tarball_data is empty".to_string());
+            let s = s.trim();
+            if s.contains("...") || s.contains('\u{2026}') {
+                return Err(format!(
+                    "tarball_data was abbreviated ({:?}…). The server decodes it before \
+                     sending, so an elided string is not a package — it is a decode \
+                     failure",
+                    s.chars().take(24).collect::<String>()
+                ));
             }
-            let valid = s
-                .trim()
+            let expected: String = NETGET_LIVE_TGZ_B64
                 .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=');
-            if valid {
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let got: String = s.chars().filter(|c| !c.is_whitespace()).collect();
+            if got == expected {
                 Ok(())
             } else {
-                Err(format!("tarball_data is not base64: {:?}", s))
+                Err(format!(
+                    "the tarball must be relayed byte-for-byte: a .tgz is binary and \
+                     cannot be regenerated. Expected {} base64 chars, got {}",
+                    expected.len(),
+                    got.len()
+                ))
+            }
+        },
+    ))
+    .run()
+    .await
+}
+
+/// With no tarball to serve, the honest answer is a 404 — not an invented
+/// one. This is the fail-closed half of the same contract: a fabricated
+/// tarball is undecodable, and undecodable now means a 500 rather than a
+/// silent empty 200.
+#[tokio::test]
+async fn npm_missing_tarball_is_a_404_not_an_invention() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "NPM",
+        "You are an npm registry that hosts only the package 'netget-live'. \
+         You have no other package and no tarball for any other name.",
+        "NPM_TARBALL_REQUEST",
+        json!({
+            "method": "GET",
+            "path": "/left-pad/-/left-pad-1.3.0.tgz",
+            "query": "",
+            "description": "tarball request"
+        }),
+    )
+    .expect_action("npm_error")
+    .check(ParamCheck::custom(
+        "status_code",
+        "404 — the package does not exist here",
+        |v| {
+            let code = v.as_u64().or_else(|| v.as_str()?.trim().parse().ok());
+            match code {
+                Some(404) => Ok(()),
+                Some(c) => Err(format!(
+                    "a package this registry does not host is 404; npm branches on the \
+                     code and a {} sends it down a retry path instead of reporting the \
+                     package missing",
+                    c
+                )),
+                None => Err(format!("status_code is missing or not a number: {}", v)),
             }
         },
     ))
@@ -902,10 +976,25 @@ async fn sqs_send_message_returns_a_message_id() -> E2EResult<()> {
     .check(ParamCheck::equals("status_code", json!(200)))
     .check(ParamCheck::custom(
         "body",
-        "is a SendMessage response carrying a MessageId",
+        "is a JSON-protocol SendMessage response carrying a MessageId",
         |v| {
-            let s = v.as_str().unwrap_or("");
-            let parsed: serde_json::Value = serde_json::from_str(s.trim())
+            let s = v.as_str().unwrap_or("").trim();
+            // SQS has two wire protocols and the model must pick the one this
+            // server speaks. netget answers with Content-Type
+            // application/x-amz-json-1.0, so a legacy Query-API XML document is
+            // unparseable here no matter how correct it looks — and that is
+            // exactly what a model reaches for, because the XML form dominates
+            // older SQS documentation.
+            if s.starts_with("<?xml") || s.starts_with('<') {
+                return Err(format!(
+                    "this is the legacy Query API's XML response. This endpoint sends \
+                     Content-Type: application/x-amz-json-1.0, so the body must be a JSON \
+                     object — an <SendMessageResponse> document cannot be parsed by a \
+                     client here. Got: {}",
+                    s.chars().take(160).collect::<String>()
+                ));
+            }
+            let parsed: serde_json::Value = serde_json::from_str(s)
                 .map_err(|e| format!("the SQS body must be JSON ({}): {:?}", e, s))?;
             if parsed["MessageId"].as_str().is_none() {
                 return Err(format!("SendMessage must return a MessageId: {}", parsed));
