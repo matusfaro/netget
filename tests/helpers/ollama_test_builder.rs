@@ -562,10 +562,25 @@ pub fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
         // offset into json_only, and a single multi-byte character anywhere in
         // the response (a model writing an em dash, say) makes a char counter
         // point mid-JSON and truncates it.
+        //
+        // Braces inside string values must not count either — a Kubernetes
+        // object or a JSON body quoted as a string carries plenty of them.
         let mut depth = 0;
         let mut end_pos = start;
+        let mut in_string = false;
+        let mut escaped = false;
         for (offset, c) in json_only[start..].char_indices() {
+            if in_string {
+                match c {
+                    _ if escaped => escaped = false,
+                    '\\' => escaped = true,
+                    '"' => in_string = false,
+                    _ => {}
+                }
+                continue;
+            }
             match c {
+                '"' => in_string = true,
                 '{' => depth += 1,
                 '}' => {
                     depth -= 1;

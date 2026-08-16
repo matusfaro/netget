@@ -1926,6 +1926,35 @@ impl OllamaClient {
 
             // Try to parse cleaned JSON as ActionResponse to check format
             match ActionResponse::from_str(&json_cleaned) {
+                // A tools-only answer parses, but this path has no tool loop —
+                // `generate_with_retry` is the one-shot generate used by git,
+                // mercurial and the event-case harness, so a tool call here is
+                // a request the caller can never satisfy and returning it hands
+                // them an empty action list. Retry with the correction below,
+                // which tells the model to answer directly instead.
+                Ok(parsed) if parsed.actions.is_empty() && !parsed.tools.is_empty() => {
+                    warn!(
+                        "Model asked to call {} tool(s) on a path that has none; \
+                         retrying with a direct-answer correction",
+                        parsed.tools.len()
+                    );
+                    if attempt > max_retries {
+                        return Err(anyhow::anyhow!(
+                            "LLM asked to call tools, which are not available on this \
+                             path, and did not answer directly when asked again. \
+                             Response began: {}",
+                            crate::utils::truncate_for_log(&json_cleaned, 400)
+                        ));
+                    }
+                    current_prompt = format!(
+                        "{}\n\n---\n\nYour previous response asked to call a tool. Tools are \
+                         not available for this request: answer directly instead, using only \
+                         the actions listed above, and supply any value you would have asked \
+                         a tool for yourself.\n\nRequired format: {}",
+                        current_prompt, expected_format
+                    );
+                    continue;
+                }
                 Ok(_) => {
                     // Valid format!
                     if attempt > 1 {
@@ -1948,7 +1977,6 @@ impl OllamaClient {
                             max_retries + 1
                         );
 
-                        // Build retry prompt with correction
                         current_prompt = format!(
                             "{}\n\n---\n\nYour previous response was invalid and could not be parsed.\n\nError: {}\n\nRequired format: {}\n\nPlease provide your response again in the correct format.",
                             current_prompt,
@@ -1966,7 +1994,14 @@ impl OllamaClient {
                         // No more retries
                         error!("Failed to get valid response after {} attempts", attempt);
                         trace!("Max retries exhausted, returning error");
-                        return Err(e).context("LLM failed to provide valid format after retry");
+                        // Carry a slice of what was actually returned: without
+                        // it the operator sees only that parsing failed, and
+                        // the difference between a truncated answer, a refusal
+                        // and a model that ignored the format is invisible.
+                        return Err(e).context(format!(
+                            "LLM failed to provide valid format after retry. Response began: {}",
+                            crate::utils::truncate_for_log(&json_cleaned, 400)
+                        ));
                     }
                 }
             }
