@@ -425,7 +425,15 @@ async fn ospf_link_state_ack_needs_no_reply() -> E2EResult<()> {
             }]
         }),
     )
+    // The graded point is that the router sends *nothing*: an LSAck terminates
+    // the flooding exchange and answering it with another OSPF packet would
+    // restart one. `wait_for_more` says that explicitly and is what the event's
+    // own example shows, but recording the acknowledgement is equally correct —
+    // both are "no packet on the wire", which is the protocol invariant. Pinning
+    // the assertion to one of the two graded the model's phrasing, not OSPF.
     .expect_action("wait_for_more")
+    .or_action("append_to_log")
+    .or_action("append_memory")
     .run()
     .await
 }
