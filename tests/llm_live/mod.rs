@@ -77,6 +77,7 @@ pub mod xmlrpc;
 // ---------------------------------------------------------------------------
 pub mod ble_profiles;
 pub mod bluetooth_ble;
+pub mod datastores;
 pub mod http_apis;
 pub mod nfc;
 pub mod rawnet;

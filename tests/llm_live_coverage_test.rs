@@ -131,18 +131,42 @@ fn leading_string_literals(text: &str, count: usize) -> Vec<String> {
     }
 }
 
-/// Every (protocol, event id) the compiled registry declares.
-fn declared_pairs() -> BTreeMap<String, BTreeSet<String>> {
-    let mut declared: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+/// Every (protocol, event id) the compiled registry declares, split by
+/// whether the event offers the model any action at all.
+///
+/// An event marked `with_no_actions()` has nothing for a live test to assert:
+/// the model is told there is no protocol action to take, so "which action did
+/// it choose" has no correct answer. Those are reported separately rather than
+/// counted as a gap, or the target would include work that cannot be done.
+struct Declared {
+    actionable: BTreeMap<String, BTreeSet<String>>,
+    no_action: BTreeMap<String, BTreeSet<String>>,
+}
+
+fn declared_pairs() -> Declared {
+    let mut actionable: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut no_action: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for (name, protocol) in registry().all_protocols() {
-        let events: BTreeSet<String> = protocol
-            .get_event_types()
-            .into_iter()
-            .map(|e| e.id)
-            .collect();
-        declared.insert(name, events);
+        let mut with_actions = BTreeSet::new();
+        let mut without = BTreeSet::new();
+        let sync_fallback_empty = protocol.get_sync_actions().is_empty();
+        for event in protocol.get_event_types() {
+            // `call_llm` falls back to the protocol's sync set when an event
+            // declares nothing usable, so an event is only truly action-less
+            // when that fallback is empty too.
+            if event.has_no_usable_actions() && sync_fallback_empty {
+                without.insert(event.id);
+            } else {
+                with_actions.insert(event.id);
+            }
+        }
+        actionable.insert(name.clone(), with_actions);
+        no_action.insert(name, without);
     }
-    declared
+    Declared {
+        actionable,
+        no_action,
+    }
 }
 
 /// Match a claimed protocol name against a registry name, tolerating the
@@ -163,9 +187,52 @@ fn same_protocol(registry_name: &str, claimed: &str) -> bool {
             .unwrap_or(false)
 }
 
+/// A suite file that is not declared in mod.rs is never compiled and never
+/// runs — the same footgun `orphaned-tests` guards for tests/server. Its
+/// COVERS/EventCase claims would still be read by this audit, so coverage
+/// would report work that does not exist.
+#[test]
+fn every_suite_file_is_declared_in_mod_rs() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/llm_live");
+    let mod_rs = fs::read_to_string(dir.join("mod.rs")).expect("tests/llm_live/mod.rs");
+    let declared: BTreeSet<String> = mod_rs
+        .lines()
+        .filter_map(|l| l.trim().strip_prefix("pub mod "))
+        .map(|rest| rest.trim_end_matches(';').trim().to_string())
+        .collect();
+
+    let mut orphaned = Vec::new();
+    for entry in fs::read_dir(&dir).expect("read tests/llm_live").flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default();
+        if stem == "mod" {
+            continue;
+        }
+        if !declared.contains(stem) {
+            orphaned.push(stem.to_string());
+        }
+    }
+
+    assert!(
+        orphaned.is_empty(),
+        "these suite files exist but are not declared in tests/llm_live/mod.rs, \
+         so nothing in them compiles or runs: {:?}",
+        orphaned
+    );
+}
+
 #[test]
 fn report_live_suite_coverage() {
-    let declared = declared_pairs();
+    let Declared {
+        actionable: declared,
+        no_action,
+    } = declared_pairs();
     let claims = claimed_pairs();
 
     // Every claim must name a real event of a real protocol.
@@ -217,6 +284,14 @@ fn report_live_suite_coverage() {
         declared.len() - untouched.len()
     );
     println!("event types: {}/{} covered", covered_events, total_events);
+    let no_action_total: usize = no_action.values().map(|e| e.len()).sum();
+    if no_action_total > 0 {
+        println!(
+            "({} further event types declare no actions at all — nothing for a \
+             live test to assert)",
+            no_action_total
+        );
+    }
     if !uncovered.is_empty() {
         println!("\n--- uncovered event types ---");
         for (proto, events) in &uncovered {
