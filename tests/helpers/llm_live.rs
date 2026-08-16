@@ -63,6 +63,13 @@ pub const LLM_REQUEST_TIMEOUT_SECS: u64 = 300;
 /// one at a time no matter what `--test-threads` says.
 static LIVE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// Acquire the suite-wide serialization lock directly. For live tests that
+/// talk to Ollama without spawning netget (e.g. the registry-driven prompting
+/// evaluation), so they still run one at a time alongside the wire tests.
+pub async fn live_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    LIVE_TEST_LOCK.lock().await
+}
+
 /// Canonicalize a stack name via the server registry, so "jsonrpc" matches
 /// the registry's reported "JSON-RPC". Falls back to the input unchanged.
 fn canonical_stack(name: &str) -> String {

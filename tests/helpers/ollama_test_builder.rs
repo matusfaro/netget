@@ -529,7 +529,7 @@ impl TestResult {
 /// The real prompt expects {"actions": [...]} format
 /// Handles XML tags outside JSON (like <reasoning> or <script_tag>)
 /// Resolves XML references in actions (replaces <tagname> with actual content)
-fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
+pub fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
     let trimmed = response.trim();
 
     // First, extract XML references from the full response

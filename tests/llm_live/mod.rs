@@ -10,6 +10,10 @@
 //! disk that is not listed here is silently never compiled (same footgun as
 //! tests/server/mod.rs) — add every new protocol module here.
 
+// Registry-driven prompting evaluation — covers EVERY compiled protocol
+// (hardware-transport ones included), so it is not feature-gated itself.
+pub mod prompting;
+
 #[cfg(feature = "dns")]
 pub mod dns;
 #[cfg(feature = "ftp")]
