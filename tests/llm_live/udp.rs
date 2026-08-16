@@ -1,6 +1,8 @@
 //! Live-LLM UDP suite. Setup (LiveProtocolTest, model-driven) and request
 //! handling (LiveRequestTest, deterministic `--server` start) are separate
 //! tests — see tcp.rs for the rationale.
+//!
+//! COVERS: udp: udp_datagram_received
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

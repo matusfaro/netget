@@ -1,6 +1,8 @@
 //! Live-LLM NTP suite. Setup and request handling are separate tests —
 //! see tcp.rs for the rationale. The response is validated at the packet
 //! level: correct size, server mode bits, sane stratum.
+//!
+//! COVERS: ntp: ntp_request
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

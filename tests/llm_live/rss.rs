@@ -1,5 +1,7 @@
 //! Live-LLM RSS suite. Setup and request handling are separate tests —
 //! see tcp.rs for the rationale.
+//!
+//! COVERS: rss: rss_feed_requested
 
 use crate::helpers::llm_live::{
     expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

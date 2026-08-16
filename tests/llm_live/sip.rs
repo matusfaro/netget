@@ -2,6 +2,8 @@
 //! see tcp.rs for the rationale. The OPTIONS response must echo the
 //! request's Call-ID and CSeq — SIP's correlation fields — or a real UA
 //! would discard it.
+//!
+//! COVERS: sip: sip_options
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

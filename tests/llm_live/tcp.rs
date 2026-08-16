@@ -5,6 +5,8 @@
 //! (LiveProtocolTest); request tests start the server deterministically with
 //! `--server` (no model call) so the only unpredictable behavior under test
 //! is the model answering the request event (LiveRequestTest).
+//!
+//! COVERS: tcp: tcp_data_received
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

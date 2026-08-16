@@ -8,6 +8,8 @@
 //! - `xmlrpc_fault_response { fault_code, fault_string }` frames a
 //!   `<fault>` struct — and XML-RPC faults ride on **HTTP 200**, so the
 //!   status code alone tells a client nothing.
+//!
+//! COVERS: xmlrpc: xmlrpc_method_call
 
 use crate::helpers::llm_live::{
     expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

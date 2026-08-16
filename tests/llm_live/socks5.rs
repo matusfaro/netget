@@ -11,6 +11,8 @@
 //!   permits, `deny_socks5_connect` refuses, and no decision action denies
 //!   (fail-closed). A denial must still be a well-formed reply — RFC 1928
 //!   §6 `[VER, REP, RSV, ATYP, BND.ADDR, BND.PORT]` — not a dropped socket.
+//!
+//! COVERS: socks5: socks5_connect_request
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest, LiveServer};
 use crate::helpers::E2EResult;

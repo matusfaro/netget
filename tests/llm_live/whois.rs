@@ -1,5 +1,7 @@
 //! Live-LLM WHOIS suite. Setup and request handling are separate tests —
 //! see tcp.rs for the rationale.
+//!
+//! COVERS: whois: whois_query
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

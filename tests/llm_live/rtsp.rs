@@ -10,6 +10,8 @@
 //! - `rtsp_describe_response` carries SDP, which must describe the media
 //!   (`m=audio` line with an `a=rtpmap` for the payload type) or a player
 //!   cannot set up a session.
+//!
+//! COVERS: rtsp: rtsp_options, rtsp_describe
 
 use crate::helpers::llm_live::{as_text, live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

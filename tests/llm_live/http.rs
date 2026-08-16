@@ -1,6 +1,8 @@
 //! Live-LLM HTTP suite. Setup (LiveProtocolTest, model-driven) and request
 //! handling (LiveRequestTest, deterministic `--server` start) are separate
 //! tests — see tcp.rs for the rationale.
+//!
+//! COVERS: http: http_request
 
 use crate::helpers::llm_live::{
     expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

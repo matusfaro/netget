@@ -9,6 +9,8 @@
 //!   group, then a lone `.` terminator. A client reads until that dot, so a
 //!   missing terminator hangs the session;
 //! - `send_nntp_group` frames `211 <count> <low> <high> <name>`.
+//!
+//! COVERS: nntp: nntp_command_received
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

@@ -8,6 +8,8 @@
 //!   what tells a real client registration succeeded;
 //! - `send_irc_pong` frames `PONG :<token>`, and the token must be the one
 //!   the client sent or the client treats the link as dead.
+//!
+//! COVERS: irc: irc_message_received
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

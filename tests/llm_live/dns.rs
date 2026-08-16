@@ -3,6 +3,8 @@
 //! tests — see tcp.rs for the rationale. The model must answer real
 //! hickory-client queries, which means echoing the query ID and building a
 //! correct wire response.
+//!
+//! COVERS: dns: dns_query
 
 use crate::helpers::llm_live::{
     live_llm_enabled, LiveProtocolTest, LiveRequestTest, FIRST_BYTE_TIMEOUT,

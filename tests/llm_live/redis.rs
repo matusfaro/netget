@@ -3,6 +3,8 @@
 //! tests — see tcp.rs for the rationale. Validated with the `redis` crate —
 //! an independent RESP implementation — so the model's replies must be
 //! protocol-correct.
+//!
+//! COVERS: redis: redis_command
 
 use crate::helpers::llm_live::{
     live_llm_enabled, LiveProtocolTest, LiveRequestTest, FIRST_BYTE_TIMEOUT,

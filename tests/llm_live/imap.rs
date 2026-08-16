@@ -11,6 +11,8 @@
 //!
 //! Tag correlation is the assertion that matters: a real client (async-imap,
 //! Thunderbird) blocks forever on a missing or mismatched tag.
+//!
+//! COVERS: imap: imap_connection, imap_command, imap_auth
 
 use crate::helpers::llm_live::{
     expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

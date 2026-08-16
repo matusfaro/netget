@@ -9,6 +9,8 @@
 //!   official clients refuse to talk without;
 //! - `send_search_response` frames the `hits.total.value` / `hits.hits`
 //!   envelope — the shape every ES client decodes.
+//!
+//! COVERS: elasticsearch: elasticsearch_request
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

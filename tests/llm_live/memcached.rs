@@ -1,5 +1,7 @@
 //! Live-LLM Memcached suite. Setup and request handling are separate tests —
 //! see tcp.rs for the rationale.
+//!
+//! COVERS: memcached: memcached_get
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

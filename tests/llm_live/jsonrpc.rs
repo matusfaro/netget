@@ -1,6 +1,8 @@
 //! Live-LLM JSON-RPC suite. Setup and request handling are separate tests —
 //! see tcp.rs for the rationale. The response must be valid JSON-RPC 2.0
 //! with the request's numeric `id` echoed — the protocol's correlation field.
+//!
+//! COVERS: jsonrpc: jsonrpc_method_call
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

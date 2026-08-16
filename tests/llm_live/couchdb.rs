@@ -7,6 +7,8 @@
 //! - `send_doc_response { success, doc_id, rev, document }` injects `_id` and
 //!   `_rev` into the returned document, and a `conflict` error maps to
 //!   **HTTP 409** — the status a replicating client keys off.
+//!
+//! COVERS: couchdb: couchdb_request
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

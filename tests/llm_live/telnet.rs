@@ -8,6 +8,8 @@
 //!
 //! A Telnet client sends bare-LF lines; a well-formed answer comes back
 //! CRLF-framed. The tests assert that framing, not just the text.
+//!
+//! COVERS: telnet: telnet_message_received
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

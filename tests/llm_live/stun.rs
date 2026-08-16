@@ -2,6 +2,8 @@
 //! see tcp.rs for the rationale. The binding response is validated at the
 //! packet level: success type, magic cookie, and — the part that actually
 //! exercises the model — the 12-byte transaction ID echoed from the request.
+//!
+//! COVERS: stun: stun_binding_request
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

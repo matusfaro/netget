@@ -11,6 +11,8 @@
 //! - `openai_error_response { message, error_type, status }` frames the
 //!   `{"error": {...}}` body clients need in order to surface an API error
 //!   instead of a transport failure.
+//!
+//! COVERS: openai: openai_request
 
 use crate::helpers::llm_live::{live_llm_enabled, LiveProtocolTest, LiveRequestTest};
 use crate::helpers::E2EResult;

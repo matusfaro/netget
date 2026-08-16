@@ -1,5 +1,7 @@
 //! Live-LLM FTP suite. Setup and request handling are separate tests —
 //! see tcp.rs for the rationale. FTP is greeting-first like SMTP.
+//!
+//! COVERS: ftp: ftp_command
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,

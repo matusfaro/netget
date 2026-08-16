@@ -1,5 +1,7 @@
 //! Live-LLM POP3 suite. Setup and request handling are separate tests —
 //! see tcp.rs for the rationale. POP3 is greeting-first like SMTP.
+//!
+//! COVERS: pop3: pop3_command
 
 use crate::helpers::llm_live::{
     as_text, expect_contains, live_llm_enabled, LiveProtocolTest, LiveRequestTest,
