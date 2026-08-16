@@ -189,15 +189,25 @@ fn declared_pairs() -> Declared {
 /// Match a claimed protocol name against a registry name, tolerating the
 /// spellings the suite uses ("usb-fido2" vs "USB-FIDO2", "jsonrpc" vs
 /// "JSON-RPC").
-fn same_protocol(registry_name: &str, claimed: &str) -> bool {
+/// Equal once case, spacing and punctuation are discarded ("usb-fido2" vs
+/// "USB-FIDO2", "jsonrpc" vs "JSON-RPC", "Bitcoin P2P" vs "bitcoin_p2p").
+///
+/// This is the strict half of [`same_protocol`]: it decides identity from the two
+/// names alone, with no registry lookup, so it cannot answer "yes" for a protocol
+/// that is not compiled in.
+fn normalized_eq(a: &str, b: &str) -> bool {
     let norm = |s: &str| {
         s.to_lowercase()
             .chars()
             .filter(|c| c.is_ascii_alphanumeric())
             .collect::<String>()
     };
+    norm(a) == norm(b)
+}
+
+fn same_protocol(registry_name: &str, claimed: &str) -> bool {
     registry_name.eq_ignore_ascii_case(claimed)
-        || norm(registry_name) == norm(claimed)
+        || normalized_eq(registry_name, claimed)
         || registry()
             .parse_from_str(claimed)
             .map(|resolved| resolved.eq_ignore_ascii_case(registry_name))
@@ -258,7 +268,17 @@ fn report_live_suite_coverage() {
         let matched = declared
             .iter()
             .any(|(name, events)| same_protocol(name, proto) && events.contains(event));
-        let protocol_compiled = declared.iter().any(|(name, _)| same_protocol(name, proto));
+        // Strict, deliberately not `same_protocol`. That helper's last resort is
+        // `registry().parse_from_str`, whose keyword matching resolves a name it does
+        // not know to whatever compiled protocol shares a keyword with it — so at a
+        // reduced feature set an *uncompiled* protocol looked compiled, and every claim
+        // against it was reported as drift. `--features tcp,http,dns,udp,redis` flagged
+        // all four TFTP events and `ftp_command` as fictional when they are simply not
+        // built. A claim whose protocol is absent cannot be checked; it must be skipped,
+        // which is what the module doc has always said this test does.
+        let protocol_compiled = declared
+            .iter()
+            .any(|(name, _)| name.eq_ignore_ascii_case(proto) || normalized_eq(name, proto));
         if !matched && protocol_compiled {
             bogus.push(format!("{}::{}", proto, event));
         }

@@ -1035,18 +1035,15 @@ impl ConversationHandler {
                     .iter()
                     .filter_map(|a| a.get("type").and_then(|t| t.as_str()))
                     .collect();
-                warn!(
-                    "LLM action(s) {:?} reference an unresolved tool-result placeholder; \
-                     holding them back until the tool results are in",
+                // Dual-logged through the facade rather than a hand-written level
+                // prefix; `tests/llm_log_prefix_guard_test.rs` fails the build on any
+                // new one of those in src/llm/. (That guard counts substrings without
+                // parsing, so even naming the pattern in a comment trips it.)
+                Log::new(self.status_tx.as_ref()).warn(format!(
+                    "LLM action(s) {:?} reference a tool result that has not been produced \
+                     yet; holding them back until the tool(s) have run",
                     names
-                );
-                if let Some(ref tx) = self.status_tx {
-                    let _ = tx.send(format!(
-                        "[WARN] Action(s) {:?} referenced a tool result that has not been \
-                         produced yet — waiting for the tool(s)",
-                        names
-                    ));
-                }
+                ));
 
                 if tools.is_empty() {
                     // No tool call to wait for: the placeholder can never be filled in,
