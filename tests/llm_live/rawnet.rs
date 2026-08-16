@@ -177,3 +177,69 @@ async fn datalink_captured_frame_is_reported() -> E2EResult<()> {
     .run()
     .await
 }
+
+/// A non-echo ICMP message (a port-unreachable arriving at us) is
+/// informational: there is nothing to answer, and inventing a reply would put
+/// a spurious packet on the wire.
+#[tokio::test]
+async fn icmp_other_message_is_not_answered() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "ICMP",
+        "You are a host at 192.168.1.100. You answer pings, but you do not \
+         reply to ICMP error messages that arrive addressed to you — they \
+         report a problem, they do not ask a question. Ignore them.",
+        "icmp_other_message",
+        json!({
+            "source_ip": "192.168.1.1",
+            "destination_ip": "192.168.1.100",
+            "icmp_type": 3,
+            "icmp_code": 3,
+            "packet_hex": "030300000000000045000038"
+        }),
+    )
+    .expect_action("ignore_icmp")
+    .run()
+    .await
+}
+
+/// Another host's membership report suppresses ours for that group (RFC 2236
+/// report suppression): there is nothing to send.
+#[tokio::test]
+async fn igmp_report_from_another_host_is_ignored() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "IGMP",
+        "You are a host that has joined 239.255.255.250. When another host on \
+         the segment reports membership of a group, IGMP report suppression \
+         means you must stay silent — do not send a report of your own.",
+        "igmp_report_received",
+        json!({ "group_address": "239.255.255.250" }),
+    )
+    .expect_action("ignore_message")
+    .run()
+    .await
+}
+
+/// A leave from another host is likewise not ours to answer.
+#[tokio::test]
+async fn igmp_leave_from_another_host_is_ignored() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "IGMP",
+        "You are a host that has joined 239.255.255.250. Another host leaving \
+         a group says nothing about your own membership: take no action. Only \
+         a router's query needs an answer.",
+        "igmp_leave_received",
+        json!({ "group_address": "224.0.1.1" }),
+    )
+    .expect_action("ignore_message")
+    .run()
+    .await
+}

@@ -320,3 +320,283 @@ async fn usb_smartcard_verify_is_refused_with_status_word() -> E2EResult<()> {
     .run()
     .await
 }
+
+/// A host detached: the USB/IP session is gone, so a HID report has nowhere
+/// to go. The correct answer is to note it, not to type.
+#[tokio::test]
+async fn usb_keyboard_detach_is_informational() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "USB-Keyboard",
+        "You are a USB keyboard. When the host detaches, the session is over \
+         and there is nothing left to type on — just report what happened.",
+        "usb_keyboard_detached",
+        json!({ "connection_id": "conn-2" }),
+    )
+    .expect_action("show_message")
+    .check(ParamCheck::non_empty("message"))
+    .run()
+    .await
+}
+
+/// Same for the mouse.
+#[tokio::test]
+async fn usb_mouse_detach_is_informational() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "USB-Mouse",
+        "You are a USB mouse. When the host detaches, the session is over and \
+         an input report has nowhere to go — just report what happened.",
+        "usb_mouse_detached",
+        json!({ "connection_id": "conn-2" }),
+    )
+    .expect_action("show_message")
+    .check(ParamCheck::non_empty("message"))
+    .run()
+    .await
+}
+
+/// A serial port opened: greet the host on the wire.
+#[tokio::test]
+async fn usb_serial_attach_sends_banner() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "USB-Serial",
+        "You are a device on a USB serial port. As soon as a host opens the \
+         port, greet it with the line READY terminated by carriage return and \
+         newline.",
+        "usb_serial_attached",
+        json!({ "connection_id": "conn-2" }),
+    )
+    .expect_action("send_data")
+    .check(ParamCheck::contains("data", "READY"))
+    .run()
+    .await
+}
+
+/// Serial port closed.
+#[tokio::test]
+async fn usb_serial_detach_is_informational() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "USB-Serial",
+        "You are a device on a USB serial port. When the host closes the port \
+         there is nothing left to write to — just report what happened.",
+        "usb_serial_detached",
+        json!({ "connection_id": "conn-2" }),
+    )
+    .expect_action("show_message")
+    .check(ParamCheck::non_empty("message"))
+    .run()
+    .await
+}
+
+/// A host wrote sectors: the write has already been applied, so this is a
+/// notification. Replacing the contents in response would discard the write.
+#[tokio::test]
+async fn usb_msc_write_is_a_notification() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "USB-MassStorage",
+        "You are a USB flash drive presenting hello.txt. A host write has \
+         already been applied to the volume by the time you hear about it, so \
+         a write notification needs no action — do not replace the contents.",
+        "usb_msc_write",
+        json!({
+            "connection_id": "conn-2",
+            "lba": 97,
+            "sector_count": 1,
+            "bytes_written": 512
+        }),
+    )
+    .expect_action("wait_for_more")
+    .run()
+    .await
+}
+
+/// Reads are likewise already served from the current volume.
+#[tokio::test]
+async fn usb_msc_read_is_a_notification() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "USB-MassStorage",
+        "You are a USB flash drive presenting hello.txt. A read has already \
+         been served from the volume by the time you hear about it, so a read \
+         notification needs no action.",
+        "usb_msc_read",
+        json!({
+            "connection_id": "conn-2",
+            "lba": 0,
+            "sector_count": 8,
+            "bytes_read": 4096
+        }),
+    )
+    .expect_action("wait_for_more")
+    .run()
+    .await
+}
+
+/// The drive's host went away.
+#[tokio::test]
+async fn usb_msc_detach_is_informational() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "USB-MassStorage",
+        "You are a USB flash drive. When the host detaches there is nothing \
+         left to mount or eject — just report what happened.",
+        "usb_msc_detached",
+        json!({ "connection_id": "conn-2" }),
+    )
+    .expect_action("show_message")
+    .check(ParamCheck::non_empty("message"))
+    .run()
+    .await
+}
+
+/// An authentication request the policy permits, on an existing credential.
+#[tokio::test]
+async fn usb_fido2_authenticate_is_approved_for_known_rp() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "usb-fido2",
+        "You are a FIDO2 security key. Approve assertion requests from the \
+         relying party trusted.example, where the user already registered a \
+         credential. Refuse every other relying party.",
+        "fido2_authenticate_request",
+        json!({
+            "connection_id": "conn-2",
+            "approval_id": 5150,
+            "rp_id": "trusted.example",
+            "user_name": "alice",
+            "credential_count": 1
+        }),
+    )
+    .expect_action("approve_request")
+    .check(ParamCheck::equals("approval_id", json!(5150)))
+    .run()
+    .await
+}
+
+/// The security key was imported by a host: nothing has been asked yet.
+#[tokio::test]
+async fn usb_fido2_attach_is_informational() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "usb-fido2",
+        "You are a FIDO2 security key. A host has just imported you over \
+         USB/IP and has not asked for anything yet — record that it attached.",
+        "fido2_device_attached",
+        json!({
+            "connection_id": "conn-2",
+            "remote_addr": "127.0.0.1:50002",
+            "supports_u2f": true,
+            "supports_fido2": true
+        }),
+    )
+    .expect_action("set_memory")
+    .check(ParamCheck::non_empty("value"))
+    .run()
+    .await
+}
+
+/// The USB/IP session ended; credentials are per-session and gone with it.
+#[tokio::test]
+async fn usb_fido2_detach_is_informational() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "usb-fido2",
+        "You are a FIDO2 security key. The host's session has ended, taking \
+         its credentials with it — just report that the key detached.",
+        "fido2_device_detached",
+        json!({ "connection_id": "conn-2" }),
+    )
+    .expect_action("show_message")
+    .check(ParamCheck::non_empty("message"))
+    .run()
+    .await
+}
+
+/// The CCID reader bound before any host attached: configure the card's ATR,
+/// which is how a host identifies it.
+#[tokio::test]
+async fn usb_smartcard_reader_ready_sets_atr() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "usb-smartcard",
+        "You are a virtual smart card reader. Before any host attaches, set \
+         the card's Answer To Reset to the bytes 3B 90 11 00, a minimal valid \
+         T=0 ATR.",
+        "usb_smartcard_reader_ready",
+        json!({
+            "listen_addr": "127.0.0.1:35963",
+            "card_type": "generic",
+            "atr_hex": "3B901100"
+        }),
+    )
+    .expect_action("set_atr")
+    .check(ParamCheck::custom(
+        "atr_hex",
+        "is the instructed ATR 3B901100",
+        |v| {
+            let s = v
+                .as_str()
+                .unwrap_or("")
+                .replace([' ', ':'], "")
+                .to_uppercase();
+            if s.trim_start_matches("0X") == "3B901100" {
+                Ok(())
+            } else {
+                Err(format!("expected ATR 3B901100, got {:?}", v))
+            }
+        },
+    ))
+    .run()
+    .await
+}
+
+/// A host attached to the reader: the card must be in the slot for it to
+/// power up at all.
+#[tokio::test]
+async fn usb_smartcard_attach_inserts_card() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "usb-smartcard",
+        "You are a virtual smart card reader. When a host attaches, make sure \
+         the card is present in the slot so the host can power it up.",
+        "usb_smartcard_attached",
+        json!({
+            "connection_id": "conn-2",
+            "card_type": "generic",
+            "card_present": false,
+            "atr_hex": "3B901100"
+        }),
+    )
+    .expect_action("set_card_present")
+    .check(ParamCheck::equals("present", json!(true)))
+    .run()
+    .await
+}

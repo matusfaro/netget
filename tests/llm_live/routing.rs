@@ -271,3 +271,270 @@ async fn isis_hello_carries_system_and_area_id() -> E2EResult<()> {
     .run()
     .await
 }
+
+/// OSPF Database Description: the Exchange phase. Answering a neighbour's DD
+/// means echoing its sequence number as the slave, or the exchange stalls.
+#[tokio::test]
+async fn ospf_database_description_is_answered() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "OSPF",
+        "You are an OSPF router with Router ID 1.1.1.1 in area 0.0.0.0. A \
+         neighbour has started the database exchange. Answer its Database \
+         Description packet, quoting the sequence number it used.",
+        "ospf_database_description",
+        json!({
+            "connection_id": "conn-1",
+            "neighbor_id": "2.2.2.2",
+            "neighbor_ip": "192.168.1.2",
+            "area_id": "0.0.0.0",
+            "interface_mtu": 1500,
+            "options": 2,
+            "init": true,
+            "more": true,
+            "master": true,
+            "dd_sequence": 4242,
+            "lsa_count": 0,
+            "lsa_headers": []
+        }),
+    )
+    .expect_action("send_database_description")
+    .check(ParamCheck::equals("router_id", json!("1.1.1.1")))
+    .check(ParamCheck::equals("area_id", json!("0.0.0.0")))
+    .check(ParamCheck::custom(
+        "sequence",
+        "quotes the neighbour's DD sequence number 4242",
+        |v| {
+            let n = v
+                .as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                .ok_or_else(|| format!("sequence must be a number, got {}", v))?;
+            if n == 4242 {
+                Ok(())
+            } else {
+                Err(format!(
+                    "the slave repeats the master's sequence number (RFC 2328 \
+                     10.8); expected 4242, got {}",
+                    n
+                ))
+            }
+        },
+    ))
+    .run()
+    .await
+}
+
+/// A Link State Request asks for specific LSAs; the answer is an update.
+#[tokio::test]
+async fn ospf_link_state_request_is_answered_with_an_update() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "OSPF",
+        "You are an OSPF router with Router ID 1.1.1.1 in area 0.0.0.0. When a \
+         neighbour requests link state advertisements, answer with a link \
+         state update addressed to that neighbour.",
+        "ospf_link_state_request",
+        json!({
+            "connection_id": "conn-1",
+            "neighbor_id": "2.2.2.2",
+            "neighbor_ip": "192.168.1.2",
+            "area_id": "0.0.0.0",
+            "request_count": 1,
+            "requests": [{
+                "lsa_type": 1,
+                "link_state_id": "2.2.2.2",
+                "advertising_router": "2.2.2.2"
+            }]
+        }),
+    )
+    .expect_action("send_link_state_update")
+    .check(ParamCheck::equals("router_id", json!("1.1.1.1")))
+    .check(ParamCheck::equals("area_id", json!("0.0.0.0")))
+    .run()
+    .await
+}
+
+/// A flooded Link State Update must be acknowledged, or the neighbour
+/// retransmits it forever.
+#[tokio::test]
+async fn ospf_link_state_update_is_acknowledged() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "OSPF",
+        "You are an OSPF router with Router ID 1.1.1.1 in area 0.0.0.0. A \
+         neighbour has flooded link state advertisements to you. Acknowledge \
+         them, or the neighbour will keep retransmitting.",
+        "ospf_link_state_update",
+        json!({
+            "connection_id": "conn-1",
+            "neighbor_id": "2.2.2.2",
+            "neighbor_ip": "192.168.1.2",
+            "area_id": "0.0.0.0",
+            "advertised_lsa_count": 1,
+            "lsa_count": 1,
+            "lsas": [{
+                "age": 10,
+                "lsa_type": 1,
+                "lsa_type_name": "router",
+                "link_state_id": "2.2.2.2",
+                "advertising_router": "2.2.2.2",
+                "sequence": 2147483649u64,
+                "length": 48
+            }]
+        }),
+    )
+    .expect_action("send_link_state_ack")
+    .check(ParamCheck::equals("router_id", json!("1.1.1.1")))
+    .run()
+    .await
+}
+
+/// An acknowledgement needs no reply: the flooding exchange is complete.
+#[tokio::test]
+async fn ospf_link_state_ack_needs_no_reply() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "OSPF",
+        "You are an OSPF router with Router ID 1.1.1.1. A neighbour has \
+         acknowledged the advertisements you flooded, which completes that \
+         exchange. Nothing further needs to be sent, so wait for the next \
+         packet.",
+        "ospf_link_state_ack",
+        json!({
+            "connection_id": "conn-1",
+            "neighbor_id": "2.2.2.2",
+            "neighbor_ip": "192.168.1.2",
+            "area_id": "0.0.0.0",
+            "lsa_count": 1,
+            "lsa_headers": [{
+                "age": 10,
+                "lsa_type": 1,
+                "lsa_type_name": "router",
+                "link_state_id": "1.1.1.1",
+                "advertising_router": "1.1.1.1",
+                "sequence": 2147483649u64,
+                "length": 48
+            }]
+        }),
+    )
+    .expect_action("wait_for_more")
+    .run()
+    .await
+}
+
+/// Session established: advertise the routes the operator named.
+#[tokio::test]
+async fn bgp_established_advertises_routes() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "BGP",
+        "You are a BGP speaker in AS 65001 with BGP identifier 192.168.1.1. \
+         You originate exactly one prefix, 10.20.0.0/16, with next hop \
+         192.168.1.1. Advertise it as soon as the session is established.",
+        "bgp_established",
+        json!({
+            "connection_id": "conn-1",
+            "peer_as": 65000,
+            "peer_router_id": "192.168.1.2",
+            "peer_supports_four_octet_as": true,
+            "negotiated_hold_time": 180,
+            "local_as": 65001,
+            "local_router_id": "192.168.1.1",
+            "remote_addr": "192.168.1.2:50001"
+        }),
+    )
+    .expect_action("send_bgp_update")
+    .check(ParamCheck::custom(
+        "nlri",
+        "announces 10.20.0.0/16 in CIDR form",
+        |v| {
+            let list = v
+                .as_array()
+                .ok_or_else(|| format!("nlri must be an array of CIDR strings, got {}", v))?;
+            if list.iter().any(|p| {
+                p.as_str()
+                    .map(|s| s.trim() == "10.20.0.0/16")
+                    .unwrap_or(false)
+            }) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "expected the instructed prefix 10.20.0.0/16, got {}",
+                    v
+                ))
+            }
+        },
+    ))
+    .check(ParamCheck::equals("next_hop", json!("192.168.1.1")))
+    .run()
+    .await
+}
+
+/// A peer's UPDATE is informational here (no RIB), so the correct answer is
+/// to take no action rather than invent one.
+#[tokio::test]
+async fn bgp_update_from_peer_needs_no_advertisement() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "BGP",
+        "You are a BGP speaker in AS 65001 that originates no routes of its \
+         own and never re-advertises what it learns. When a peer sends you an \
+         UPDATE, record nothing and advertise nothing.",
+        "bgp_update",
+        json!({
+            "connection_id": "conn-1",
+            "peer_as": 65000,
+            "withdrawn_routes": [],
+            "nlri": ["203.0.113.0/24"],
+            "origin": "IGP",
+            "next_hop": "192.168.1.2",
+            "as_path": [65000],
+            "path_attributes": [
+                {"type_name": "ORIGIN", "optional": false, "transitive": true, "origin": "IGP"},
+                {"type_name": "AS_PATH", "optional": false, "transitive": true, "as_path": [65000], "four_octet": true}
+            ],
+            "end_of_rib": false
+        }),
+    )
+    .expect_action("wait_for_more")
+    .run()
+    .await
+}
+
+/// RFC 4271 forbids replying to a NOTIFICATION; the session is over.
+#[tokio::test]
+async fn bgp_notification_is_not_answered() -> E2EResult<()> {
+    if !live_llm_enabled() {
+        return Ok(());
+    }
+    EventCase::new(
+        "BGP",
+        "You are a BGP speaker in AS 65001. A peer has sent a NOTIFICATION, \
+         which ends the session; RFC 4271 forbids answering one, so take no \
+         action.",
+        "bgp_notification",
+        json!({
+            "connection_id": "conn-1",
+            "peer_as": 65000,
+            "error_code": 6,
+            "error_name": "Cease",
+            "error_subcode": 2,
+            "error_subcode_name": "Administrative Shutdown"
+        }),
+    )
+    .expect_action("wait_for_more")
+    .run()
+    .await
+}

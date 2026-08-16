@@ -134,6 +134,12 @@ pub struct EventCase {
     /// disconnect_peer both remove the peer from the interface).
     also_accept: Vec<String>,
     param_checks: Vec<ParamCheck>,
+    /// Predicates over the whole chosen action, for invariants that span
+    /// several parameters (a result set whose rows must match its columns).
+    action_checks: Vec<(
+        String,
+        Box<dyn Fn(&Value) -> Result<(), String> + Send + Sync>,
+    )>,
 }
 
 impl EventCase {
@@ -155,6 +161,7 @@ impl EventCase {
             expect_action: String::new(),
             also_accept: Vec::new(),
             param_checks: Vec::new(),
+            action_checks: Vec::new(),
         }
     }
 
@@ -174,6 +181,17 @@ impl EventCase {
     /// Add a predicate on the expected action's parameters.
     pub fn check(mut self, check: ParamCheck) -> Self {
         self.param_checks.push(check);
+        self
+    }
+
+    /// Add a predicate over the whole chosen action, for invariants no single
+    /// parameter expresses on its own.
+    pub fn check_action(
+        mut self,
+        f: impl Fn(&Value) -> Result<(), String> + Send + Sync + 'static,
+    ) -> Self {
+        self.action_checks
+            .push(("action as a whole".to_string(), Box::new(f)));
         self
     }
 
@@ -323,6 +341,15 @@ impl EventCase {
             })?;
 
         let mut failures = Vec::new();
+        for (describe, check) in &self.action_checks {
+            match check(chosen) {
+                Ok(()) => println!("  ✅ {}", describe),
+                Err(e) => {
+                    println!("  ❌ {} — {}", describe, e);
+                    failures.push(format!("{} — {}", describe, e));
+                }
+            }
+        }
         for pc in &self.param_checks {
             let value = chosen.get(pc.name).cloned().unwrap_or(Value::Null);
             match (pc.check)(&value) {
