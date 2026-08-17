@@ -216,7 +216,20 @@ pub fn default_dependencies_from_privilege<P: Protocol + ?Sized>(
 
     match protocol.metadata().privilege_requirement {
         P9::None => Vec::new(),
-        P9::PrivilegedPort(port) => vec![ProtocolDependency::PrivilegedPort(port)],
+        // A privileged *default* port is not a missing dependency: the port is a
+        // startup parameter, so the protocol runs perfectly well on 1179, 8080 or
+        // 5353 with no privilege at all. Treating it as a dependency excluded 26
+        // protocols from the catalogue on any non-root run — DNS, HTTP, SMTP, SSH,
+        // BGP and the rest — and `/env` said outright that they were "hidden from
+        // the model", so the LLM could not choose them however the user phrased the
+        // request. Nothing was unable to run; they were only unable to be picked.
+        //
+        // The check that matters still happens, and is the one that knows the real
+        // port: `server_startup.rs` refuses a start only when the port actually
+        // requested is below 1024 and privilege is absent, and its error names the
+        // high ports to use instead. Advisory listing lives in
+        // `privileged_default_ports()`.
+        P9::PrivilegedPort(_) => Vec::new(),
         P9::RawSockets => vec![ProtocolDependency::RawSocketAccess],
         P9::PacketCapture => vec![ProtocolDependency::PromiscuousMode],
         // No probe can answer honestly for an adapter/reader, so claim nothing rather than
