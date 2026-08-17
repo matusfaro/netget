@@ -34,15 +34,40 @@ fn unprivileged() -> SystemCapabilities {
 
 #[test]
 fn the_exclusion_map_is_not_empty_for_an_unprivileged_process() {
+    use netget::protocol::metadata::PrivilegeRequirement;
+
     let excluded = registry().get_excluded_protocols(&unprivileged());
+
+    // Only a privilege no port choice can satisfy should exclude. `PrivilegedPort` deliberately
+    // derives no dependency — a port is a startup parameter, and DNS on 5353 or HTTP on 8080
+    // runs unprivileged — so a build containing only those has an empty map *correctly*. That
+    // is the CI feature set exactly (tcp, http, dns, udp, redis), where this used to fail.
+    let excludable = registry()
+        .all_protocols()
+        .into_iter()
+        .filter(|(_, protocol)| {
+            matches!(
+                protocol.metadata().privilege_requirement,
+                PrivilegeRequirement::RawSockets | PrivilegeRequirement::Root
+            )
+        })
+        .count();
+
+    if excludable == 0 {
+        eprintln!(
+            "note: no compiled-in protocol requires raw sockets or root, so there is correctly \
+             nothing to exclude; run at --all-features for this assertion to mean anything"
+        );
+        return;
+    }
 
     assert!(
         !excluded.is_empty(),
-        "no protocol reported a missing dependency for a process with no root, no privileged \
-         ports, no raw sockets and no capture access. Either the derivation in \
-         Protocol::get_dependencies() regressed to an empty vector, or no compiled-in protocol \
-         declares a privilege_requirement — both make get_excluded_protocols() inert, which is \
-         the defect this test exists to catch."
+        "{excludable} compiled-in protocol(s) require raw sockets or root, which no port choice \
+         can provide, yet none reported a missing dependency for a process with no root, no \
+         privileged ports, no raw sockets and no capture access. The derivation in \
+         Protocol::get_dependencies() has regressed to an empty vector, making \
+         get_excluded_protocols() inert — the defect this test exists to catch."
     );
 }
 

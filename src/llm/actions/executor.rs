@@ -382,6 +382,20 @@ async fn execute_common_action(
         }
 
         CommonAction::SetMemory { value } => {
+            // A client's memory belongs to that client. Falling through to
+            // `get_first_server_id_sync()` in a client context wrote it into whichever server
+            // happened to be first — an unrelated server's prompt, silently corrupted, while
+            // the client's own memory stayed empty.
+            if server_id.is_none() {
+                if let Some(cid) = client_id {
+                    let bounded = bound_server_memory(value);
+                    debug!("Client #{} memory set ({} chars)", cid.as_u32(), bounded.len());
+                    state
+                        .with_client_mut(cid, |client| client.memory = bounded)
+                        .await;
+                    return Ok(());
+                }
+            }
             let sid = server_id.or_else(|| state.get_first_server_id_sync());
             if let Some(server_id) = sid {
                 // Memory is injected into every prompt for this server, so it is bounded
@@ -397,6 +411,26 @@ async fn execute_common_action(
         }
 
         CommonAction::AppendMemory { value } => {
+            // See `SetMemory`: a client context must not fall through to the first server.
+            if server_id.is_none() {
+                if let Some(cid) = client_id {
+                    let bounded = state
+                        .with_client_mut(cid, |client| {
+                            let combined = if client.memory.is_empty() {
+                                value
+                            } else {
+                                format!("{}\n{}", client.memory, value)
+                            };
+                            client.memory = bound_server_memory(combined);
+                            client.memory.len()
+                        })
+                        .await;
+                    if let Some(len) = bounded {
+                        debug!("Client #{} memory appended ({} chars)", cid.as_u32(), len);
+                    }
+                    return Ok(());
+                }
+            }
             let sid = server_id.or_else(|| state.get_first_server_id_sync());
             if let Some(server_id) = sid {
                 let current = state.get_memory(server_id).await.unwrap_or_default();

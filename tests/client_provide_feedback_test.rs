@@ -82,23 +82,46 @@ fn no_client_protocol_executor_can_run_provide_feedback() {
 ///
 /// A name in `CLIENT_COMMON_ACTION_NAMES` that nothing advertises is dead weight; a name
 /// advertised by `call_llm_for_client` that is missing from the list goes to the protocol
-/// executor and is rejected. `provide_feedback` is the only member today.
+/// executor and is rejected as unknown, costing two retries and then failing the event.
+///
+/// `provide_feedback` was the only member until the client path was found to advertise no way
+/// to write the client's own memory (`ClientInstance::memory`, which is prefixed to every
+/// message it is sent) and no way to say anything to the user. Three client E2E suites —
+/// redis, udp, http — were mocking `set_memory` and `show_message` on the assumption that they
+/// worked.
 #[test]
 fn the_centrally_handled_names_are_exactly_the_injected_ones() {
     assert_eq!(
         CLIENT_COMMON_ACTION_NAMES,
-        &["provide_feedback"],
-        "call_llm_for_client injects exactly one action that no client declares. If another is \
-         added there, add it here and to split_client_common_actions' coverage, or the model \
-         will be offered a tool its protocol rejects."
+        &[
+            "provide_feedback",
+            "set_memory",
+            "append_memory",
+            "show_message"
+        ],
+        "these are the actions call_llm_for_client injects that no client declares. If another \
+         is added there, add it here too, or the model will be offered a tool its protocol \
+         rejects; if one is removed here but still injected, the same happens."
     );
 
-    // …and the name matches the action definition actually injected, not a copy that drifted.
-    assert_eq!(
-        netget::llm::actions::common::provide_feedback_action().name,
-        CLIENT_COMMON_ACTION_NAMES[0],
-        "the injected action's name and the centrally-handled name must be the same string"
-    );
+    // …and each name matches the action definition actually injected, not a copy that drifted.
+    use netget::llm::actions::common;
+    for (injected, listed) in [
+        (common::provide_feedback_action().name, "provide_feedback"),
+        (common::set_memory_action().name, "set_memory"),
+        (common::append_memory_action().name, "append_memory"),
+        (common::show_message_action().name, "show_message"),
+    ] {
+        assert_eq!(
+            injected, listed,
+            "the injected action's name and the centrally-handled name must be the same string"
+        );
+        assert!(
+            CLIENT_COMMON_ACTION_NAMES.contains(&listed),
+            "{listed} is injected but not centrally handled, so it would reach the protocol \
+             executor and be rejected"
+        );
+    }
 }
 
 /// The split: a common action is taken out, protocol actions pass through untouched and in
