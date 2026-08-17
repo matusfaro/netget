@@ -225,10 +225,11 @@ async fn test_couchdb_client_document_crud() -> E2EResult<()> {
             .and_event_data_contains("operation", "doc_get")
             .and_event_data_contains("doc_id", "user1")
             .respond_with_actions(json!([{
-                "type": "send_doc_get_response",
+                "type": "send_doc_response",
+                "success": true,
                 "doc_id": "user1",
                 "rev": "1-abc123",
-                "body": "{\"name\": \"Alice\", \"age\": 30}"
+                "document": {"name": "Alice", "age": 30}
             }]))
             .and()
             .on_event("couchdb_request")
@@ -361,10 +362,11 @@ async fn test_couchdb_client_conflict_handling() -> E2EResult<()> {
             .and_event_data_contains("operation", "doc_get")
             .and_event_data_contains("doc_id", "user1")
             .respond_with_actions(json!([{
-                "type": "send_doc_get_response",
+                "type": "send_doc_response",
+                "success": true,
                 "doc_id": "user1",
                 "rev": "2-current",
-                "body": "{\"name\": \"Alice\", \"age\": 31}"
+                "document": {"name": "Alice", "age": 31}
             }]))
             .and()
             .on_event("couchdb_request")
@@ -487,7 +489,7 @@ async fn test_couchdb_client_bulk_operations() -> E2EResult<()> {
             .on_event("couchdb_request")
             .and_event_data_contains("operation", "all_docs")
             .respond_with_actions(json!([{
-                "type": "send_all_docs_response",
+                "type": "send_all_docs",
                 "total_rows": 3,
                 "rows": [
                     {"id": "doc1", "key": "doc1", "value": {"rev": "1-abc"}},
