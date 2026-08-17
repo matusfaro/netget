@@ -129,6 +129,53 @@ mod ldap {
     }
 }
 
+#[cfg(feature = "bluetooth-ble")]
+mod bluetooth_ble {
+    use netget::server::bluetooth_ble::write_response_status;
+    use serde_json::json;
+
+    /// `respond_to_write` declares a `status` of 'success' or 'error'. Nothing read it: both
+    /// consumption sites skip the action as "handled inline", and the inline handler answered
+    /// ATT Success unconditionally — so a model rejecting a write was told the central it had
+    /// been accepted. The Write Response is the only signal the central gets.
+    #[test]
+    fn an_explicit_error_status_refuses_the_write() {
+        let refused = write_response_status(&[json!({
+            "type": "respond_to_write",
+            "status": "error"
+        })]);
+
+        assert!(
+            matches!(
+                refused,
+                ble_peripheral_rust::gatt::peripheral_event::RequestResponse::UnlikelyError
+            ),
+            "a model answering status=\"error\" must refuse the write on the wire; \
+             acknowledging it Success discards the decision entirely"
+        );
+    }
+
+    /// Silence is still consent — most writes are accepted, and a handler that answered the
+    /// event without naming a status has agreed to it. Only an explicit refusal refuses.
+    #[test]
+    fn success_and_omission_both_acknowledge() {
+        for action in [
+            json!({"type": "respond_to_write", "status": "success"}),
+            json!({"type": "respond_to_write"}),
+            json!({"type": "send_notification", "value": "0048"}),
+        ] {
+            assert!(
+                matches!(
+                    write_response_status(std::slice::from_ref(&action)),
+                    ble_peripheral_rust::gatt::peripheral_event::RequestResponse::Success
+                ),
+                "{} should acknowledge the write",
+                action
+            );
+        }
+    }
+}
+
 #[cfg(feature = "imap")]
 mod imap {
     use super::*;
