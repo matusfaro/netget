@@ -151,6 +151,11 @@ impl TcpClient {
             }
         }
 
+        // Command channel: lets the dashboard (and any programmatic caller)
+        // inject actions into this loop via AppState::send_to_client.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
         // Spawn read loop. The handle is registered with AppState so that
         // stop_client / remove_client can abort it — dropping a JoinHandle only
         // detaches the task, leaving the socket open and the LLM being called.
@@ -160,7 +165,33 @@ impl TcpClient {
             let mut buffer = vec![0u8; 8192];
 
             loop {
-                match read_half.read(&mut buffer).await {
+                let read_result = tokio::select! {
+                    read = read_half.read(&mut buffer) => read,
+                    Some(cmd) = command_rx.recv() => {
+                        let disconnect = crate::client::command_support::handle_stream_client_command(
+                            &crate::client::tcp::actions::TcpClientProtocol,
+                            &write_half_arc,
+                            cmd,
+                            client_id,
+                            &app_state,
+                            &status_tx,
+                        )
+                        .await;
+                        if disconnect {
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Disconnected)
+                                .await;
+                            let _ = status_tx.send(format!(
+                                "[CLIENT] TCP client {} disconnected (injected action)",
+                                client_id
+                            ));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                match read_result {
                     Ok(0) => {
                         info!(
                             "TCP client {} {}",
@@ -284,6 +315,9 @@ impl TcpClient {
                     }
                 }
             }
+            // The loop owns the only receiver; dropping the registered handle
+            // makes later send_to_client calls fail fast instead of timing out.
+            app_state.remove_client_handle(client_id).await;
         });
         task_registrar.register_client_task(client_id, handle).await;
 

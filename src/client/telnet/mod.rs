@@ -182,6 +182,11 @@ impl TelnetClient {
         let write_half_for_negotiation = write_half_arc.clone();
         let status_tx_for_negotiation = status_tx.clone();
 
+        // Command channel: lets the dashboard (and any programmatic caller)
+        // inject actions into this loop via AppState::send_to_client.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
         // Spawn read loop
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
@@ -190,7 +195,33 @@ impl TelnetClient {
             let mut buffer = vec![0u8; 8192];
 
             loop {
-                match read_half.read(&mut buffer).await {
+                let read_result = tokio::select! {
+                    read = read_half.read(&mut buffer) => read,
+                    Some(cmd) = command_rx.recv() => {
+                        let disconnect = crate::client::command_support::handle_stream_client_command(
+                            &crate::client::telnet::actions::TelnetClientProtocol,
+                            &write_half_arc,
+                            cmd,
+                            client_id,
+                            &app_state,
+                            &status_tx,
+                        )
+                        .await;
+                        if disconnect {
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Disconnected)
+                                .await;
+                            let _ = status_tx.send(format!(
+                                "[CLIENT] Telnet client {} disconnected (injected action)",
+                                client_id
+                            ));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                match read_result {
                     Ok(0) => {
                         info!(
                             "Telnet client {} {}",
@@ -345,6 +376,9 @@ impl TelnetClient {
                     }
                 }
             }
+            // The loop owns the only receiver; dropping the registered handle
+            // makes later send_to_client calls fail fast instead of timing out.
+            app_state.remove_client_handle(client_id).await;
         });
         task_registrar
             .register_client_task(client_id, task_handle)
