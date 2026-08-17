@@ -67,6 +67,7 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
             Vec::new()
         }
         Modal::Composer(composer) => composer_lines(app, composer),
+        Modal::Routing(model) => routing_lines(app, model),
     };
 
     let scroll = match modal {
@@ -233,6 +234,209 @@ fn form_lines<'a>(
         }
     }
     if let Some(error) = &form.error {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            format!("✗ {error}"),
+            app.styles.error,
+        )));
+    }
+    lines
+}
+
+fn routing_lines<'a>(
+    app: &DashboardApp,
+    model: &crate::tui::modal::routing::RoutingModel,
+) -> Vec<Line<'a>> {
+    use crate::tui::modal::routing::{HandlerEditFocus, HandlerKind};
+
+    let mut lines = Vec::new();
+
+    if let Some(draft) = &model.draft {
+        let field = |focused: bool| {
+            if focused {
+                app.styles.accent
+            } else {
+                app.styles.normal
+            }
+        };
+        lines.push(Line::from(Span::styled(
+            "Tab moves between pattern, kind and body.",
+            app.styles.dimmed,
+        )));
+        lines.push(Line::from(""));
+
+        let pattern_display = if draft.editing.is_some() && draft.focus == HandlerEditFocus::Pattern
+        {
+            format!("{}_", draft.editing.as_deref().unwrap_or(""))
+        } else {
+            draft.pattern.clone()
+        };
+        lines.push(Line::from(vec![
+            Span::styled(
+                if draft.focus == HandlerEditFocus::Pattern { "▸ " } else { "  " },
+                app.styles.accent,
+            ),
+            Span::styled("event pattern    ", field(draft.focus == HandlerEditFocus::Pattern)),
+            Span::styled(pattern_display, app.styles.info),
+        ]));
+        if draft.focus == HandlerEditFocus::Pattern {
+            lines.push(Line::from(Span::styled(
+                "    '*' matches every event. This protocol raises:",
+                app.styles.dimmed,
+            )));
+            for (id, description) in model.event_ids.iter().take(12) {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "      {:<28} {}",
+                        id,
+                        crate::utils::truncate_for_log(description, 60)
+                    ),
+                    app.styles.dimmed,
+                )));
+            }
+        }
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                if draft.focus == HandlerEditFocus::Kind { "▸ " } else { "  " },
+                app.styles.accent,
+            ),
+            Span::styled("handled by       ", field(draft.focus == HandlerEditFocus::Kind)),
+            Span::styled(draft.kind.label().to_string(), app.styles.info),
+        ]));
+        if draft.focus == HandlerEditFocus::Kind {
+            lines.push(Line::from(Span::styled(
+                "    ←/→ or Enter cycles. Static and script answer without a model call.",
+                app.styles.dimmed,
+            )));
+        }
+
+        let body_label = match draft.kind {
+            HandlerKind::Llm => "instruction",
+            HandlerKind::Script => "script code",
+            HandlerKind::Static => "actions",
+        };
+        lines.push(Line::from(vec![
+            Span::styled(
+                if draft.focus == HandlerEditFocus::Body { "▸ " } else { "  " },
+                app.styles.accent,
+            ),
+            Span::styled(
+                format!("{body_label:<17}"),
+                field(draft.focus == HandlerEditFocus::Body),
+            ),
+        ]));
+        match draft.kind {
+            HandlerKind::Llm => {
+                let text = if draft.editing.is_some() && draft.focus == HandlerEditFocus::Body {
+                    format!("{}_", draft.editing.as_deref().unwrap_or(""))
+                } else if draft.instruction.is_empty() {
+                    "(press Enter to write the per-event instruction)".to_string()
+                } else {
+                    draft.instruction.clone()
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("      {text}"),
+                    app.styles.info,
+                )));
+            }
+            HandlerKind::Script => {
+                lines.push(Line::from(Span::styled(
+                    format!("      language: {}", draft.language),
+                    app.styles.dimmed,
+                )));
+                if draft.code.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "      (press Enter to write the script)",
+                        app.styles.dimmed,
+                    )));
+                } else {
+                    for line in draft.code.lines().take(8) {
+                        lines.push(Line::from(Span::styled(
+                            format!("      {line}"),
+                            app.styles.info,
+                        )));
+                    }
+                }
+            }
+            HandlerKind::Static => {
+                if draft.actions.is_empty() {
+                    lines.push(Line::from(Span::styled(
+                        "      (press Enter to build the response actions)",
+                        app.styles.dimmed,
+                    )));
+                } else {
+                    for (index, action) in draft.actions.iter().enumerate() {
+                        let name = action
+                            .get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("(no type)");
+                        let style = if draft.focus == HandlerEditFocus::Body
+                            && index == draft.selected_action
+                        {
+                            app.styles.selected
+                        } else {
+                            app.styles.info
+                        };
+                        lines.push(Line::from(Span::styled(
+                            format!("      {name}  {}", crate::utils::truncate_for_log(&action.to_string(), 70)),
+                            style,
+                        )));
+                    }
+                }
+            }
+        }
+        if let Some(error) = &draft.error {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("✗ {error}"),
+                app.styles.error,
+            )));
+        }
+        return lines;
+    }
+
+    lines.push(Line::from(Span::styled(
+        "Handlers match in order, first wins:",
+        app.styles.dimmed,
+    )));
+    lines.push(Line::from(""));
+    let rows = model.rows();
+    let last = rows.len().saturating_sub(1);
+    for (index, row) in rows.iter().enumerate() {
+        let is_fallback = index == last;
+        let style = if is_fallback {
+            app.styles.dimmed
+        } else if index == model.selected {
+            app.styles.selected
+        } else {
+            app.styles.normal
+        };
+        let marker = if !is_fallback && index == model.selected {
+            "▸ "
+        } else {
+            "  "
+        };
+        lines.push(Line::from(vec![
+            Span::styled(marker, app.styles.accent),
+            Span::styled(row.clone(), style),
+        ]));
+    }
+    if model.handlers.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  No handlers: every event goes to the LLM. Press a to add a deterministic one.",
+            app.styles.dimmed,
+        )));
+    }
+    if model.dirty {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  unsaved — Ctrl-S applies (hot: no restart, connections kept)",
+            app.styles.warning,
+        )));
+    }
+    if let Some(error) = &model.error {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("✗ {error}"),

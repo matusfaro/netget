@@ -408,9 +408,14 @@ async fn handle_band_shortcut(
 ) {
     match code {
         KeyCode::Char('a') => open_protocol_picker(app, section, None, state).await,
-        KeyCode::Char('e') | KeyCode::Char('r') => {
+        KeyCode::Char('e') => {
             if let Some(band_key) = key {
                 open_editor(app, band_key);
+            }
+        }
+        KeyCode::Char('r') => {
+            if let Some(band_key) = key {
+                open_routing(app, band_key, state);
             }
         }
         KeyCode::Char('d') => {
@@ -483,6 +488,27 @@ fn open_editor(app: &mut DashboardApp, key: UiKey) {
     };
     if let Some(model) = model {
         app.modals.push(Modal::Form(Box::new(model)));
+    }
+}
+
+fn open_routing(app: &mut DashboardApp, key: UiKey, state: &AppState) {
+    use crate::tui::modal::routing::RoutingModel;
+    let model = match key {
+        UiKey::Server(id) => app
+            .snapshot
+            .servers
+            .iter()
+            .find(|s| s.id == id)
+            .map(|row| RoutingModel::new(key, &row.protocol, row.routing.as_ref(), state)),
+        UiKey::Client(id) => app
+            .snapshot
+            .clients
+            .iter()
+            .find(|c| c.id == id)
+            .map(|row| RoutingModel::new(key, &row.protocol, row.routing.as_ref(), state)),
+    };
+    if let Some(model) = model {
+        app.modals.push(Modal::Routing(Box::new(model)));
     }
 }
 
@@ -602,6 +628,7 @@ async fn handle_modal_key(app: &mut DashboardApp, key: KeyEvent, state: &AppStat
         Some(Modal::Form(_)) => return handle_form_key(app, key, state).await,
         Some(Modal::TextEditor { .. }) => return handle_text_editor_key(app, key),
         Some(Modal::Composer(_)) => return handle_composer_key(app, key, state).await,
+        Some(Modal::Routing(_)) => return handle_routing_key(app, key, state).await,
         _ => {}
     }
 
@@ -759,8 +786,32 @@ fn handle_text_editor_key(app: &mut DashboardApp, key: KeyEvent) -> Outcome {
             if let Some(text) = editor.accept() {
                 let target = target.clone();
                 app.modals.pop();
-                if let Some(Modal::Form(form)) = app.modals.last_mut() {
-                    form.set_field_value(&target, text);
+                match app.modals.last_mut() {
+                    Some(Modal::Form(form)) => form.set_field_value(&target, text),
+                    // Opened from a routing draft: the target says which half
+                    // of the handler body was being edited.
+                    Some(Modal::Routing(model)) => {
+                        if let Some(draft) = model.draft.as_mut() {
+                            use crate::tui::modal::form::FieldTarget;
+                            match target {
+                                FieldTarget::EventHandlersJson => {
+                                    match serde_json::from_str::<serde_json::Value>(&text) {
+                                        Ok(serde_json::Value::Array(actions)) => {
+                                            draft.actions = actions;
+                                            draft.error = None;
+                                        }
+                                        Ok(_) => {
+                                            draft.error =
+                                                Some("static actions must be a JSON array".into())
+                                        }
+                                        Err(e) => draft.error = Some(format!("invalid JSON: {e}")),
+                                    }
+                                }
+                                _ => draft.code = text,
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -973,6 +1024,176 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
         HitTarget::ModalBody | HitTarget::ModalRow(_) | HitTarget::ModalButton(_) => {}
     }
     Outcome::Continue
+}
+
+async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {
+    use crate::tui::modal::routing::HandlerEditFocus;
+    use crate::tui::modal::text_editor::TextEditorModel;
+
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let Some(Modal::Routing(model)) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+
+    // Handler draft open: edit pattern / kind / body.
+    if let Some(draft) = model.draft.as_mut() {
+        if let Some(buffer) = draft.editing.as_mut() {
+            match key.code {
+                KeyCode::Enter => {
+                    let text = buffer.clone();
+                    draft.editing = None;
+                    match draft.focus {
+                        HandlerEditFocus::Pattern => draft.pattern = text,
+                        HandlerEditFocus::Body => draft.instruction = text,
+                        HandlerEditFocus::Kind => {}
+                    }
+                }
+                KeyCode::Esc => draft.editing = None,
+                KeyCode::Backspace => {
+                    buffer.pop();
+                }
+                KeyCode::Char(c) if !ctrl => buffer.push(c),
+                _ => {}
+            }
+            return Outcome::Continue;
+        }
+
+        match key.code {
+            KeyCode::Esc => model.draft = None,
+            KeyCode::Tab => {
+                draft.focus = match draft.focus {
+                    HandlerEditFocus::Pattern => HandlerEditFocus::Kind,
+                    HandlerEditFocus::Kind => HandlerEditFocus::Body,
+                    HandlerEditFocus::Body => HandlerEditFocus::Pattern,
+                };
+            }
+            KeyCode::Left | KeyCode::Right if draft.focus == HandlerEditFocus::Kind => {
+                draft.kind = draft.kind.next();
+            }
+            KeyCode::Up if draft.focus == HandlerEditFocus::Body => {
+                draft.selected_action = draft.selected_action.saturating_sub(1);
+            }
+            KeyCode::Down if draft.focus == HandlerEditFocus::Body => {
+                if draft.selected_action + 1 < draft.actions.len() {
+                    draft.selected_action += 1;
+                }
+            }
+            KeyCode::Char('d') if draft.focus == HandlerEditFocus::Body => {
+                if draft.selected_action < draft.actions.len() {
+                    draft.actions.remove(draft.selected_action);
+                    draft.selected_action = draft.selected_action.saturating_sub(1);
+                }
+            }
+            KeyCode::Enter => {
+                use crate::tui::modal::routing::HandlerKind;
+                match (draft.focus, draft.kind) {
+                    (HandlerEditFocus::Pattern, _) => {
+                        draft.editing = Some(draft.pattern.clone());
+                    }
+                    (HandlerEditFocus::Kind, _) => draft.kind = draft.kind.next(),
+                    (HandlerEditFocus::Body, HandlerKind::Llm) => {
+                        draft.editing = Some(draft.instruction.clone());
+                    }
+                    (HandlerEditFocus::Body, HandlerKind::Script) => {
+                        let editor = TextEditorModel::new(
+                            "script code",
+                            "The script receives the event on stdin and writes {\"actions\": [...]}.",
+                            &draft.code,
+                            false,
+                        );
+                        app.modals.push(Modal::TextEditor {
+                            editor: Box::new(editor),
+                            target: crate::tui::modal::form::FieldTarget::Instruction,
+                        });
+                    }
+                    (HandlerEditFocus::Body, HandlerKind::Static) => {
+                        let initial = if draft.actions.is_empty() {
+                            example_actions(model_actions(model))
+                        } else {
+                            serde_json::to_string_pretty(&draft.actions).unwrap_or_default()
+                        };
+                        let editor = TextEditorModel::new(
+                            "static actions",
+                            "A JSON array of actions. {{event.field}} interpolates from the event.",
+                            &initial,
+                            true,
+                        );
+                        app.modals.push(Modal::TextEditor {
+                            editor: Box::new(editor),
+                            target: crate::tui::modal::form::FieldTarget::EventHandlersJson,
+                        });
+                    }
+                }
+            }
+            KeyCode::Char('s') | KeyCode::Char('S') if ctrl => match model.commit_draft() {
+                Ok(()) => model.error = None,
+                Err(e) => {
+                    if let Some(draft) = model.draft.as_mut() {
+                        draft.error = Some(e.to_string());
+                    }
+                }
+            },
+            _ => {}
+        }
+        return Outcome::Continue;
+    }
+
+    // Handler list.
+    match key.code {
+        KeyCode::Esc => {
+            app.modals.pop();
+        }
+        KeyCode::Up => model.move_selection(-1),
+        KeyCode::Down => model.move_selection(1),
+        KeyCode::Char('a') => model.add(),
+        KeyCode::Enter | KeyCode::Char('e') => model.edit_selected(),
+        KeyCode::Char('d') => model.delete_selected(),
+        KeyCode::Char('K') => model.reorder(-1),
+        KeyCode::Char('J') => model.reorder(1),
+        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            let snapshot = model.clone();
+            let llm = app.llm_client.clone();
+            let status_tx = app.status_tx.clone();
+            match snapshot.apply(state, llm, &status_tx).await {
+                Ok(summary) => {
+                    app.modals.pop();
+                    app.push_system(summary);
+                }
+                Err(e) => {
+                    if let Some(Modal::Routing(model)) = app.modals.last_mut() {
+                        model.error = Some(e.to_string());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+fn model_actions(model: &crate::tui::modal::routing::RoutingModel) -> &[crate::llm::actions::ActionDefinition] {
+    &model.actions
+}
+
+/// A starter JSON array using the protocol's first action as a template, so
+/// the editor opens with something valid rather than a blank page.
+fn example_actions(actions: &[crate::llm::actions::ActionDefinition]) -> String {
+    match actions.first() {
+        Some(action) => {
+            let mut example = action.example.clone();
+            if example.get("type").is_none() {
+                if let Some(obj) = example.as_object_mut() {
+                    obj.insert(
+                        "type".to_string(),
+                        serde_json::Value::String(action.name.clone()),
+                    );
+                }
+            }
+            serde_json::to_string_pretty(&serde_json::Value::Array(vec![example]))
+                .unwrap_or_else(|_| "[]".to_string())
+        }
+        None => "[]".to_string(),
+    }
 }
 
 /// A detached sender for command paths that only need the return value.

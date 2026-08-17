@@ -10,6 +10,7 @@ pub mod form;
 pub mod help;
 pub mod protocol_picker;
 pub mod request_detail;
+pub mod routing;
 pub mod text_editor;
 
 use crate::state::app_state::{AccessLogEntry, WebApprovalResponse};
@@ -69,6 +70,8 @@ pub enum Modal {
     },
     /// Compose and send an action through a running client.
     Composer(Box<ComposerModel>),
+    /// Edit the instance's handler table (LLM / script / static routing).
+    Routing(Box<routing::RoutingModel>),
 }
 
 impl Modal {
@@ -105,6 +108,10 @@ impl Modal {
             Modal::Composer(composer) => {
                 format!("Send via client #{}", composer.client_id.as_u32())
             }
+            Modal::Routing(model) => match model.key {
+                UiKey::Server(id) => format!("Routing — server #{}", id.as_u32()),
+                UiKey::Client(id) => format!("Routing — client #{}", id.as_u32()),
+            },
         }
     }
 
@@ -131,6 +138,13 @@ impl Modal {
                     "↑/↓ field · Enter edit · Ctrl-J raw JSON · Ctrl-S send · Esc back"
                 } else {
                     "↑/↓ action · Enter choose · Esc cancel"
+                }
+            }
+            Modal::Routing(model) => {
+                if model.draft.is_some() {
+                    "Tab section · ←/→ change · Enter edit · Ctrl-S accept handler · Esc back"
+                } else {
+                    "a add · Enter edit · d delete · J/K reorder · Ctrl-S apply · Esc close"
                 }
             }
         }
