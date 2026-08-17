@@ -299,6 +299,23 @@ fn send_rtp_audio_action() -> ActionDefinition {
                     .to_string(),
                 required: false,
             },
+            // Both are read by the executor and handed to RtpPacketizer, but were declared
+            // nowhere - so a model continuing an existing stream could not keep its numbering
+            // continuous, and every call restarted the sequence and timestamp.
+            Parameter {
+                name: "start_sequence".to_string(),
+                type_hint: "number".to_string(),
+                description: "RTP sequence number for the first packet (16-bit). Omit to                     continue from a random start; set it to resume an existing stream without                     a gap."
+                    .to_string(),
+                required: false,
+            },
+            Parameter {
+                name: "start_timestamp".to_string(),
+                type_hint: "number".to_string(),
+                description: "RTP timestamp for the first packet (32-bit, 8kHz for G.711).                     Omit for a random start; set it to keep a resumed stream's clock                     continuous."
+                    .to_string(),
+                required: false,
+            },
         ],
         example: json!({
             "type": "send_rtp_audio",
