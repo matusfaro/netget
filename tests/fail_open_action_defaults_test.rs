@@ -24,10 +24,15 @@
 //! encode byte-for-byte what an explicit failure encodes, and must differ from an explicit
 //! success. That holds regardless of how resultCode is framed on the wire.
 
+// Every user of these lives behind a feature gate, so a build with none of the protocols
+// compiled in leaves them unused. That is a legitimate configuration, not a mistake.
+#[allow(unused_imports)]
 use netget::llm::actions::protocol_trait::{ActionResult, Server};
+#[allow(unused_imports)]
 use serde_json::json;
 
 /// The bytes an action encodes, or `None` if the executor refused it.
+#[allow(dead_code)]
 fn encoded<P: Server>(protocol: &P, action: serde_json::Value) -> Option<Vec<u8>> {
     match protocol.execute_action(action) {
         Ok(ActionResult::Output(bytes)) => Some(bytes),
