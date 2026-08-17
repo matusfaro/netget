@@ -11,7 +11,7 @@ pub mod server_handles;
 pub mod sqlite;
 pub mod task;
 
-pub use app_state::AppState;
+pub use app_state::{AccessLogOwner, AppState};
 pub use client::{ClientConnectionState, ClientId, ClientInstance, ClientStatus};
 pub use easy::{EasyId, EasyInstance, EasyStatus};
 pub use machine::StateMachine;

@@ -239,8 +239,14 @@ pub struct AccessLogEntry {
     pub id: u64,
     /// Unix time in milliseconds when the entry was recorded
     pub unix_ms: u64,
-    /// Server that handled the request
-    pub server_id: u32,
+    /// Server that handled the request (absent on client-side entries).
+    /// Serialization skips `None`, so pre-existing server entries keep their
+    /// exact JSON shape for MCP consumers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<u32>,
+    /// Client that produced/handled the event (absent on server-side entries)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<u32>,
     /// Protocol name (e.g. "http", "dns")
     pub protocol: String,
     /// Connection the request arrived on, if the protocol is connection-oriented
@@ -249,12 +255,35 @@ pub struct AccessLogEntry {
     pub event_type: String,
     /// The request: structured event data
     pub request: serde_json::Value,
-    /// The response: action JSON produced for this request
+    /// The response: action JSON produced for this request.
+    ///
+    /// Server entries record actions as executed (failures appear as
+    /// `FAILED: <action>` envelopes). Client entries record the actions the
+    /// handler/LLM *produced* — execution happens later inside the client's
+    /// connection loop, which does not report back here.
     pub response: Vec<serde_json::Value>,
 }
 
+impl AccessLogEntry {
+    /// Which instance this entry belongs to.
+    pub fn owner(&self) -> Option<AccessLogOwner> {
+        match (self.server_id, self.client_id) {
+            (Some(id), _) => Some(AccessLogOwner::Server(id)),
+            (None, Some(id)) => Some(AccessLogOwner::Client(id)),
+            (None, None) => None,
+        }
+    }
+}
+
+/// The instance an access-log entry belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessLogOwner {
+    Server(u32),
+    Client(u32),
+}
+
 /// Maximum number of access-log entries retained in memory (ring buffer).
-const ACCESS_LOG_CAPACITY: usize = 200;
+const ACCESS_LOG_CAPACITY: usize = 1000;
 
 /// One instance's accumulated feedback, taken out of its buffer for processing.
 ///
@@ -2611,19 +2640,24 @@ impl AppState {
     // ===== Access Log Methods =====
 
     /// Record a request/response access-log entry (ring buffer, oldest dropped past capacity).
+    /// Returns the assigned entry id.
     pub async fn record_access_log(
         &self,
-        server_id: u32,
+        owner: AccessLogOwner,
         protocol: &str,
         connection_id: Option<u32>,
         event_type: &str,
         request: serde_json::Value,
         response: Vec<serde_json::Value>,
-    ) {
+    ) -> u64 {
         let unix_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+        let (server_id, client_id) = match owner {
+            AccessLogOwner::Server(id) => (Some(id), None),
+            AccessLogOwner::Client(id) => (None, Some(id)),
+        };
 
         let mut inner = self.inner.write().await;
         let id = inner.next_access_log_id;
@@ -2632,6 +2666,7 @@ impl AppState {
             id,
             unix_ms,
             server_id,
+            client_id,
             protocol: protocol.to_string(),
             connection_id,
             event_type: event_type.to_string(),
@@ -2641,14 +2676,32 @@ impl AppState {
         while inner.access_logs.len() > ACCESS_LOG_CAPACITY {
             inner.access_logs.pop_front();
         }
+        id
     }
 
     /// Return the most recent access-log entries, newest first (up to `limit`).
     /// Pass `None` for the full retained buffer.
     pub async fn list_access_logs(&self, limit: Option<usize>) -> Vec<AccessLogEntry> {
+        self.list_access_logs_for(None, limit).await
+    }
+
+    /// Return the most recent access-log entries for one instance (or all,
+    /// with `owner: None`), newest first (up to `limit`).
+    pub async fn list_access_logs_for(
+        &self,
+        owner: Option<AccessLogOwner>,
+        limit: Option<usize>,
+    ) -> Vec<AccessLogEntry> {
         let inner = self.inner.read().await;
         let take = limit.unwrap_or(ACCESS_LOG_CAPACITY);
-        inner.access_logs.iter().rev().take(take).cloned().collect()
+        inner
+            .access_logs
+            .iter()
+            .rev()
+            .filter(|entry| owner.is_none() || entry.owner() == owner)
+            .take(take)
+            .cloned()
+            .collect()
     }
 
     /// Look up a single access-log entry by id.

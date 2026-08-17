@@ -342,7 +342,7 @@ async fn record_event_access_log(
 
     state
         .record_access_log(
-            server_id.as_u32(),
+            crate::state::AccessLogOwner::Server(server_id.as_u32()),
             protocol.protocol_name(),
             connection_id.map(|c| c.as_u32()),
             event.id(),
