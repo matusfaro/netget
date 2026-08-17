@@ -606,9 +606,16 @@ async fn websocket_ping_needs_no_application_reply() -> E2EResult<()> {
     }
     EventCase::new(
         "WebSocket",
-        "You are a WebSocket server. The framing layer answers pings with pongs \
-         on its own, so a ping needs nothing from you — but note that the peer \
-         is alive.",
+        // Directive, because the previous phrasing ("a ping needs nothing from you — but
+        // note that the peer is alive") lost: the model read the first clause, returned an
+        // empty action list, and did so on two separate runs. The observation has to be
+        // stated as the task rather than appended to a sentence excusing the model from
+        // acting. Same repair as the OSPF descriptions, which described acknowledging an LSA
+        // instead of instructing the model to send the acknowledgement.
+        "You are a WebSocket server keeping a liveness record of connected peers. \
+         Never send an application frame in reply to a ping — the framing layer \
+         already answers it with a pong. Your one job on a ping is to record that \
+         this peer is alive.",
         "websocket_ping",
         json!({ "payload": "", "encoding": "utf8" }),
     )
