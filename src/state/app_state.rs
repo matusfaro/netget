@@ -434,6 +434,10 @@ struct AppStateInner {
     /// See `crate::state::server_handles` for the full rationale and the wiring
     /// still needed in `src/llm/actions/`.
     server_handles: HashMap<ServerId, crate::state::server_handles::ServerHandle>,
+    /// Command channels into running clients' connection loops (the dashboard's
+    /// \[send\] button and any future programmatic client control). See
+    /// `crate::state::client_handles` for the design.
+    client_handles: HashMap<ClientId, crate::state::client_handles::ClientHandle>,
 }
 
 impl AppStateInner {
@@ -588,6 +592,7 @@ impl AppState {
                 client_tasks: HashMap::new(),
                 server_tasks: HashMap::new(),
                 server_handles: HashMap::new(),
+                client_handles: HashMap::new(),
             })),
         }
     }
@@ -827,6 +832,100 @@ impl AppState {
     /// Whether a server has registered a live-instance handle
     pub async fn has_server_handle(&self, id: ServerId) -> bool {
         self.inner.read().await.server_handles.contains_key(&id)
+    }
+
+    // ===== Client command handles (see crate::state::client_handles) =====
+
+    /// Register the command channel for a running client. No-op if the client
+    /// row is already gone (raced with `stop_client`) — the caller's receiver
+    /// is then the only reference and sends fail cleanly.
+    pub async fn register_client_handle(
+        &self,
+        id: ClientId,
+        handle: crate::state::client_handles::ClientHandle,
+    ) {
+        let mut inner = self.inner.write().await;
+        if !inner.clients.contains_key(&id) {
+            return;
+        }
+        inner.client_handles.insert(id, handle);
+    }
+
+    /// The command handle for a client, if its loop registered one.
+    pub async fn client_handle(
+        &self,
+        id: ClientId,
+    ) -> Option<crate::state::client_handles::ClientHandle> {
+        self.inner.read().await.client_handles.get(&id).cloned()
+    }
+
+    /// Whether a running client accepts injected commands. The UI uses this to
+    /// grey out \[send\] for clients that have not adopted the channel.
+    pub async fn has_client_handle(&self, id: ClientId) -> bool {
+        self.inner.read().await.client_handles.contains_key(&id)
+    }
+
+    /// Drop a client's command handle (called by the loop on exit; also done
+    /// by `remove_client`).
+    pub async fn remove_client_handle(&self, id: ClientId) {
+        self.inner.write().await.client_handles.remove(&id);
+    }
+
+    /// Execute one action inside a running client's connection loop and wait
+    /// for the outcome.
+    ///
+    /// Lock discipline: the handle is cloned out under the read guard and the
+    /// guard dropped before any await on the channel.
+    pub async fn send_to_client(
+        &self,
+        id: ClientId,
+        action: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<crate::state::client_handles::ClientSendOutcome> {
+        use crate::state::client_handles::ClientCommand;
+
+        let handle = match self.client_handle(id).await {
+            Some(handle) => handle,
+            None => {
+                anyhow::bail!(
+                    "client #{} does not accept injected commands \
+                     (not running, or its protocol has not adopted the command channel)",
+                    id.as_u32()
+                )
+            }
+        };
+
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let command = ClientCommand { action, reply_tx };
+
+        // A full channel within the timeout means the loop is alive but busy;
+        // a closed channel means the loop exited.
+        match tokio::time::timeout(timeout, handle.command_tx.send(command)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => anyhow::bail!(
+                "client #{}'s connection loop is not running (channel closed)",
+                id.as_u32()
+            ),
+            Err(_) => anyhow::bail!(
+                "client #{} is busy (command queue full after {:?})",
+                id.as_u32(),
+                timeout
+            ),
+        }
+
+        match tokio::time::timeout(timeout, reply_rx).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => anyhow::bail!(
+                "client #{}'s connection loop dropped the command without executing it \
+                 (loop shutting down)",
+                id.as_u32()
+            ),
+            Err(_) => anyhow::bail!(
+                "client #{} did not report an outcome within {:?}",
+                id.as_u32(),
+                timeout
+            ),
+        }
     }
 
     /// Number of background tasks currently tracked for a server
@@ -1846,6 +1945,8 @@ impl AppState {
         let mut inner = self.inner.write().await;
         let client = inner.clients.remove(&id);
         inner.client_llm_calls.remove(&id);
+        // A command handle must never outlive the client it points at.
+        inner.client_handles.remove(&id);
 
         for handle in inner.client_tasks.remove(&id).unwrap_or_default() {
             handle.abort();
