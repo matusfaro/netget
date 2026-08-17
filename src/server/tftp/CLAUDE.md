@@ -161,9 +161,18 @@ Send file data block to client.
 Parameters:
 - `block_number` (required) - Block number (1-65535)
 - `data_hex` (required) - Data as hex string (max 512 bytes)
-- `is_final` (optional) - True if final block
 
 **Validation**: Data cannot exceed 512 bytes
+
+**There is no `is_final`.** RFC 1350 signals the end of a transfer by the block's *length* —
+exactly 512 bytes means more follow, anything shorter (including empty) is the last one — and
+the DATA packet has nowhere to carry a flag. The action used to declare `is_final` as
+**required** while `execute_send_tftp_data` read only `block_number` and `data_hex`, so the
+model was forced to compute a field that changed nothing, and could believe `is_final: true`
+on a 512-byte block had ended the transfer. Send a short or empty final block instead.
+
+`is_final` remains on the **`tftp_data_block` event**, where it is real: there the server has
+already measured the client's block and is telling the model whether the upload is complete.
 
 #### `send_tftp_ack`
 
@@ -221,8 +230,7 @@ against real UDP sockets.
     {
       "type": "send_tftp_data",
       "block_number": 1,
-      "data_hex": "48656c6c6f20544654502100",
-      "is_final": true
+      "data_hex": "48656c6c6f20544654502100"
     },
     {
       "type": "show_message",
