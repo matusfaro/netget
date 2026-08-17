@@ -557,18 +557,34 @@ async fn open_client_for_server(
         .unwrap_or(row.port);
     let remote = format!("127.0.0.1:{port}");
 
-    use crate::tui::modal::form::FormModel;
+    use crate::tui::modal::form::{FieldTarget, FormModel};
     let mut model = FormModel::for_create(Section::Clients, &client_protocol, None);
+    model.set_field_value(&FieldTarget::RemoteAddr, remote.clone());
     model.set_field_value(
-        &crate::tui::modal::form::FieldTarget::RemoteAddr,
-        remote.clone(),
+        &FieldTarget::Instruction,
+        format!(
+            "You are a {client_protocol} client connected to our own server #{} at {remote}.",
+            server_id.as_u32()
+        ),
     );
-    model.set_field_value(
-        &crate::tui::modal::form::FieldTarget::Instruction,
-        format!("You are a {client_protocol} client connected to our own server #{} at {remote}.", server_id.as_u32()),
-    );
-    let _ = state;
-    app.modals.push(Modal::Form(Box::new(model)));
+
+    // Everything this client needs is known, so connect it rather than showing
+    // a form with nothing left to fill in.
+    app.push_system(format!("Connecting a {client_protocol} client to {remote}…"));
+    let llm = app.llm_client.clone();
+    let status_tx = app.status_tx.clone();
+    let ui_tx = app.ui_tx.clone();
+    let state = state.clone();
+    tokio::spawn(async move {
+        let result = model
+            .apply(&state, llm, &status_tx)
+            .await
+            .map_err(|e| e.to_string());
+        let _ = ui_tx.send(UiMsg::ActionDone {
+            origin: ActionOrigin::Form,
+            result,
+        });
+    });
 }
 
 async fn open_composer(app: &mut DashboardApp, client_id: crate::state::ClientId, state: &AppState) {
@@ -666,7 +682,7 @@ async fn handle_modal_key(app: &mut DashboardApp, key: KeyEvent, state: &AppStat
     Outcome::Continue
 }
 
-async fn handle_picker_key(app: &mut DashboardApp, key: KeyEvent, _state: &AppState) -> Outcome {
+async fn handle_picker_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {
     use crate::tui::modal::form::{FieldTarget, FormModel};
     use crate::tui::modal::protocol_picker;
 
@@ -701,23 +717,56 @@ async fn handle_picker_key(app: &mut DashboardApp, key: KeyEvent, _state: &AppSt
             *selected = 0;
         }
         KeyCode::Enter => {
+            // Take everything needed out of the picker first, so the borrow on
+            // `app.modals` is released before the instance is started.
             let matches = protocol_picker::filter(entries, filter);
             let Some(entry) = matches.get(*selected) else {
                 return Outcome::Continue;
             };
             let section = *section;
+            let protocol = entry.name.clone();
             let remote = prefill_remote.clone();
             let default_port = if entry.has_binding_defaults {
                 entry.default_port
             } else {
                 None
             };
-            let mut model = FormModel::for_create(section, &entry.name, default_port);
+
+            let mut model = FormModel::for_create(section, &protocol, default_port);
             if let Some(remote) = remote {
                 model.set_field_value(&FieldTarget::RemoteAddr, remote);
             }
+            let missing = model.missing_required();
             app.modals.pop();
-            app.modals.push(Modal::Form(Box::new(model)));
+
+            // Picking a protocol starts it immediately on defaults — the point
+            // of the picker is "give me one of these", not "fill in a form".
+            // Everything stays editable afterwards (`e` config, `r` routing).
+            // The form only appears when something genuinely cannot be
+            // defaulted, such as a client's remote address.
+            if let Some(missing) = missing {
+                model.error = Some(format!(
+                    "{protocol} needs {missing} before it can start — fill it in and press Ctrl-S"
+                ));
+                app.modals.push(Modal::Form(Box::new(model)));
+                return Outcome::Continue;
+            }
+
+            app.push_system(format!("Starting {protocol} on defaults…"));
+            let llm = app.llm_client.clone();
+            let status_tx = app.status_tx.clone();
+            let ui_tx = app.ui_tx.clone();
+            let state = state.clone();
+            tokio::spawn(async move {
+                let result = model
+                    .apply(&state, llm, &status_tx)
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = ui_tx.send(UiMsg::ActionDone {
+                    origin: ActionOrigin::Form,
+                    result,
+                });
+            });
         }
         _ => {}
     }

@@ -108,10 +108,13 @@ impl FormModel {
                     "port",
                     "TCP/UDP port to bind. 0 asks the OS for a free one.",
                 );
-                port.value = default_port.map(|p| p.to_string()).unwrap_or_default();
-                port.required = default_port.is_none();
+                // A protocol with no declared default still has a good one:
+                // port 0 asks the OS for a free port. That keeps "pick a
+                // protocol and go" working for TCP and friends, and the port
+                // remains editable afterwards like everything else.
+                port.value = default_port.map(|p| p.to_string()).unwrap_or_else(|| "0".to_string());
                 port.placeholder = if default_port.is_none() {
-                    "required — this protocol declares no default".to_string()
+                    "0 = let the OS choose a free port".to_string()
                 } else {
                     String::new()
                 };
@@ -257,6 +260,15 @@ impl FormModel {
 
     pub fn selected_field(&self) -> Option<&Field> {
         self.fields.get(self.selected)
+    }
+
+    /// The first required field with no value, if any. When this is `None` the
+    /// instance can be started without asking the user anything.
+    pub fn missing_required(&self) -> Option<String> {
+        self.fields
+            .iter()
+            .find(|f| f.required && f.value.trim().is_empty())
+            .map(|f| f.label.clone())
     }
 
     pub fn move_selection(&mut self, delta: isize) {

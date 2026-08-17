@@ -83,13 +83,33 @@ fn create_form_offers_each_field_once() {
     labels.dedup();
     assert_eq!(labels.len(), count, "form fields must be unique: {labels:?}");
 
-    // A protocol with no binding defaults marks port required.
+    // A protocol that declares no default port still gets a usable one: port 0
+    // asks the OS for a free port, so picking a protocol can start it without
+    // asking the user anything.
     let port = form
         .fields
         .iter()
         .find(|f| f.target == FieldTarget::Port)
         .expect("server form has a port field");
-    assert!(port.required);
+    assert_eq!(port.value, "0");
+    assert!(
+        form.missing_required().is_none(),
+        "a server form should be startable on defaults, missing: {:?}",
+        form.missing_required()
+    );
+}
+
+/// The one case that legitimately cannot be defaulted: a client has nowhere to
+/// connect until it is told. It must say so rather than fail silently.
+#[test]
+fn a_client_form_requires_an_address_before_it_can_start() {
+    let form = FormModel::for_create(Section::Clients, "TCP", None);
+    assert_eq!(form.missing_required().as_deref(), Some("remote_addr"));
+
+    // Supplying one makes it startable.
+    let mut form = form;
+    form.set_field_value(&FieldTarget::RemoteAddr, "127.0.0.1:9".to_string());
+    assert!(form.missing_required().is_none());
 }
 
 #[tokio::test]
