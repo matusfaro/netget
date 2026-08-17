@@ -79,7 +79,7 @@ pub async fn run_dashboard(
     state.set_web_approval_channel(web_approval_tx).await;
 
     let styles = Styles::from_palette(&palette);
-    let mut app = DashboardApp::new(core, styles);
+    let mut app = DashboardApp::new(core, styles, status_tx.clone(), llm_client.clone());
 
     app.push_system(format!(
         "NetGet dashboard — Tab moves between chat and the instance rail, F1 for keys{}",

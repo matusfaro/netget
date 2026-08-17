@@ -404,31 +404,15 @@ async fn handle_band_shortcut(
     code: KeyCode,
     section: Section,
     key: Option<UiKey>,
-    _state: &AppState,
+    state: &AppState,
 ) {
     match code {
-        KeyCode::Char('a') => app.push_system(format!(
-            "Adding a {} interactively is coming in the next build stage; \
-             for now ask the LLM in chat.",
-            match section {
-                Section::Servers => "server",
-                Section::Clients => "client",
+        KeyCode::Char('a') => open_protocol_picker(app, section, None, state).await,
+        KeyCode::Char('e') | KeyCode::Char('r') => {
+            if let Some(band_key) = key {
+                open_editor(app, band_key);
             }
-        )),
-        KeyCode::Char('e') => match key {
-            Some(band_key) => app.modals.push(Modal::BandDetail {
-                key: band_key,
-                scroll: 0,
-            }),
-            None => {}
-        },
-        KeyCode::Char('r') => match key {
-            Some(band_key) => app.modals.push(Modal::BandDetail {
-                key: band_key,
-                scroll: 0,
-            }),
-            None => {}
-        },
+        }
         KeyCode::Char('d') => {
             if let Some(UiKey::Server(id)) = key {
                 if let Some(row) = app.snapshot.servers.iter().find(|s| s.id == id) {
@@ -444,15 +428,125 @@ async fn handle_band_shortcut(
                 }
             }
         }
-        KeyCode::Char('c') => app.push_system(
-            "Connecting a client to this server interactively is coming in the next build stage."
-                .to_string(),
-        ),
-        KeyCode::Char('n') => app.push_system(
-            "The send composer is coming in the next build stage.".to_string(),
-        ),
+        KeyCode::Char('c') => {
+            if let Some(UiKey::Server(id)) = key {
+                open_client_for_server(app, id, state).await;
+            }
+        }
+        KeyCode::Char('n') => {
+            if let Some(UiKey::Client(id)) = key {
+                open_composer(app, id, state).await;
+            }
+        }
         _ => {}
     }
+}
+
+/// Open the protocol picker for a section. `prefill_remote` aims a new client
+/// at a specific address (the `[+ client]` affordance on a server band).
+async fn open_protocol_picker(
+    app: &mut DashboardApp,
+    section: Section,
+    prefill_remote: Option<String>,
+    state: &AppState,
+) {
+    let caps = state.get_system_capabilities().await;
+    let entries = crate::tui::modal::protocol_picker::entries(section, &caps);
+    if entries.is_empty() {
+        app.push_system("No protocols compiled into this build for that side.");
+        return;
+    }
+    app.modals.push(Modal::ProtocolPicker {
+        section,
+        entries,
+        filter: String::new(),
+        selected: 0,
+        prefill_remote,
+    });
+}
+
+fn open_editor(app: &mut DashboardApp, key: UiKey) {
+    use crate::tui::modal::form::FormModel;
+    let model = match key {
+        UiKey::Server(id) => app
+            .snapshot
+            .servers
+            .iter()
+            .find(|s| s.id == id)
+            .map(FormModel::for_edit_server),
+        UiKey::Client(id) => app
+            .snapshot
+            .clients
+            .iter()
+            .find(|c| c.id == id)
+            .map(FormModel::for_edit_client),
+    };
+    if let Some(model) = model {
+        app.modals.push(Modal::Form(Box::new(model)));
+    }
+}
+
+/// `[+ client]` on a server: create a client of the counterpart protocol
+/// pointed at that very server, so the pair can talk to each other.
+async fn open_client_for_server(
+    app: &mut DashboardApp,
+    server_id: crate::state::ServerId,
+    state: &AppState,
+) {
+    let Some(row) = app.snapshot.servers.iter().find(|s| s.id == server_id) else {
+        return;
+    };
+    let Some(client_protocol) = row.client_counterpart.clone() else {
+        app.push_system(format!(
+            "{} has no client implementation compiled into this build",
+            row.protocol
+        ));
+        return;
+    };
+    let port = row
+        .local_addr
+        .as_ref()
+        .and_then(|a| a.rsplit_once(':').and_then(|(_, p)| p.parse::<u16>().ok()))
+        .unwrap_or(row.port);
+    let remote = format!("127.0.0.1:{port}");
+
+    use crate::tui::modal::form::FormModel;
+    let mut model = FormModel::for_create(Section::Clients, &client_protocol, None);
+    model.set_field_value(
+        &crate::tui::modal::form::FieldTarget::RemoteAddr,
+        remote.clone(),
+    );
+    model.set_field_value(
+        &crate::tui::modal::form::FieldTarget::Instruction,
+        format!("You are a {client_protocol} client connected to our own server #{} at {remote}.", server_id.as_u32()),
+    );
+    let _ = state;
+    app.modals.push(Modal::Form(Box::new(model)));
+}
+
+async fn open_composer(app: &mut DashboardApp, client_id: crate::state::ClientId, state: &AppState) {
+    let Some(row) = app.snapshot.clients.iter().find(|c| c.id == client_id) else {
+        return;
+    };
+    if !row.sendable {
+        app.push_system(format!(
+            "{} clients do not accept injected actions yet — its connection loop \
+             has not adopted the command channel",
+            row.protocol
+        ));
+        return;
+    }
+    use crate::tui::modal::composer::ComposerModel;
+    let actions = ComposerModel::vocabulary(&row.protocol, state);
+    if actions.is_empty() {
+        app.push_system(format!("{} declares no client actions", row.protocol));
+        return;
+    }
+    app.modals.push(Modal::Composer(Box::new(ComposerModel::new(
+        client_id,
+        &row.protocol,
+        actions,
+    ))));
 }
 
 async fn handle_modal_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {
@@ -503,6 +597,14 @@ async fn handle_modal_key(app: &mut DashboardApp, key: KeyEvent, state: &AppStat
         return Outcome::Continue;
     }
 
+    match app.modal() {
+        Some(Modal::ProtocolPicker { .. }) => return handle_picker_key(app, key, state).await,
+        Some(Modal::Form(_)) => return handle_form_key(app, key, state).await,
+        Some(Modal::TextEditor { .. }) => return handle_text_editor_key(app, key),
+        Some(Modal::Composer(_)) => return handle_composer_key(app, key, state).await,
+        _ => {}
+    }
+
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.modals.pop();
@@ -511,6 +613,220 @@ async fn handle_modal_key(app: &mut DashboardApp, key: KeyEvent, state: &AppStat
         KeyCode::Down => app.modal_mut().map(|m| m.scroll_by(1)).unwrap_or(()),
         KeyCode::PageUp => app.modal_mut().map(|m| m.scroll_by(-10)).unwrap_or(()),
         KeyCode::PageDown => app.modal_mut().map(|m| m.scroll_by(10)).unwrap_or(()),
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+async fn handle_picker_key(app: &mut DashboardApp, key: KeyEvent, _state: &AppState) -> Outcome {
+    use crate::tui::modal::form::{FieldTarget, FormModel};
+    use crate::tui::modal::protocol_picker;
+
+    let Some(Modal::ProtocolPicker {
+        section,
+        entries,
+        filter,
+        selected,
+        prefill_remote,
+    }) = app.modals.last_mut()
+    else {
+        return Outcome::Continue;
+    };
+
+    match key.code {
+        KeyCode::Esc => {
+            app.modals.pop();
+        }
+        KeyCode::Up => *selected = selected.saturating_sub(1),
+        KeyCode::Down => {
+            let count = protocol_picker::filter(entries, filter).len();
+            if *selected + 1 < count {
+                *selected += 1;
+            }
+        }
+        KeyCode::Backspace => {
+            filter.pop();
+            *selected = 0;
+        }
+        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            filter.push(c);
+            *selected = 0;
+        }
+        KeyCode::Enter => {
+            let matches = protocol_picker::filter(entries, filter);
+            let Some(entry) = matches.get(*selected) else {
+                return Outcome::Continue;
+            };
+            let section = *section;
+            let remote = prefill_remote.clone();
+            let default_port = if entry.has_binding_defaults {
+                entry.default_port
+            } else {
+                None
+            };
+            let mut model = FormModel::for_create(section, &entry.name, default_port);
+            if let Some(remote) = remote {
+                model.set_field_value(&FieldTarget::RemoteAddr, remote);
+            }
+            app.modals.pop();
+            app.modals.push(Modal::Form(Box::new(model)));
+        }
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+async fn handle_form_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {
+    use crate::tui::modal::form::FieldTarget;
+    use crate::tui::modal::text_editor::TextEditorModel;
+
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let Some(Modal::Form(form)) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+
+    // Inline editing of a single-line field.
+    if let Some(buffer) = form.editing.as_mut() {
+        match key.code {
+            KeyCode::Enter => form.commit_edit(),
+            KeyCode::Esc => form.cancel_edit(),
+            KeyCode::Backspace => {
+                buffer.pop();
+            }
+            KeyCode::Char(c) if !ctrl => buffer.push(c),
+            _ => {}
+        }
+        return Outcome::Continue;
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            app.modals.pop();
+        }
+        KeyCode::Up => form.move_selection(-1),
+        KeyCode::Down => form.move_selection(1),
+        KeyCode::Enter => {
+            let Some(field) = form.selected_field().cloned() else {
+                return Outcome::Continue;
+            };
+            if field.multiline {
+                let json = matches!(field.target, FieldTarget::EventHandlersJson);
+                let editor =
+                    TextEditorModel::new(&field.label, &field.help, &field.value, json);
+                app.modals.push(Modal::TextEditor {
+                    editor: Box::new(editor),
+                    target: field.target,
+                });
+            } else if field.target == FieldTarget::SendFirst {
+                let toggled = if field.value == "true" { "false" } else { "true" };
+                form.set_field_value(&FieldTarget::SendFirst, toggled.to_string());
+            } else {
+                form.begin_edit();
+            }
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            let model = form.clone();
+            let llm = app.llm_client.clone();
+            let status_tx = app.status_tx.clone();
+            match model.apply(state, llm, &status_tx).await {
+                Ok(summary) => {
+                    app.modals.pop();
+                    app.push_system(summary);
+                }
+                Err(e) => {
+                    if let Some(Modal::Form(form)) = app.modals.last_mut() {
+                        form.error = Some(e.to_string());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+fn handle_text_editor_key(app: &mut DashboardApp, key: KeyEvent) -> Outcome {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let Some(Modal::TextEditor { editor, target }) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+
+    match key.code {
+        KeyCode::Esc => {
+            app.modals.pop();
+        }
+        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            if let Some(text) = editor.accept() {
+                let target = target.clone();
+                app.modals.pop();
+                if let Some(Modal::Form(form)) = app.modals.last_mut() {
+                    form.set_field_value(&target, text);
+                }
+            }
+        }
+        _ => {
+            editor.textarea.input(tui_textarea::Input::from(key));
+        }
+    }
+    Outcome::Continue
+}
+
+async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let Some(Modal::Composer(composer)) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+
+    if let Some(buffer) = composer.editing.as_mut() {
+        match key.code {
+            KeyCode::Enter => composer.commit_edit(),
+            KeyCode::Esc => composer.cancel_edit(),
+            KeyCode::Backspace => {
+                buffer.pop();
+            }
+            KeyCode::Char(c) if !ctrl => buffer.push(c),
+            _ => {}
+        }
+        return Outcome::Continue;
+    }
+
+    match key.code {
+        KeyCode::Esc => {
+            if composer.chosen.is_some() {
+                composer.back_to_actions();
+            } else {
+                app.modals.pop();
+            }
+        }
+        KeyCode::Up => composer.move_selection(-1),
+        KeyCode::Down => composer.move_selection(1),
+        KeyCode::Enter => {
+            if composer.chosen.is_some() {
+                composer.begin_edit();
+            } else {
+                composer.choose();
+            }
+        }
+        KeyCode::Char('j') | KeyCode::Char('J') if ctrl => composer.toggle_raw_json(),
+        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            let model = composer.clone();
+            match model.send(state).await {
+                Ok(outcome) => {
+                    let line = format!(
+                        "client #{}: {}",
+                        model.client_id.as_u32(),
+                        crate::tui::modal::composer::describe(&outcome)
+                    );
+                    app.modals.pop();
+                    app.push_system(line);
+                }
+                Err(e) => {
+                    if let Some(Modal::Composer(composer)) = app.modals.last_mut() {
+                        composer.error = Some(e.to_string());
+                    }
+                }
+            }
+        }
         _ => {}
     }
     Outcome::Continue

@@ -4,12 +4,21 @@
 //! → handler → script editor — unwinds naturally with Esc. The topmost modal
 //! owns all input while it is open.
 
+pub mod composer;
 pub mod confirm;
+pub mod form;
 pub mod help;
+pub mod protocol_picker;
 pub mod request_detail;
+pub mod text_editor;
 
 use crate::state::app_state::{AccessLogEntry, WebApprovalResponse};
-use crate::tui::app::UiKey;
+use crate::tui::app::{Section, UiKey};
+
+use composer::ComposerModel;
+use form::{FieldTarget, FormModel};
+use protocol_picker::ProtocolEntry;
+use text_editor::TextEditorModel;
 
 /// An action deferred behind a confirmation. Closure-free so `Modal` stays a
 /// plain data enum that can be inspected and tested.
@@ -41,6 +50,25 @@ pub enum Modal {
     },
     /// Read-only detail of a band's full config.
     BandDetail { key: UiKey, scroll: u16 },
+    /// Choose a protocol for a new server/client.
+    ProtocolPicker {
+        section: Section,
+        entries: Vec<ProtocolEntry>,
+        filter: String,
+        selected: usize,
+        /// When set, the created client is aimed at this address (the
+        /// `[+ client]` affordance on a running server).
+        prefill_remote: Option<String>,
+    },
+    /// Create/edit form for an instance.
+    Form(Box<FormModel>),
+    /// Multi-line editor for one form field.
+    TextEditor {
+        editor: Box<TextEditorModel>,
+        target: FieldTarget,
+    },
+    /// Compose and send an action through a running client.
+    Composer(Box<ComposerModel>),
 }
 
 impl Modal {
@@ -55,6 +83,28 @@ impl Modal {
                 UiKey::Server(id) => format!("Server #{}", id.as_u32()),
                 UiKey::Client(id) => format!("Client #{}", id.as_u32()),
             },
+            Modal::ProtocolPicker { section, .. } => match section {
+                Section::Servers => "New server — pick a protocol".to_string(),
+                Section::Clients => "New client — pick a protocol".to_string(),
+            },
+            Modal::Form(form) => match &form.mode {
+                form::FormMode::Create(Section::Servers) => {
+                    format!("New {} server", form.protocol)
+                }
+                form::FormMode::Create(Section::Clients) => {
+                    format!("New {} client", form.protocol)
+                }
+                form::FormMode::Edit(UiKey::Server(id)) => {
+                    format!("Edit server #{}", id.as_u32())
+                }
+                form::FormMode::Edit(UiKey::Client(id)) => {
+                    format!("Edit client #{}", id.as_u32())
+                }
+            },
+            Modal::TextEditor { editor, .. } => format!("Edit {}", editor.label),
+            Modal::Composer(composer) => {
+                format!("Send via client #{}", composer.client_id.as_u32())
+            }
         }
     }
 
@@ -65,6 +115,24 @@ impl Modal {
             Modal::RequestDetail { .. } | Modal::BandDetail { .. } => "↑/↓ scroll · Esc close",
             Modal::Confirm { .. } => "y confirm · n/Esc cancel",
             Modal::WebApproval { .. } => "y allow once · a always · n/Esc deny",
+            Modal::ProtocolPicker { .. } => "type to filter · ↑/↓ select · Enter choose · Esc cancel",
+            Modal::Form(form) => {
+                if form.editing.is_some() {
+                    "type to edit · Enter accept · Esc cancel field"
+                } else {
+                    "↑/↓ field · Enter edit · Ctrl-S apply · Esc cancel"
+                }
+            }
+            Modal::TextEditor { .. } => "Ctrl-S accept · Esc cancel",
+            Modal::Composer(composer) => {
+                if composer.editing.is_some() {
+                    "type to edit · Enter accept · Esc cancel field"
+                } else if composer.chosen.is_some() {
+                    "↑/↓ field · Enter edit · Ctrl-J raw JSON · Ctrl-S send · Esc back"
+                } else {
+                    "↑/↓ action · Enter choose · Esc cancel"
+                }
+            }
         }
     }
 

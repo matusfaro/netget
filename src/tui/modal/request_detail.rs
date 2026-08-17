@@ -44,15 +44,27 @@ pub fn detail_lines(entry: &AccessLogEntry) -> Vec<String> {
 
 /// One-line summary for a request row in a band's requests pane.
 pub fn summary_line(entry: &AccessLogEntry) -> String {
-    let action = entry
-        .response
-        .first()
-        .and_then(|a| a.get("type"))
-        .and_then(|t| t.as_str())
-        .unwrap_or(if entry.response.is_empty() {
-            "—"
-        } else {
-            "?"
-        });
-    format!("#{} {} → {}", entry.id, entry.event_type, action)
+    let action = match entry.response.first() {
+        None => "—".to_string(),
+        Some(first) => first
+            .get("type")
+            .and_then(|t| t.as_str())
+            .map(|t| t.to_string())
+            // Injected-action entries record a ClientSendOutcome, which is an
+            // externally-tagged enum: its single key names the outcome.
+            .or_else(|| {
+                first
+                    .as_object()
+                    .and_then(|o| o.keys().next().cloned())
+                    .map(|k| k.to_lowercase())
+            })
+            .or_else(|| first.as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "?".to_string()),
+    };
+    let extra = if entry.response.len() > 1 {
+        format!(" +{}", entry.response.len() - 1)
+    } else {
+        String::new()
+    };
+    format!("#{} {} → {}{}", entry.id, entry.event_type, action, extra)
 }

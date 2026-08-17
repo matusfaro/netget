@@ -163,11 +163,23 @@ pub struct DashboardApp {
     pub dirty: bool,
     pub mouse_capture: bool,
     pub should_quit: bool,
+    /// Clone of the status channel, so modal actions (create/update/send) can
+    /// stream their progress into the same chat pane.
+    pub status_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// The configured LLM client, needed when creating/updating clients.
+    pub llm_client: crate::llm::OllamaClient,
 }
 
 impl DashboardApp {
-    pub fn new(core: App, styles: Styles) -> Self {
+    pub fn new(
+        core: App,
+        styles: Styles,
+        status_tx: tokio::sync::mpsc::UnboundedSender<String>,
+        llm_client: crate::llm::OllamaClient,
+    ) -> Self {
         Self {
+            status_tx,
+            llm_client,
             core,
             chat: ChatState::new(),
             input: InputState::new(),

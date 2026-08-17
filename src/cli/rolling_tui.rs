@@ -19,7 +19,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Instant};
 
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::events::{EventHandler, UserCommand};
 use crate::llm::OllamaClient;
