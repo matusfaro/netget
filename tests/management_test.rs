@@ -264,6 +264,7 @@ async fn update_client_hot_changes_instruction() {
         feedback_instructions: None,
         feedback_buffer: Vec::new(),
         last_feedback_processed: None,
+        connection_history: Default::default(),
     };
     let id = state.add_client(client).await;
 

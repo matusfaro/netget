@@ -1402,6 +1402,21 @@ impl AppState {
             .await;
     }
 
+    /// Recently closed connections for a server, newest first. Empty when the
+    /// server does not exist.
+    pub async fn get_recent_connections(
+        &self,
+        server_id: ServerId,
+    ) -> Vec<super::server::ClosedConnectionSummary> {
+        self.inner
+            .read()
+            .await
+            .servers
+            .get(&server_id)
+            .map(|server| server.recent_connections.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     // ========== Proxy Filter Configuration Methods ==========
 
     /// Get proxy filter configuration for a server
@@ -1922,6 +1937,7 @@ impl AppState {
     /// Update client status
     pub async fn update_client_status(&self, id: ClientId, status: super::client::ClientStatus) {
         if let Some(client) = self.inner.write().await.clients.get_mut(&id) {
+            client.record_status_transition(&status);
             client.status = status;
             client.status_changed_at = std::time::Instant::now();
         }

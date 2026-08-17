@@ -261,6 +261,7 @@ pub async fn start_client_from_action(
         feedback_instructions,
         feedback_buffer: Vec::new(),
         last_feedback_processed: None,
+        connection_history: Default::default(),
     };
 
     let client_id = state.add_client(client).await;
