@@ -619,7 +619,7 @@ impl ClientRegistry {
 /// per CLAUDE.md's decentralization policy (it plays the same role as the
 /// `register()` calls themselves) — when adding a new client protocol, add its
 /// (canonical name, feature) pair here too.
-const ALL_KNOWN_CLIENT_PROTOCOLS: &[(&str, &str)] = &[
+pub(crate) const ALL_KNOWN_CLIENT_PROTOCOLS: &[(&str, &str)] = &[
     ("BGP", "bgp"),
     ("BOOTP", "bootp"),
     ("Cassandra", "cassandra"),
