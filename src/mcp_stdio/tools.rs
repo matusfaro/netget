@@ -1314,6 +1314,7 @@ impl NetGetMcpService {
             scheduled_tasks,
             params.feedback_instructions,
             self.state.llm_client.clone(),
+            None, // status_tx: MCP has no status stream, drain to tracing
         )
         .await
         {

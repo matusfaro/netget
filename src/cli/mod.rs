@@ -447,6 +447,7 @@ async fn run_client(protocol: &str, args: &Args) -> Result<()> {
         None, // scheduled_tasks
         None, // feedback_instructions
         llm,
+        None, // status_tx: direct --client mode, drain to tracing
     )
     .await?;
 

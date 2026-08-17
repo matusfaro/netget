@@ -3490,6 +3490,7 @@ async fn handle_load(
                         scheduled_tasks,
                         feedback_instructions,
                         llm.clone(),
+                        None, // status_tx: legacy TUI keeps the drain-to-tracing behavior
                     )
                     .await
                     {

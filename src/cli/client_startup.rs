@@ -198,6 +198,7 @@ pub async fn start_client_from_action(
     scheduled_tasks: Option<Vec<crate::llm::actions::common::ServerTaskDefinition>>,
     feedback_instructions: Option<String>,
     llm_client: OllamaClient,
+    status_tx: Option<mpsc::UnboundedSender<String>>,
 ) -> Result<ClientId> {
     use crate::state::client::ClientStatus;
 
@@ -243,6 +244,21 @@ pub async fn start_client_from_action(
         None => None,
     };
 
+    // === Parse event handlers BEFORE registering the client ===
+    //
+    // This used to be a lenient `filter_map(.. .ok())` *after* `add_client`,
+    // which silently dropped malformed handlers — the caller believed their
+    // script/static routing was in place and every event went to the LLM
+    // instead. Parse strictly (same validator as the server path) while there
+    // is still nothing to strand.
+    let event_handler_config = match event_handlers {
+        Some(handlers) if !handlers.is_empty() => Some(
+            crate::events::handler::EventHandler::parse_event_handlers(handlers)
+                .map_err(|e| anyhow::anyhow!("Invalid event_handlers for {}: {}", protocol, e))?,
+        ),
+        _ => None,
+    };
+
     // Create client instance
     let client = crate::state::client::ClientInstance {
         id: ClientId::new(0), // Will be assigned by add_client
@@ -255,7 +271,7 @@ pub async fn start_client_from_action(
         created_at: std::time::Instant::now(),
         status_changed_at: std::time::Instant::now(),
         startup_params: startup_params.clone(),
-        event_handler_config: None,
+        event_handler_config,
         protocol_data: serde_json::Value::Null,
         log_files: Default::default(),
         feedback_instructions,
@@ -273,26 +289,6 @@ pub async fn start_client_from_action(
                 c.memory = mem;
             })
             .await;
-    }
-
-    // Configure event handlers if provided
-    if let Some(handlers) = event_handlers {
-        use crate::scripting::{EventHandler, EventHandlerConfig};
-
-        let event_handlers: Vec<EventHandler> = handlers
-            .into_iter()
-            .filter_map(|h| serde_json::from_value(h).ok())
-            .collect();
-
-        if !event_handlers.is_empty() {
-            state
-                .with_client_mut(client_id, |c| {
-                    c.event_handler_config = Some(EventHandlerConfig {
-                        handlers: event_handlers,
-                    });
-                })
-                .await;
-        }
     }
 
     // Create scheduled tasks if provided
@@ -341,19 +337,26 @@ pub async fn start_client_from_action(
 
     // `startup_params_obj` was built and validated above, before `add_client`.
 
-    // Create a status channel. This path (the /load command, the open_client
-    // action, and the MCP start_client tool) has no rolling TUI to render into,
-    // but dropping the receiver would make every `status_tx.send()` in the
-    // client's connection loop fail silently, so drain it to tracing instead.
-    let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
-    tokio::spawn(async move {
-        while let Some(msg) = status_rx.recv().await {
-            if msg == "__UPDATE_UI__" {
-                continue;
-            }
-            tracing::info!("{}", msg);
+    // Use the caller's status channel when one exists (the dashboard/TUI wants
+    // the client's lifecycle lines). Headless callers (the /load command, the
+    // open_client action, the MCP start_client tool) pass `None`; dropping the
+    // receiver would make every `status_tx.send()` in the client's connection
+    // loop fail silently, so drain a fresh channel to tracing instead.
+    let status_tx = match status_tx {
+        Some(tx) => tx,
+        None => {
+            let (status_tx, mut status_rx) = mpsc::unbounded_channel::<String>();
+            tokio::spawn(async move {
+                while let Some(msg) = status_rx.recv().await {
+                    if msg == "__UPDATE_UI__" {
+                        continue;
+                    }
+                    tracing::info!("{}", msg);
+                }
+            });
+            status_tx
         }
-    });
+    };
 
     // Build connect context
     let connect_ctx = crate::protocol::ConnectContext {

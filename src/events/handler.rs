@@ -2585,6 +2585,7 @@ impl EventHandler {
                             scheduled_tasks,
                             feedback_instructions,
                             self.llm.clone(),
+                            None, // status_tx: /load path, drain to tracing
                         )
                         .await
                         {
