@@ -7,6 +7,18 @@ what to say on the wire, either by reasoning per-request or via deterministic ha
 Three ways to run it: interactive TUI (default), headless (`--mcp` / `--mcp-http`, see
 `src/mcp_stdio/CLAUDE.md`), and non-interactive one-shot (`src/cli/non_interactive.rs`).
 
+**The interactive TUI is the full-screen ratatui dashboard (`src/tui/`)**; the older
+rolling-terminal TUI (`src/cli/rolling_tui.rs` + `sticky_footer.rs`) is still there behind
+`--legacy-tui`. Chat is on the left, unchanged in contract — `UserCommand::parse` is shared, so
+every slash command still works. The right-hand rail lists servers and clients as horizontal
+bands (info | config | routing | peers | requests) and is the first way to **create and modify
+instances without the LLM**: `a` picks a protocol and opens a form, `e` edits config, `r` edits
+the routing table, `c` on a server starts a client of the counterpart protocol aimed at that
+server, `n` on a client composes and sends a request, `x` stops. Everything applies through
+`cli::management`'s `ServerForm`/`ClientForm`/`update_*`, so validation and the hot-apply vs
+restart split are identical to the LLM and MCP paths. The forms submit only *changed* fields —
+re-sending an unchanged port or host reads as a change and forces a needless restart.
+
 ## Protocol inventory — always query, never trust a list
 
 Protocol lists in docs go stale within weeks. Get ground truth from the registry:
@@ -287,6 +299,28 @@ others among them). Check the specific client rather than assuming. Where it doe
 subtler form is worth knowing: aborting a task does **not** abort tasks it spawned, so BGP's
 keepalive timer kept the socket alive after `remove_client()` even though the read loop was
 registered. Register every task you spawn, not just the top one.
+
+Two client-side gaps closed recently, both worth knowing before you touch a client:
+
+- **Clients accept injected actions.** `AppState::send_to_client(client_id, action, timeout)`
+  executes an action inside a running client's connection loop and returns a
+  `ClientSendOutcome` (`src/state/client_handles.rs`). Until this existed, `Client::execute_action`
+  was reachable *only* from inside each client's own loop, and only the LLM could produce an
+  action for it — nothing, not even a scheduled task, could put bytes on the wire on demand.
+  A client opts in with a ~25-line diff: `command_support::register_command_channel` plus a
+  `tokio::select!` arm calling `handle_stream_client_command` (`src/client/command_support.rs`);
+  `tcp` and `telnet` are wired, and non-adopters simply never register (the dashboard greys out
+  `[send]`). The channel is **bounded** — "client busy" backpressure is correct for
+  user-initiated sends, unlike the unbounded status channels.
+- **Client `event_handlers` are dispatched.** They were stored, validated and round-tripped for a
+  long time while `get_client_event_handler_config` had *zero* callers, so every client event
+  went to the LLM regardless. `try_execute_client_event_handler`
+  (`src/llm/event_handler_executor.rs`) now mirrors the server dispatcher and is wired at the one
+  choke point every client protocol uses — `client/llm_budget.rs::call_llm_for_client` — **before**
+  the budget debit, so a deterministic handler costs no LLM budget. Its `Handled` variant returns
+  raw action JSON rather than an `ExecutionResult`, because only the client's own loop owns the
+  socket. Scripts get a client-shaped `ScriptInput` (`client` set, `server` absent and
+  skip-serialized, so server scripts see byte-identical input).
 
 **Startup parameters**: every key a caller may pass must be declared in
 `get_startup_parameters()`. `StartupParams::new` and all `get_*` accessors return
