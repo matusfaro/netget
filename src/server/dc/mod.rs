@@ -181,8 +181,7 @@ impl DcServer {
                                             if let Some(rest) =
                                                 command.strip_prefix("$ValidateNick ")
                                             {
-                                                if let Some(nick) = rest.split_whitespace().next()
-                                                {
+                                                if let Some(nick) = rest.split_whitespace().next() {
                                                     protocol_clone
                                                         .set_nickname(
                                                             connection_id,

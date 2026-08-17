@@ -408,19 +408,17 @@ impl SipServer {
         // an accepted call - granted because a field was forgotten. SIP has no default
         // status, so the honest answer is the server's own 500; the model's actual choices
         // (401, 403, 486) are unaffected because they name the field.
-        let (status_code, default_reason) = match response_data
-            .get("status_code")
-            .and_then(|v| v.as_u64())
-        {
-            Some(code) => (code as u16, "OK"),
-            None => {
-                tracing::warn!(
-                    "SIP action carried no status_code; answering 500 rather than defaulting \
+        let (status_code, default_reason) =
+            match response_data.get("status_code").and_then(|v| v.as_u64()) {
+                Some(code) => (code as u16, "OK"),
+                None => {
+                    tracing::warn!(
+                        "SIP action carried no status_code; answering 500 rather than defaulting \
                      to 200, which would accept the request"
-                );
-                (500u16, "Server Internal Error")
-            }
-        };
+                    );
+                    (500u16, "Server Internal Error")
+                }
+            };
 
         let reason_phrase = response_data
             .get("reason_phrase")

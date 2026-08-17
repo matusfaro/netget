@@ -617,7 +617,8 @@ async fn bitcoin_version_written_before_accept_is_answered() {
     }
 
     assert_eq!(
-        answered, BURST,
+        answered,
+        BURST,
         "{} of {BURST} version messages went unanswered: {:?} — the connection was not in the \
          map when the reader delivered the payload, so the bytes were dropped with no event \
          and no log",

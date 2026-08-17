@@ -534,5 +534,3 @@ fn sip_cancel_action() -> ActionDefinition {
 }
 
 // User-triggered actions
-
-

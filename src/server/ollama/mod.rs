@@ -607,9 +607,9 @@ async fn handle_chat_v2(
 /// request, not about this server; `status_code` lets the model pick the Ollama-accurate one
 /// (404 for an unknown model).
 fn model_error_response(raw_actions: &[serde_json::Value]) -> Option<Response<Full<Bytes>>> {
-    let action = raw_actions
-        .iter()
-        .find(|action| action.get("type").and_then(|v| v.as_str()) == Some("ollama_error_response"))?;
+    let action = raw_actions.iter().find(|action| {
+        action.get("type").and_then(|v| v.as_str()) == Some("ollama_error_response")
+    })?;
 
     let error_message = action
         .get("error_message")

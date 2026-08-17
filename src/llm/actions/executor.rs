@@ -389,7 +389,11 @@ async fn execute_common_action(
             if server_id.is_none() {
                 if let Some(cid) = client_id {
                     let bounded = bound_server_memory(value);
-                    debug!("Client #{} memory set ({} chars)", cid.as_u32(), bounded.len());
+                    debug!(
+                        "Client #{} memory set ({} chars)",
+                        cid.as_u32(),
+                        bounded.len()
+                    );
                     state
                         .with_client_mut(cid, |client| client.memory = bounded)
                         .await;

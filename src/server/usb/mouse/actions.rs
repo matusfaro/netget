@@ -592,7 +592,6 @@ fn move_relative_action() -> ActionDefinition {
                 description: "Vertical movement in pixels (-127 to 127)".to_string(),
                 required: true,
             },
-        
             connection_id_parameter(),
         ],
         example: json!({
@@ -638,7 +637,6 @@ fn move_absolute_action() -> ActionDefinition {
                 description: "Screen height in pixels (default: 1080)".to_string(),
                 required: false,
             },
-        
             connection_id_parameter(),
         ],
         example: json!({
@@ -663,12 +661,13 @@ fn click_action() -> ActionDefinition {
     ActionDefinition {
         name: "click".to_string(),
         description: "Click a mouse button".to_string(),
-        parameters: vec![Parameter {
-            name: "button".to_string(),
-            type_hint: "string".to_string(),
-            description: "Button to click: 'left', 'right', or 'middle'".to_string(),
-            required: true,
-        },
+        parameters: vec![
+            Parameter {
+                name: "button".to_string(),
+                type_hint: "string".to_string(),
+                description: "Button to click: 'left', 'right', or 'middle'".to_string(),
+                required: true,
+            },
             connection_id_parameter(),
         ],
         example: json!({
@@ -701,7 +700,6 @@ fn scroll_action() -> ActionDefinition {
                 description: "Number of scroll steps (default: 1)".to_string(),
                 required: false,
             },
-        
             connection_id_parameter(),
         ],
         example: json!({
@@ -765,7 +763,6 @@ fn drag_action() -> ActionDefinition {
                 description: "Duration of drag in milliseconds (default: 500)".to_string(),
                 required: false,
             },
-        
             connection_id_parameter(),
         ],
         example: json!({

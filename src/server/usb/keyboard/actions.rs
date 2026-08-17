@@ -730,7 +730,6 @@ fn type_text_action() -> ActionDefinition {
                     .to_string(),
                 required: false,
             },
-        
             connection_id_parameter(),
         ],
         example: json!({
@@ -766,7 +765,6 @@ fn press_key_action() -> ActionDefinition {
                     .to_string(),
                 required: false,
             },
-        
             connection_id_parameter(),
         ],
         example: json!({
@@ -787,12 +785,13 @@ fn press_key_combo_action() -> ActionDefinition {
     ActionDefinition {
         name: "press_key_combo".to_string(),
         description: "Press multiple keys simultaneously (e.g., Ctrl+Alt+Delete)".to_string(),
-        parameters: vec![Parameter {
-            name: "keys".to_string(),
-            type_hint: "array".to_string(),
-            description: "Keys to press together: 'ctrl', 'alt', 'delete', etc.".to_string(),
-            required: true,
-        },
+        parameters: vec![
+            Parameter {
+                name: "keys".to_string(),
+                type_hint: "array".to_string(),
+                description: "Keys to press together: 'ctrl', 'alt', 'delete', etc.".to_string(),
+                required: true,
+            },
             connection_id_parameter(),
         ],
         example: json!({
@@ -812,9 +811,7 @@ fn release_all_keys_action() -> ActionDefinition {
     ActionDefinition {
         name: "release_all_keys".to_string(),
         description: "Release all currently pressed keys (useful if stuck)".to_string(),
-        parameters: vec![
-            connection_id_parameter(),
-        ],
+        parameters: vec![connection_id_parameter()],
         example: json!({
             "type": "release_all_keys"
         }),
