@@ -110,7 +110,11 @@ pub fn resident_language_supported(language: ScriptLanguage) -> bool {
 /// connection scope) gets its own.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ScopeKey {
-    server_id: u32,
+    /// Server or client id, per `owner_is_client`. Ids are unified process-wide
+    /// (one counter allocates both), but the discriminator keeps ownership
+    /// explicit rather than resting on that invariant.
+    owner_id: u32,
+    owner_is_client: bool,
     /// `Some` only under connection scope with a connection present.
     connection_id: Option<String>,
     language: ScriptLanguage,
@@ -131,8 +135,16 @@ impl ScopeKey {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         language.as_str().hash(&mut hasher);
         code.hash(&mut hasher);
+        // For clients, `Server` and `Connection` scope coincide (one connection
+        // per client) — both key on the client id alone.
+        let (owner_id, owner_is_client) = match (&input.server, &input.client) {
+            (Some(server), _) => (server.id, false),
+            (None, Some(client)) => (client.id, true),
+            (None, None) => (0, false),
+        };
         Self {
-            server_id: input.server.id,
+            owner_id,
+            owner_is_client,
             connection_id,
             language,
             code_hash: hasher.finish(),
@@ -140,14 +152,14 @@ impl ScopeKey {
     }
 
     fn describe(&self) -> String {
+        let owner = if self.owner_is_client {
+            format!("client #{}", self.owner_id)
+        } else {
+            format!("server #{}", self.owner_id)
+        };
         match &self.connection_id {
-            Some(c) => format!(
-                "server #{} conn {} [{}]",
-                self.server_id,
-                c,
-                self.language.as_str()
-            ),
-            None => format!("server #{} [{}]", self.server_id, self.language.as_str()),
+            Some(c) => format!("{} conn {} [{}]", owner, c, self.language.as_str()),
+            None => format!("{} [{}]", owner, self.language.as_str()),
         }
     }
 }
@@ -446,11 +458,35 @@ impl ResidentScriptManager {
     /// connection- and server-scoped). Call from the server-close path. Returns
     /// how many processes were shut down.
     pub async fn shutdown_server(server_id: u32) -> usize {
+        let count = Self::shutdown_owner(server_id, false).await;
+        if count > 0 {
+            info!(
+                "Shut down {} resident script(s) for server #{}",
+                count, server_id
+            );
+        }
+        count
+    }
+
+    /// Kill and evict every resident process for a client. Call from the
+    /// client-removal path. Returns how many processes were shut down.
+    pub async fn shutdown_client(client_id: u32) -> usize {
+        let count = Self::shutdown_owner(client_id, true).await;
+        if count > 0 {
+            info!(
+                "Shut down {} resident script(s) for client #{}",
+                count, client_id
+            );
+        }
+        count
+    }
+
+    async fn shutdown_owner(owner_id: u32, owner_is_client: bool) -> usize {
         let scripts = {
             let mut registry = REGISTRY.lock().await;
             let keys: Vec<ScopeKey> = registry
                 .keys()
-                .filter(|k| k.server_id == server_id)
+                .filter(|k| k.owner_id == owner_id && k.owner_is_client == owner_is_client)
                 .cloned()
                 .collect();
             keys.into_iter()
@@ -460,12 +496,6 @@ impl ResidentScriptManager {
         let count = scripts.len();
         for script in scripts {
             script.kill().await;
-        }
-        if count > 0 {
-            info!(
-                "Shut down {} resident script(s) for server #{}",
-                count, server_id
-            );
         }
         count
     }
@@ -477,7 +507,9 @@ impl ResidentScriptManager {
             let keys: Vec<ScopeKey> = registry
                 .keys()
                 .filter(|k| {
-                    k.server_id == server_id && k.connection_id.as_deref() == Some(connection_id)
+                    k.owner_id == server_id
+                        && !k.owner_is_client
+                        && k.connection_id.as_deref() == Some(connection_id)
                 })
                 .cloned()
                 .collect();

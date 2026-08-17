@@ -126,6 +126,212 @@ pub async fn try_execute_event_handler(
     }
 }
 
+/// Result from checking a **client's** event handlers.
+///
+/// Unlike the server variant, `Handled` carries the raw action JSON rather than
+/// an `ExecutionResult`: for servers, handler actions are executed centrally
+/// via `execute_actions` + the `Server` trait, but a client's protocol actions
+/// can only be executed by its own connection loop, which owns the socket. The
+/// caller (`client::llm_budget::call_llm_for_client`) returns these actions to
+/// the loop exactly as it returns LLM-produced ones, so the loop cannot tell —
+/// and need not care — which source answered.
+pub enum ClientEventHandlerResult {
+    /// Handler produced actions for the client's loop to execute.
+    Handled { actions: Vec<serde_json::Value> },
+    /// No handler configured or handler requested LLM fallback. `instruction`
+    /// is `Some` only for an explicit `{"type":"llm","instruction":"…"}`
+    /// handler; the caller must add it to the prompt for this event.
+    FallbackToLlm { instruction: Option<String> },
+}
+
+/// Check and execute the configured event handler for a **client** event.
+///
+/// The client mirror of [`try_execute_event_handler`]. Reads the client's own
+/// `event_handler_config` (stored since forever, dispatched from nowhere until
+/// now), matches first-match-wins, and:
+/// - `Static` — interpolates `{{event.field}}` references and returns the
+///   rendered actions. An unresolvable reference is a hard `Err`, same as the
+///   server path.
+/// - `Script` — runs the script with a client-shaped `ScriptInput` (`client`
+///   set, `server` absent) and returns its actions. A script failure falls
+///   back to the LLM, same as the server path.
+/// - `Llm { instruction }` — falls back with the per-event instruction.
+pub async fn try_execute_client_event_handler(
+    state: &AppState,
+    client_id: crate::state::ClientId,
+    event_type_id: &str,
+    event_description: &str,
+    event_data: Option<serde_json::Value>,
+) -> Result<ClientEventHandlerResult> {
+    let Some(config) = state.get_client_event_handler_config(client_id).await else {
+        return Ok(ClientEventHandlerResult::FallbackToLlm { instruction: None });
+    };
+
+    let Some(handler_type) = config.find_handler(event_type_id) else {
+        debug!(
+            "No client handler matches event '{}', using LLM",
+            event_type_id
+        );
+        return Ok(ClientEventHandlerResult::FallbackToLlm { instruction: None });
+    };
+
+    match handler_type {
+        EventHandlerType::Llm { instruction } => Ok(ClientEventHandlerResult::FallbackToLlm {
+            instruction: Some(instruction.to_string()),
+        }),
+
+        EventHandlerType::Static { actions } => {
+            debug!(
+                "Static client handler executing for event '{}' ({} actions)",
+                event_type_id,
+                actions.len()
+            );
+            let actions = crate::scripting::event_handler::interpolate_actions(
+                actions,
+                event_data.as_ref(),
+            )
+            .with_context(|| {
+                format!(
+                    "Static handler for client event '{}' could not be rendered",
+                    event_type_id
+                )
+            })?;
+            Ok(ClientEventHandlerResult::Handled { actions })
+        }
+
+        EventHandlerType::Script {
+            language,
+            code,
+            resident,
+            scope,
+        } => {
+            execute_client_script_handler(
+                state,
+                client_id,
+                event_type_id,
+                event_description,
+                event_data,
+                language,
+                code,
+                *resident,
+                scope.as_deref(),
+            )
+            .await
+        }
+    }
+}
+
+/// Execute a script handler in client context, returning its actions for the
+/// client's loop.
+#[allow(clippy::too_many_arguments)]
+async fn execute_client_script_handler(
+    state: &AppState,
+    client_id: crate::state::ClientId,
+    event_type_id: &str,
+    event_description: &str,
+    event_data: Option<serde_json::Value>,
+    language: &str,
+    code: &str,
+    resident: bool,
+    scope: Option<&str>,
+) -> Result<ClientEventHandlerResult> {
+    let Some(client) = state.get_client(client_id).await else {
+        warn!(
+            "Client #{} not found for script execution",
+            client_id.as_u32()
+        );
+        return Ok(ClientEventHandlerResult::FallbackToLlm { instruction: None });
+    };
+
+    let event_json =
+        event_data.unwrap_or_else(|| serde_json::json!({"description": event_description}));
+
+    let script_input = crate::scripting::types::ScriptInput {
+        event_type_id: event_type_id.to_string(),
+        server: None,
+        client: Some(crate::scripting::types::ClientContext {
+            id: client.id.as_u32(),
+            remote_addr: client.remote_addr.clone(),
+            protocol: client.protocol_name.clone(),
+            memory: client.memory.clone(),
+            instruction: client.instruction.clone(),
+        }),
+        connection: None,
+        event: event_json,
+    };
+
+    let script_language = match language.to_lowercase().as_str() {
+        "python" => crate::scripting::ScriptLanguage::Python,
+        "javascript" | "js" => crate::scripting::ScriptLanguage::JavaScript,
+        "go" => crate::scripting::ScriptLanguage::Go,
+        "perl" => crate::scripting::ScriptLanguage::Perl,
+        _ => {
+            warn!(
+                "Unknown script language '{}', falling back to LLM",
+                language
+            );
+            return Ok(ClientEventHandlerResult::FallbackToLlm { instruction: None });
+        }
+    };
+
+    let scripting_env = state.get_scripting_env().await;
+    if !scripting_env.is_available(script_language) {
+        warn!(
+            "Script language {} not available, falling back to LLM",
+            script_language.as_str()
+        );
+        return Ok(ClientEventHandlerResult::FallbackToLlm { instruction: None });
+    }
+
+    let script_config = crate::scripting::types::ScriptConfig {
+        language: script_language,
+        source: crate::scripting::types::ScriptSource::Inline(code.to_string()),
+        handles_contexts: vec![event_type_id.to_string()],
+    };
+
+    let use_resident =
+        resident && crate::scripting::resident::resident_language_supported(script_language);
+    if resident && !use_resident {
+        warn!(
+            "Resident mode requested for '{}' but that language runs per-event only; \
+             falling back to per-event execution",
+            script_language.as_str()
+        );
+    }
+
+    let script_result = if use_resident {
+        let resident_scope = crate::scripting::ResidentScope::parse(scope);
+        crate::scripting::ResidentScriptManager::dispatch(
+            &script_config,
+            &script_input,
+            resident_scope,
+        )
+        .await
+    } else {
+        crate::scripting::executor::execute_script_async(&script_config, &script_input).await
+    };
+
+    match script_result {
+        Ok(response) => {
+            debug!(
+                "Script handled client event '{}' ({} actions)",
+                event_type_id,
+                response.actions.len()
+            );
+            Ok(ClientEventHandlerResult::Handled {
+                actions: response.actions,
+            })
+        }
+        Err(e) => {
+            warn!(
+                "Client script execution failed: {}, falling back to LLM",
+                e
+            );
+            Ok(ClientEventHandlerResult::FallbackToLlm { instruction: None })
+        }
+    }
+}
+
 /// Execute a script handler
 #[allow(clippy::too_many_arguments)]
 async fn execute_script_handler(
@@ -172,7 +378,8 @@ async fn execute_script_handler(
 
     let script_input = crate::scripting::types::ScriptInput {
         event_type_id: event_type_id.to_string(),
-        server: crate::scripting::types::ServerContext {
+        client: None,
+        server: Some(crate::scripting::types::ServerContext {
             id: server.id.as_u32(),
             port: server.port,
             stack: crate::protocol::server_registry::registry()
@@ -181,7 +388,7 @@ async fn execute_script_handler(
                 .to_string(),
             memory: server.memory.clone(),
             instruction: server.instruction.clone(),
-        },
+        }),
         connection: connection_context,
         event: event_json,
     };

@@ -1093,13 +1093,14 @@ async fn validate_expectation(expectation: &Expectation, actions: &[Value]) -> R
             // Create script input from event
             let input = ScriptInput {
                 event_type_id: input_event.event_type.id.clone(),
-                server: ServerContext {
+                client: None,
+                server: Some(ServerContext {
                     id: 1,
                     port: 8080,
                     stack: "test".to_string(),
                     memory: String::new(),
                     instruction: "test".to_string(),
-                },
+                }),
                 connection: None,
                 event: input_event.data.clone(), // Direct event data (no wrapper)
             };

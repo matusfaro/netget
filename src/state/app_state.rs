@@ -1942,20 +1942,27 @@ impl AppState {
     /// [`Self::register_client_task`] is therefore aborted explicitly here, which is
     /// what makes `stop_client` actually stop a client rather than just forgetting it.
     pub async fn remove_client(&self, id: ClientId) -> Option<ClientInstance> {
-        let mut inner = self.inner.write().await;
-        let client = inner.clients.remove(&id);
-        inner.client_llm_calls.remove(&id);
-        // A command handle must never outlive the client it points at.
-        inner.client_handles.remove(&id);
+        let client = {
+            let mut inner = self.inner.write().await;
+            let client = inner.clients.remove(&id);
+            inner.client_llm_calls.remove(&id);
+            // A command handle must never outlive the client it points at.
+            inner.client_handles.remove(&id);
 
-        for handle in inner.client_tasks.remove(&id).unwrap_or_default() {
-            handle.abort();
-        }
+            for handle in inner.client_tasks.remove(&id).unwrap_or_default() {
+                handle.abort();
+            }
 
-        // Set mode to Idle if no more clients and no servers
-        if inner.clients.is_empty() && inner.servers.is_empty() {
-            inner.mode = Mode::Idle;
-        }
+            // Set mode to Idle if no more clients and no servers
+            if inner.clients.is_empty() && inner.servers.is_empty() {
+                inner.mode = Mode::Idle;
+            }
+
+            client
+        };
+        // Guard dropped above: resident-script teardown awaits child kills and
+        // must not run under the state lock.
+        crate::scripting::ResidentScriptManager::shutdown_client(id.as_u32()).await;
 
         client
     }
