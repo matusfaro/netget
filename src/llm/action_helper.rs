@@ -173,7 +173,12 @@ pub async fn call_llm_with_actions(
         rate_limiter,
         crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
-    .with_native_tools(&advertised_actions)
+    // Deliberately NO `.with_native_tools(...)`; guarded by
+    // tests/llm_native_tools_test.rs, which explains why in full.
+    // Short version: native schemas gave the model a second way to answer
+    // alongside the JSON action envelope this prompt teaches, and it took it —
+    // 6 of 6 failing protocol cases pass once they are removed. Tools still work
+    // through the JSON envelope and the tool loop; only the schema channel is gone.
     .with_tracking(
         state.clone(),
         crate::state::app_state::ConversationSource::Network {
@@ -557,7 +562,12 @@ pub async fn call_llm(
         rate_limiter,
         crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
-    .with_native_tools(&advertised_actions)
+    // Deliberately NO `.with_native_tools(...)`; guarded by
+    // tests/llm_native_tools_test.rs, which explains why in full.
+    // Short version: native schemas gave the model a second way to answer
+    // alongside the JSON action envelope this prompt teaches, and it took it —
+    // 6 of 6 failing protocol cases pass once they are removed. Tools still work
+    // through the JSON envelope and the tool loop; only the schema channel is gone.
     .with_tracking(
         state.clone(),
         crate::state::app_state::ConversationSource::Network {
@@ -711,7 +721,10 @@ pub async fn call_llm_for_client(
         rate_limiter,
         crate::llm::RequestSource::Network, // Client calls are network-initiated, discarded if rate limited
     )
-    .with_native_tools(&all_actions)
+    // Same reasoning as the two server network-event paths above, and the same
+    // construction — see tests/llm_native_tools_test.rs. Not separately measured:
+    // the 6/6 evidence comes from server protocols, and this is inferred from the
+    // paths being identical rather than from a client A/B.
     .with_status_tx(status_tx.clone());
 
     // Add user message

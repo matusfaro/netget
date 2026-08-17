@@ -35,6 +35,49 @@ enum LlmBackend {
 /// Strip markdown code fences (```json ... ``` or ``` ... ```) from text
 /// This helps handle cases where the LLM wraps JSON responses in markdown formatting
 /// Handles multiple trailing backticks (e.g., ```\n```)
+/// Pull the outermost JSON object out of a response that carries prose around
+/// it.
+///
+/// A **reasoning** model answers with its thinking first and the JSON after
+/// (`<reasoning>…</reasoning>\n{"actions": [...]}`), and prose that happens to
+/// contain an angle bracket or an unbalanced tag defeats the XML-reference
+/// stripping that runs before validation. The answer is then correct and
+/// rejected, which surfaces as "LLM failed to provide valid format after
+/// retry" — a hard failure over formatting, not content.
+///
+/// Braces are matched over `char_indices` so the slice lands on a character
+/// boundary: a model writing an em dash inside a string would otherwise
+/// truncate the object mid-character.
+fn extract_embedded_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, c) in text[start..].char_indices() {
+        if in_string {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => in_string = false,
+                _ => {}
+            }
+            continue;
+        }
+        match c {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&text[start..=start + offset]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 fn strip_markdown_fences(text: &str) -> String {
     let mut result = text.trim();
 
@@ -775,6 +818,22 @@ impl std::str::FromStr for CommandInterpretation {
 /// Default per-request wall-clock bound for a backend call.
 pub const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
+/// Default completion-token budget for one backend call.
+///
+/// This is a **runaway guard**, not a working budget: it exists to stop a
+/// model that has started generating without end, and should sit far above any
+/// legitimate answer so it never truncates one. The wall-clock
+/// `--llm-request-timeout` is the primary backstop; this is the secondary.
+///
+/// It used to be 2048, which is inside the range of ordinary answers. A
+/// **reasoning** model spends the budget twice — once on its thinking block and
+/// once on the answer — so a 27B model was observed emitting a full
+/// `<reasoning>` section followed by a JSON action list truncated mid-object.
+/// That surfaces as an unparseable (or empty) response, never as an obvious
+/// limit, which is the worst way for a cap to fail. Override with
+/// `--llm-max-tokens`.
+pub const DEFAULT_MAX_TOKENS: u32 = 32768;
+
 /// LLM API client supporting Ollama and OpenAI-compatible backends
 #[derive(Clone)]
 pub struct OllamaClient {
@@ -786,6 +845,8 @@ pub struct OllamaClient {
     breaker: std::sync::Arc<CircuitBreaker>,
     /// Wall-clock bound on a single backend call.
     request_timeout: std::time::Duration,
+    /// Completion-token budget for a single backend call.
+    max_tokens: u32,
 }
 
 impl OllamaClient {
@@ -823,6 +884,7 @@ impl OllamaClient {
             app_state: None,
             breaker: std::sync::Arc::new(CircuitBreaker::default()),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 
@@ -837,6 +899,7 @@ impl OllamaClient {
             app_state: None,
             breaker: std::sync::Arc::new(CircuitBreaker::default()),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 
@@ -863,6 +926,7 @@ impl OllamaClient {
             app_state: None,
             breaker: std::sync::Arc::new(CircuitBreaker::default()),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 
@@ -879,6 +943,7 @@ impl OllamaClient {
             app_state: None,
             breaker: std::sync::Arc::new(CircuitBreaker::default()),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
+            max_tokens: DEFAULT_MAX_TOKENS,
         }
     }
 
@@ -1094,6 +1159,15 @@ impl OllamaClient {
         self
     }
 
+    /// Override the completion-token budget for a single backend call
+    /// (default [`DEFAULT_MAX_TOKENS`]). Reasoning models need more than the
+    /// default, because their thinking block is spent from the same budget as
+    /// the answer.
+    pub fn with_max_tokens(mut self, max_tokens: u32) -> Self {
+        self.max_tokens = max_tokens;
+        self
+    }
+
     /// Replace the circuit breaker (thresholds are per-breaker; see
     /// [`crate::llm::circuit_breaker`]).
     ///
@@ -1234,8 +1308,9 @@ impl OllamaClient {
                     "model": model,
                     "prompt": prompt,
                     "stream": true,
-                    // num_predict allows longer responses (esp. binary protocol data).
-                    "options": { "num_predict": 2048 },
+                    // num_predict allows longer responses (esp. binary protocol
+                    // data, and reasoning models that think before answering).
+                    "options": { "num_predict": self.max_tokens },
                 });
                 if format.is_some() {
                     body["format"] = serde_json::json!("json");
@@ -1303,7 +1378,7 @@ impl OllamaClient {
                 let mut body = serde_json::json!({
                     "model": model,
                     "messages": [{ "role": "user", "content": prompt }],
-                    "max_tokens": 2048,
+                    "max_tokens": self.max_tokens,
                     // Stream so reasoning appears live; ask for usage in the final frame.
                     "stream": true,
                     "stream_options": { "include_usage": true },
@@ -1831,8 +1906,55 @@ impl OllamaClient {
             // LLMs sometimes wrap JSON in markdown formatting which causes parse errors
             let json_cleaned = strip_markdown_fences(&json_only);
 
+            // A reasoning model puts its thinking before the JSON, so accept an
+            // answer that is embedded in prose rather than failing it for
+            // formatting. Strict parsing is still tried first.
+            let json_cleaned = match ActionResponse::from_str(&json_cleaned) {
+                Ok(_) => json_cleaned,
+                Err(_) => match extract_embedded_json_object(&json_cleaned) {
+                    Some(embedded) if ActionResponse::from_str(embedded).is_ok() => {
+                        debug!(
+                            "Recovered the action JSON from a response that wrapped it in prose \
+                             ({} chars of surrounding text)",
+                            json_cleaned.len().saturating_sub(embedded.len())
+                        );
+                        embedded.to_string()
+                    }
+                    _ => json_cleaned,
+                },
+            };
+
             // Try to parse cleaned JSON as ActionResponse to check format
             match ActionResponse::from_str(&json_cleaned) {
+                // A tools-only answer parses, but this path has no tool loop —
+                // `generate_with_retry` is the one-shot generate used by git,
+                // mercurial and the event-case harness, so a tool call here is
+                // a request the caller can never satisfy and returning it hands
+                // them an empty action list. Retry with the correction below,
+                // which tells the model to answer directly instead.
+                Ok(parsed) if parsed.actions.is_empty() && !parsed.tools.is_empty() => {
+                    warn!(
+                        "Model asked to call {} tool(s) on a path that has none; \
+                         retrying with a direct-answer correction",
+                        parsed.tools.len()
+                    );
+                    if attempt > max_retries {
+                        return Err(anyhow::anyhow!(
+                            "LLM asked to call tools, which are not available on this \
+                             path, and did not answer directly when asked again. \
+                             Response began: {}",
+                            crate::utils::truncate_for_log(&json_cleaned, 400)
+                        ));
+                    }
+                    current_prompt = format!(
+                        "{}\n\n---\n\nYour previous response asked to call a tool. Tools are \
+                         not available for this request: answer directly instead, using only \
+                         the actions listed above, and supply any value you would have asked \
+                         a tool for yourself.\n\nRequired format: {}",
+                        current_prompt, expected_format
+                    );
+                    continue;
+                }
                 Ok(_) => {
                     // Valid format!
                     if attempt > 1 {
@@ -1855,7 +1977,6 @@ impl OllamaClient {
                             max_retries + 1
                         );
 
-                        // Build retry prompt with correction
                         current_prompt = format!(
                             "{}\n\n---\n\nYour previous response was invalid and could not be parsed.\n\nError: {}\n\nRequired format: {}\n\nPlease provide your response again in the correct format.",
                             current_prompt,
@@ -1873,7 +1994,14 @@ impl OllamaClient {
                         // No more retries
                         error!("Failed to get valid response after {} attempts", attempt);
                         trace!("Max retries exhausted, returning error");
-                        return Err(e).context("LLM failed to provide valid format after retry");
+                        // Carry a slice of what was actually returned: without
+                        // it the operator sees only that parsing failed, and
+                        // the difference between a truncated answer, a refusal
+                        // and a model that ignored the format is invisible.
+                        return Err(e).context(format!(
+                            "LLM failed to provide valid format after retry. Response began: {}",
+                            crate::utils::truncate_for_log(&json_cleaned, 400)
+                        ));
                     }
                 }
             }

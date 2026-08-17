@@ -206,6 +206,41 @@ impl NntpServer {
                                             execution_result.protocol_results.len()
                                         ));
 
+                                        // An action that failed to execute (a missing required
+                                        // field, say) leaves protocol_results empty, and the
+                                        // same reasoning as the LLM-error branch below applies:
+                                        // NNTP is one response line per command, so writing
+                                        // nothing desynchronises the client for the rest of the
+                                        // session - it waits forever for a line that will never
+                                        // come. Answer 403 instead. A model that deliberately
+                                        // chose wait_for_more reports no failures and is left
+                                        // alone.
+                                        let wrote_nothing = !execution_result
+                                            .protocol_results
+                                            .iter()
+                                            .any(|r| matches!(r, ActionResult::Output(_)));
+                                        if wrote_nothing && !execution_result.failures.is_empty() {
+                                            let detail = execution_result
+                                                .failures
+                                                .iter()
+                                                .map(|f| format!("{}: {}", f.action, f.error))
+                                                .collect::<Vec<_>>()
+                                                .join("; ");
+                                            let reply = format!(
+                                                "403 netget: could not build a response ({})\r\n",
+                                                detail.replace(['\r', '\n'], " ")
+                                            );
+                                            log.warn(format!(
+                                                "NNTP action failure on connection {} (replying: {}): {}",
+                                                connection_id,
+                                                reply.trim_end(),
+                                                detail
+                                            ));
+                                            let mut write = write_half_arc.lock().await;
+                                            let _ = write.write_all(reply.as_bytes()).await;
+                                            let _ = write.flush().await;
+                                        }
+
                                         for protocol_result in execution_result.protocol_results {
                                             match protocol_result {
                                                 ActionResult::Output(data) => {

@@ -340,11 +340,11 @@ impl OllamaTestBuilder {
                 .try_init();
         });
 
-        // Get model from env var or use default (7B balances speed and capability for tests)
+        // Get model from env var or use default
         let model = self
             .model
             .or_else(|| std::env::var("OLLAMA_MODEL").ok())
-            .unwrap_or_else(|| "qwen2.5-coder:7b".to_string());
+            .unwrap_or_else(|| "qwen3.8:27b-mlx".to_string());
 
         println!("Testing with model: {}", model);
 
@@ -529,7 +529,7 @@ impl TestResult {
 /// The real prompt expects {"actions": [...]} format
 /// Handles XML tags outside JSON (like <reasoning> or <script_tag>)
 /// Resolves XML references in actions (replaces <tagname> with actual content)
-fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
+pub fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
     let trimmed = response.trim();
 
     // First, extract XML references from the full response
@@ -558,15 +558,34 @@ fn parse_actions_from_response(response: &str) -> Result<Vec<Value>> {
         // Try to find JSON object with "actions" field
         // This handles responses like: <reasoning>...</reasoning>\n{...JSON...}\n<script>...</script>
         // Find matching closing brace by counting braces
+        // char_indices, not chars().enumerate(): the index is used as a BYTE
+        // offset into json_only, and a single multi-byte character anywhere in
+        // the response (a model writing an em dash, say) makes a char counter
+        // point mid-JSON and truncates it.
+        //
+        // Braces inside string values must not count either — a Kubernetes
+        // object or a JSON body quoted as a string carries plenty of them.
         let mut depth = 0;
         let mut end_pos = start;
-        for (i, c) in json_only[start..].chars().enumerate() {
+        let mut in_string = false;
+        let mut escaped = false;
+        for (offset, c) in json_only[start..].char_indices() {
+            if in_string {
+                match c {
+                    _ if escaped => escaped = false,
+                    '\\' => escaped = true,
+                    '"' => in_string = false,
+                    _ => {}
+                }
+                continue;
+            }
             match c {
+                '"' => in_string = true,
                 '{' => depth += 1,
                 '}' => {
                     depth -= 1;
                     if depth == 0 {
-                        end_pos = start + i;
+                        end_pos = start + offset;
                         break;
                     }
                 }

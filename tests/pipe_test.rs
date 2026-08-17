@@ -254,33 +254,50 @@ async fn create_and_remove_pipe_via_action() {
 #[tokio::test]
 async fn http_access_event_pipes_into_tcp_server() {
     use netget::llm::ollama_client::OllamaClient;
-    use netget::server::{HttpServer, TcpServer};
+    use netget::server::HttpServer;
     use netget::state::server::ServerStatus;
     use std::time::Duration;
+    use tokio::io::AsyncReadExt;
     use tokio::sync::mpsc;
 
     let state = Arc::new(AppState::new());
 
-    // --- Sink: a real NetGet TCP server (B). Its LLM is unreachable on purpose;
-    //     the read loop reports received bytes on its status stream *before* the
-    //     LLM call, which is what we assert on. ---
+    // --- Sink (B): a listener this test owns, registered as B's bound address.
+    //
+    // `dispatch_pipes` delivers by opening a TCP connection to whatever
+    // `local_addr` the target server record carries, so accepting it here reads
+    // the delivered bytes *exactly*, with nothing in between.
+    //
+    // This used to run a real NetGet TCP server and watch its status stream for
+    // "TCP received … GET /pipe-test". That assertion cannot hold under the
+    // logging convention and the test was failing on master because of it: a
+    // per-read summary is `Log::debug` (Sink::FileOnly, deliberately — the status
+    // channel is unbounded and must not carry per-read traffic), and the payload
+    // itself only appears at TRACE. The `tcp_data_received` event's INFO template
+    // renders byte counts, not bytes. So the expectation was about log routing
+    // rather than about the pipe, and the pipe is what this test is for.
+    let sink = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("sink listener should bind");
+    let tcp_addr = sink.local_addr().expect("sink should have an address");
+
     let tcp_id = add_placeholder(&state, "tcp").await;
-    let (tcp_status_tx, mut tcp_status_rx) = mpsc::unbounded_channel::<String>();
-    let tcp_addr = TcpServer::spawn_with_llm_actions(
-        "127.0.0.1:0".parse().unwrap(),
-        OllamaClient::new("http://127.0.0.1:1"),
-        state.clone(),
-        tcp_status_tx,
-        false, // send_first
-        tcp_id,
-    )
-    .await
-    .expect("tcp sink should start");
     // The pipe only delivers to a Running, bound sink.
     state.update_server_local_addr(tcp_id, tcp_addr).await;
     state
         .update_server_status(tcp_id, ServerStatus::Running)
         .await;
+
+    // Accept and drain one delivery in the background.
+    let (delivered_tx, mut delivered_rx) = mpsc::unbounded_channel::<String>();
+    tokio::spawn(async move {
+        if let Ok((mut stream, _)) = sink.accept().await {
+            let mut buf = Vec::new();
+            // The deliverer closes the connection when it is done, so read to EOF.
+            let _ = stream.read_to_end(&mut buf).await;
+            let _ = delivered_tx.send(String::from_utf8_lossy(&buf).to_string());
+        }
+    });
 
     // --- Source: a real NetGet HTTP server (A). Dead LLM again — the pipe fires
     //     before/independent of A's own response. ---
@@ -323,25 +340,23 @@ async fn http_access_event_pipes_into_tcp_server() {
         .send()
         .await;
 
-    // --- Assert: B received the mapped log line over a real TCP socket. ---
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-    let mut received = false;
-    while tokio::time::Instant::now() < deadline {
-        match tokio::time::timeout(Duration::from_millis(250), tcp_status_rx.recv()).await {
-            Ok(Some(line)) => {
-                if line.contains("TCP received") && line.contains("GET /pipe-test") {
-                    received = true;
-                    break;
-                }
-            }
-            Ok(None) => break, // channel closed
-            Err(_) => {}       // idle tick; keep waiting until the deadline
-        }
-    }
+    // --- Assert: B received the mapped line, byte for byte, over a real socket. ---
+    let delivered = tokio::time::timeout(Duration::from_secs(5), delivered_rx.recv())
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "TCP sink #{} received no delivery for the http_request pipe within 5s",
+                tcp_id.as_u32()
+            )
+        })
+        .expect("sink task should report the delivery");
 
-    assert!(
-        received,
-        "TCP sink #{} never reported receiving the piped 'GET /pipe-test' line",
+    // The pipe's mapping was "{method} {path}\n": the payload is rendered from
+    // the source event's own fields, so this asserts the mapping too, not just
+    // that *something* arrived.
+    assert_eq!(
+        delivered, "GET /pipe-test\n",
+        "sink #{} received the wrong bytes for the piped http_request",
         tcp_id.as_u32()
     );
 

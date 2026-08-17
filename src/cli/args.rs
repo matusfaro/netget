@@ -273,6 +273,22 @@ pub struct Args {
     )]
     pub llm_agent_timeout: u64,
 
+    /// Wall-clock bound (seconds) on a single LLM backend call
+    #[clap(
+        long = "llm-request-timeout",
+        value_name = "SECONDS",
+        help = "Wall-clock bound (seconds) on a single LLM backend call before it is treated as a transport failure and retried. Default: 120. Raise for slow local models whose responses to large prompts legitimately exceed two minutes."
+    )]
+    pub llm_request_timeout: Option<u64>,
+
+    /// Completion-token budget for a single LLM call
+    #[clap(
+        long = "llm-max-tokens",
+        value_name = "TOKENS",
+        help = "Completion tokens a single LLM call may produce before it is cut off. This is a runaway guard, not a working budget: the default (32768) sits far above any legitimate answer so it never truncates one, and --llm-request-timeout is the primary backstop. Lower it only to bound a model you expect to ramble."
+    )]
+    pub llm_max_tokens: Option<u32>,
+
     /// Path to embedded GGUF model file (enables embedded LLM inference)
     #[cfg(feature = "embedded-llm")]
     #[clap(

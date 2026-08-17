@@ -2524,6 +2524,43 @@ async fn handle_status_command(
                     }
                 }
             }
+
+            // Privileged *default* ports are advice, not exclusion. These protocols
+            // are fully available — they just cannot use their well-known port
+            // without privilege, so name the port and move on. They used to be
+            // reported above as excluded and hidden from the model, which meant a
+            // non-root netget could not serve DNS, HTTP, SMTP or SSH at all, on any
+            // port.
+            let privileged_defaults =
+                crate::protocol::server_registry::registry().privileged_default_ports(&caps);
+            if !privileged_defaults.is_empty() {
+                print_output_line(
+                    &format!(
+                        "Available, but not on their default port ({}): this process cannot bind \
+                         below 1024, so pass a port >= 1024 (or run as root).",
+                        privileged_defaults.len()
+                    ),
+                    footer,
+                    palette,
+                )?;
+                for (name, port) in &privileged_defaults {
+                    // +8000 keeps the well-known number readable and is always
+                    // unprivileged (the largest privileged port is 1023, so the
+                    // result is 8001..=9023). It also lands on the conventional
+                    // choice for the common cases: 80 -> 8080, 443 -> 8443,
+                    // 853 -> 8853.
+                    print_output_line(
+                        &format!(
+                            "  [server] {} — defaults to {}; try {}",
+                            name,
+                            port,
+                            port + 8000
+                        ),
+                        footer,
+                        palette,
+                    )?;
+                }
+            }
         }
         UserCommand::ShowUsage => {
             // Toggle usage stats display

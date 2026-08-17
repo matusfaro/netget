@@ -26,6 +26,41 @@ use tracing::{debug, error, info, trace, warn};
 ///
 /// # Returns
 /// * `(Option<String>, String)` - Reasoning content (if found) and cleaned response
+/// Whether any value in this action still points at a tool result rather than
+/// carrying one.
+///
+/// Models write these unprompted — `"block_hex": "{{tools[0].result}}"`,
+/// `"token": "{{tool_results[1]}}"` — reasoning that the tool call they issued in
+/// the same response will be substituted in. Nothing substitutes it:
+/// `reference_parser` resolves `<tagname>` XML references, and there is no
+/// `{{...}}` mechanism on the LLM path at all. The placeholder would reach the
+/// wire as literal text.
+///
+/// Deliberately narrow. It matches only `{{…}}` whose body mentions a tool, so
+/// `{{event.field}}` — which *is* substituted, later and elsewhere, inside static
+/// event-handler definitions — is left alone.
+fn action_references_tool_result(action: &serde_json::Value) -> bool {
+    fn mentions_tool_placeholder(text: &str) -> bool {
+        let mut rest = text;
+        while let Some(open) = rest.find("{{") {
+            let after = &rest[open + 2..];
+            let Some(close) = after.find("}}") else { break };
+            if after[..close].to_lowercase().contains("tool") {
+                return true;
+            }
+            rest = &after[close + 2..];
+        }
+        false
+    }
+
+    match action {
+        serde_json::Value::String(s) => mentions_tool_placeholder(s),
+        serde_json::Value::Array(items) => items.iter().any(action_references_tool_result),
+        serde_json::Value::Object(map) => map.values().any(action_references_tool_result),
+        _ => false,
+    }
+}
+
 fn extract_reasoning(response: &str) -> (Option<String>, String) {
     let reasoning_start = response.find("<reasoning>");
     let reasoning_end = response.find("</reasoning>");
@@ -976,9 +1011,70 @@ impl ConversationHandler {
                 }
             }
 
+            // An action may not reference a tool result it has not been given yet.
+            //
+            // A model that emits a tool call and, in the *same* response, an action
+            // whose parameter is `{{tools[0].result}}` is describing a substitution
+            // nothing here performs: `reference_parser` resolves `<tagname>` XML
+            // references, not `{{...}}`, so the placeholder survives verbatim. Without
+            // this check the action was collected below, the tools ran, and the literal
+            // string `{{tools[0].result}}` went out on the wire as if it were the value
+            // — a BitTorrent `send_piece` whose block_hex is that text, a session token
+            // that is that text. Silently wrong in the worst way: the action looked
+            // well-formed at every layer that inspected it.
+            //
+            // The recovery is the one the model expects anyway: run the tools, hand it
+            // the results, and let it re-emit the action with the real value. Nothing is
+            // collected from this response, so the placeholder never reaches execution.
+            let (deferred, ready): (Vec<_>, Vec<_>) = valid_regular
+                .into_iter()
+                .partition(|action| action_references_tool_result(action));
+
+            if !deferred.is_empty() {
+                let names: Vec<&str> = deferred
+                    .iter()
+                    .filter_map(|a| a.get("type").and_then(|t| t.as_str()))
+                    .collect();
+                // Dual-logged through the facade rather than a hand-written level
+                // prefix; `tests/llm_log_prefix_guard_test.rs` fails the build on any
+                // new one of those in src/llm/. (That guard counts substrings without
+                // parsing, so even naming the pattern in a comment trips it.)
+                Log::new(self.status_tx.as_ref()).warn(format!(
+                    "LLM action(s) {:?} reference a tool result that has not been produced \
+                     yet; holding them back until the tool(s) have run",
+                    names
+                ));
+
+                if tools.is_empty() {
+                    // No tool call to wait for: the placeholder can never be filled in,
+                    // so this is simply a malformed action. Ask for a literal value.
+                    self.messages.push(Message::user(format!(
+                        "The action(s) {:?} contain a placeholder like \
+                         \"{{{{tools[0].result}}}}\". Placeholders are never substituted: \
+                         whatever you write is used literally. You did not call any tool \
+                         in that response either. Re-send the action with the actual \
+                         value written out in full.",
+                        names
+                    )));
+                    rejected_block_start.get_or_insert((assistant_idx, self.trim_generation));
+                    continue;
+                }
+
+                // Tools are pending; they run below and their results are appended as a
+                // user message, after which the model re-emits the action for real.
+                self.messages.push(Message::user(format!(
+                    "Hold on: the action(s) {:?} referenced a tool result with a \
+                     placeholder, but placeholders are never substituted — whatever you \
+                     write is sent literally. Your tool call(s) are running now. Wait for \
+                     the results below, then re-send those action(s) with the actual \
+                     values written out in full.",
+                    names
+                )));
+            }
+
             // Collect validated regular actions
-            all_actions.extend(valid_regular.clone());
-            let regular = valid_regular;
+            all_actions.extend(ready.clone());
+            let regular = ready;
 
             // Add acknowledgment message for regular actions so LLM knows they were collected
             if !regular.is_empty() {

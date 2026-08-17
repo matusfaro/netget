@@ -759,11 +759,13 @@ fn send_imap_untagged_action() -> ActionDefinition {
 fn send_imap_capability_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_capability".to_string(),
-        description: "Send IMAP CAPABILITY response".to_string(),
+        description: "Send the UNTAGGED '* CAPABILITY ...' line. RFC 3501 6.1.1                       requires exactly this line in answer to a CAPABILITY command,                       with IMAP4rev1 among the capabilities listed. It does NOT                       complete the command: follow it with a send_imap_response                       carrying the client's own tag (e.g. tag 'a1' -> 'a1 OK                       CAPABILITY completed'), because a client reads until it sees                       its tag and blocks on untagged data alone."
+            .to_string(),
         parameters: vec![Parameter {
             name: "capabilities".to_string(),
             type_hint: "array".to_string(),
-            description: "Array of capability strings".to_string(),
+            description: "Capability names, one per array entry (not one space-joined                           string). IMAP4rev1 must be one of them."
+                .to_string(),
             required: false,
         }],
         example: json!({
