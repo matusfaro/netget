@@ -325,6 +325,11 @@ async fn ssh_agent_connection_open_is_informational() -> E2EResult<()> {
     .expect_action("show_message")
     .or_action("append_to_log")
     .or_action("set_memory")
+    // `append_memory` is `set_memory`'s sibling and equally correct here; omitting it while
+    // allowing `set_memory` failed the model for picking the one that does not clobber what it
+    // already knew. That is the better choice on a connection-opened event, which is exactly
+    // the kind of running note memory is for.
+    .or_action("append_memory")
     .or_action("close_connection")
     .run()
     .await
@@ -610,6 +615,7 @@ async fn websocket_ping_needs_no_application_reply() -> E2EResult<()> {
     .expect_action("show_message")
     .or_action("append_to_log")
     .or_action("set_memory")
+    .or_action("append_memory")
     .or_action("send_websocket_text")
     .run()
     .await
