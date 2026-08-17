@@ -689,6 +689,27 @@ fn key_name_to_hid(name: &str) -> Option<(u8, u8)> {
 
 // Action definitions
 
+/// Optional connection selector shared by every action.
+///
+/// It was accepted by `resolve_handler` and demanded by name in the multi-host error
+/// ("the action must name one with 'connection_id'"), and this protocol's CLAUDE.md
+/// documented it — but no action declared it, so the model was never told it existed and
+/// could not address a specific host when more than one was attached.
+///
+/// Three forms are accepted: the number, the number as a string, and the `conn-N` form the
+/// events themselves carry. Declared "string" because that last one is what events emit.
+#[cfg(feature = "usb-keyboard")]
+fn connection_id_parameter() -> Parameter {
+    Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Which attached host to act on, as the event reports it (e.g. \"conn-2\"). \
+            Omit it when only one host is attached; required when there are several."
+            .to_string(),
+        required: false,
+    }
+}
+
 #[cfg(feature = "usb-keyboard")]
 fn type_text_action() -> ActionDefinition {
     ActionDefinition {
@@ -709,6 +730,8 @@ fn type_text_action() -> ActionDefinition {
                     .to_string(),
                 required: false,
             },
+        
+            connection_id_parameter(),
         ],
         example: json!({
             "type": "type_text",
@@ -743,6 +766,8 @@ fn press_key_action() -> ActionDefinition {
                     .to_string(),
                 required: false,
             },
+        
+            connection_id_parameter(),
         ],
         example: json!({
             "type": "press_key",
@@ -767,7 +792,9 @@ fn press_key_combo_action() -> ActionDefinition {
             type_hint: "array".to_string(),
             description: "Keys to press together: 'ctrl', 'alt', 'delete', etc.".to_string(),
             required: true,
-        }],
+        },
+            connection_id_parameter(),
+        ],
         example: json!({
             "type": "press_key_combo",
             "keys": ["ctrl", "alt", "delete"]
@@ -785,7 +812,9 @@ fn release_all_keys_action() -> ActionDefinition {
     ActionDefinition {
         name: "release_all_keys".to_string(),
         description: "Release all currently pressed keys (useful if stuck)".to_string(),
-        parameters: vec![],
+        parameters: vec![
+            connection_id_parameter(),
+        ],
         example: json!({
             "type": "release_all_keys"
         }),
