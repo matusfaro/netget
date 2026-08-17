@@ -209,7 +209,10 @@ async fn turn_allocate_echoes_transaction_and_relay_address() -> E2EResult<()> {
         json!("a1b2c3d4e5f60718293a4b5c"),
     ))
     // NetGet bound this socket already. Any other address is refused with 508.
-    .check(ParamCheck::equals("relay_address", json!("127.0.0.1:49312")))
+    .check(ParamCheck::equals(
+        "relay_address",
+        json!("127.0.0.1:49312"),
+    ))
     .check(ParamCheck::equals("lifetime_seconds", json!(600)))
     .run()
     .await
@@ -289,17 +292,33 @@ async fn turn_create_permission_names_the_requested_peer() -> E2EResult<()> {
     ))
     .check(ParamCheck::custom(
         "peer_addresses",
-        "permits exactly the peer the client asked about",
+        "permits the peer the client asked about, or omits the field to permit all of them",
         |v| {
+            // Omitting `peer_addresses` is the documented way to permit exactly the peers the
+            // request named (see src/server/turn/CLAUDE.md), and the executor implements it —
+            // peers the request did not name are ignored either way, so a hallucinated address
+            // cannot open a hole. Requiring the field therefore failed the model for choosing
+            // the simpler correct answer. What must never pass is naming a *different* peer:
+            // `peer_addr` (the client, 203.0.113.9) sits right beside `peer_addresses` in the
+            // event and is the address a model grabs when the two are confused.
+            if v.is_null() {
+                return Ok(());
+            }
             let flat = v.to_string();
-            if flat.contains("198.51.100.7") {
-                Ok(())
-            } else {
-                Err(format!(
+            if !flat.contains("198.51.100.7") {
+                return Err(format!(
                     "must permit the requested peer 198.51.100.7, got {}",
                     v
-                ))
+                ));
             }
+            if flat.contains("203.0.113.9") {
+                return Err(format!(
+                    "permitted 203.0.113.9, which is the client's own address (peer_addr), \
+                     not a peer it asked to reach: {}",
+                    v
+                ));
+            }
+            Ok(())
         },
     ))
     .run()
