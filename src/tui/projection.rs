@@ -55,8 +55,21 @@ pub struct ClientRow {
     pub history: Vec<ClientConnectionAttempt>,
     pub requests: Vec<AccessLogEntry>,
     pub task_count: usize,
-    /// Whether the client's loop accepts injected commands ([send] enabled).
-    pub sendable: bool,
+    /// Whether [send] can be used, and if not, why — "not connected" and "this
+    /// protocol has no command channel yet" are different problems and must
+    /// not be shown as the same one.
+    pub send_state: SendState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendState {
+    /// The client's loop is live and accepts injected actions.
+    Ready,
+    /// The client is not currently connected.
+    NotConnected,
+    /// Connected, but this protocol's loop has not adopted the command
+    /// channel (see `client/command_support.rs`).
+    ProtocolUnsupported,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -151,7 +164,12 @@ pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
 
     let mut client_rows = Vec::with_capacity(clients.len());
     for client in clients {
-        let sendable = state.has_client_handle(client.id).await;
+        let connected = client.status == ClientStatus::Connected;
+        let send_state = match (connected, state.has_client_handle(client.id).await) {
+            (true, true) => SendState::Ready,
+            (true, false) => SendState::ProtocolUnsupported,
+            (false, _) => SendState::NotConnected,
+        };
         let task_count = tasks
             .iter()
             .filter(|t| matches!(t.scope, crate::state::task::TaskScope::Client(cid) if cid == client.id))
@@ -177,7 +195,7 @@ pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
                 .remove(&client.id.as_u32())
                 .unwrap_or_default(),
             task_count,
-            sendable,
+            send_state,
         });
     }
     client_rows.sort_by_key(|c| c.id.as_u32());

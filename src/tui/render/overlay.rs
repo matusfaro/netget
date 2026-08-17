@@ -604,10 +604,11 @@ fn band_detail_lines<'a>(
                 push(
                     format!(
                         "send       {}",
-                        if row.sendable {
-                            "supported (press n)"
-                        } else {
-                            "not supported by this protocol yet"
+                        match row.send_state {
+                            crate::tui::projection::SendState::Ready => "available (press n)",
+                            crate::tui::projection::SendState::NotConnected => "not connected",
+                            crate::tui::projection::SendState::ProtocolUnsupported =>
+                                "this protocol has no command channel yet",
                         }
                     ),
                     app.styles.dimmed,

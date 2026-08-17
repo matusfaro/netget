@@ -78,6 +78,26 @@ fn draw_history(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
         }
     }
 
+    // Anchor to the bottom: a conversation grows upward from the input box, so
+    // a handful of messages should sit just above it rather than floating at
+    // the top of an empty pane. Padding leading blank lines is what makes the
+    // sparse case look right; once the history overflows, scrolling takes over.
+    let viewport = inner.height as usize;
+    let wrap_width = inner.width.max(1) as usize;
+    let rendered_height: usize = lines
+        .iter()
+        .map(|line| {
+            let width: usize = line.spans.iter().map(|s| s.content.chars().count()).sum();
+            width.div_ceil(wrap_width).max(1)
+        })
+        .sum();
+    if rendered_height < viewport {
+        let padding = viewport - rendered_height;
+        let mut padded = vec![Line::from(""); padding];
+        padded.extend(lines);
+        lines = padded;
+    }
+
     // Scroll: ratatui's Paragraph scroll counts *rendered* lines, and we wrap,
     // so approximate by scrolling in unwrapped lines — accurate for typical
     // one-line entries and monotonic for longer ones.

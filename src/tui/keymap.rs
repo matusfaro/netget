@@ -591,13 +591,23 @@ async fn open_composer(app: &mut DashboardApp, client_id: crate::state::ClientId
     let Some(row) = app.snapshot.clients.iter().find(|c| c.id == client_id) else {
         return;
     };
-    if !row.sendable {
-        app.push_system(format!(
-            "{} clients do not accept injected actions yet — its connection loop \
-             has not adopted the command channel",
-            row.protocol
-        ));
-        return;
+    match row.send_state {
+        crate::tui::projection::SendState::Ready => {}
+        crate::tui::projection::SendState::NotConnected => {
+            app.push_system(format!(
+                "client #{} is not connected — nothing to send through",
+                client_id.as_u32()
+            ));
+            return;
+        }
+        crate::tui::projection::SendState::ProtocolUnsupported => {
+            app.push_system(format!(
+                "the {} client cannot take injected actions yet: its connection loop has not \
+                 adopted the command channel (see src/client/command_support.rs)",
+                row.protocol
+            ));
+            return;
+        }
     }
     use crate::tui::modal::composer::ComposerModel;
     let actions = ComposerModel::vocabulary(&row.protocol, state);

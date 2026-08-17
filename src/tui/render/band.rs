@@ -14,7 +14,7 @@ use crate::tui::app::{DashboardApp, Focus, PaneKind, Section, UiKey};
 use crate::tui::bands::BandLayout;
 use crate::tui::hit::{ButtonId, HitTarget};
 use crate::tui::modal::request_detail::summary_line;
-use crate::tui::projection::{ClientRow, ServerRow};
+use crate::tui::projection::{ClientRow, SendState, ServerRow};
 
 /// Narrow rails drop panes in this order (least → most essential).
 const DROP_ORDER: [PaneKind; 3] = [PaneKind::Connections, PaneKind::Config, PaneKind::Routing];
@@ -365,13 +365,6 @@ fn server_pane_rows(app: &DashboardApp, row: &ServerRow, pane: PaneKind) -> Vec<
                 app.styles.button,
                 Some(HitTarget::Button(ButtonId::Edit(UiKey::Server(row.id)))),
             ));
-            if row.client_counterpart.is_some() {
-                rows.push((
-                    "[ + client ]".to_string(),
-                    app.styles.button,
-                    Some(HitTarget::Button(ButtonId::AddClientFor(row.id))),
-                ));
-            }
             rows.push((
                 "[ stop ]".to_string(),
                 app.styles.failure,
@@ -406,21 +399,26 @@ fn server_pane_rows(app: &DashboardApp, row: &ServerRow, pane: PaneKind) -> Vec<
         }
         PaneKind::Routing => routing_rows(app, UiKey::Server(row.id), &row.routing),
         PaneKind::Connections => {
-            let mut rows: Vec<PaneRow> = row
-                .conns
-                .iter()
-                .map(|c| {
-                    (
-                        format!("{} ↓{} ↑{}", c.remote_addr, c.bytes_received, c.bytes_sent),
-                        if c.active {
-                            app.styles.connection
-                        } else {
-                            app.styles.dimmed
-                        },
-                        None,
-                    )
-                })
-                .collect();
+            // The affordance that adds a peer lives with the peers.
+            let mut rows: Vec<PaneRow> = Vec::new();
+            if row.client_counterpart.is_some() {
+                rows.push((
+                    "[ + client ]".to_string(),
+                    app.styles.button,
+                    Some(HitTarget::Button(ButtonId::AddClientFor(row.id))),
+                ));
+            }
+            rows.extend(row.conns.iter().map(|c| {
+                (
+                    format!("{} ↓{} ↑{}", c.remote_addr, c.bytes_received, c.bytes_sent),
+                    if c.active {
+                        app.styles.connection
+                    } else {
+                        app.styles.dimmed
+                    },
+                    None,
+                )
+            }));
             if !row.recent.is_empty() {
                 rows.push(("── recent ──".to_string(), app.styles.separator, None));
                 rows.extend(row.recent.iter().map(|c| {
@@ -431,7 +429,7 @@ fn server_pane_rows(app: &DashboardApp, row: &ServerRow, pane: PaneKind) -> Vec<
                     )
                 }));
             }
-            if rows.is_empty() {
+            if row.conns.is_empty() && row.recent.is_empty() {
                 rows.push(("(no connections)".to_string(), app.styles.dimmed, None));
             }
             rows
@@ -516,19 +514,17 @@ fn client_pane_rows(app: &DashboardApp, row: &ClientRow, pane: PaneKind) -> Vec<
         }
         PaneKind::Requests => {
             let mut rows: Vec<PaneRow> = Vec::new();
-            rows.push((
-                if row.sendable {
-                    "[ send ]".to_string()
-                } else {
-                    "[ send ] (unsupported)".to_string()
-                },
-                if row.sendable {
-                    app.styles.button
-                } else {
-                    app.styles.dimmed
-                },
-                Some(HitTarget::Button(ButtonId::Send(row.id))),
-            ));
+            let (label, style) = match row.send_state {
+                SendState::Ready => ("[ send ]".to_string(), app.styles.button),
+                SendState::NotConnected => {
+                    ("[ send ] — not connected".to_string(), app.styles.dimmed)
+                }
+                SendState::ProtocolUnsupported => (
+                    format!("[ send ] — {} has no command channel yet", row.protocol),
+                    app.styles.dimmed,
+                ),
+            };
+            rows.push((label, style, Some(HitTarget::Button(ButtonId::Send(row.id)))));
             if row.requests.is_empty() {
                 rows.push(("(no requests yet)".to_string(), app.styles.dimmed, None));
             } else {

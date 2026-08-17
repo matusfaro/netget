@@ -210,6 +210,89 @@ async fn send_to_unknown_client_errors_cleanly() {
     assert!(err.to_string().contains("does not accept injected commands"));
 }
 
+/// Every client that registers a command handle must actually accept an
+/// injected action. This walks the adopters generically: connect each to a TCP
+/// server (they are all stream clients, so a plain socket is enough to
+/// establish the connection), and assert the handle appears.
+///
+/// The point is to catch a client that was wired mechanically and compiles but
+/// never registers — the failure mode of adopting by pattern.
+#[tokio::test]
+async fn every_wired_client_registers_a_command_handle() {
+    let state = new_state().await;
+    let (tx, _rx) = mpsc::unbounded_channel();
+
+    // A quiet TCP server any stream client can connect to.
+    let server_form = ServerForm {
+        protocol: "tcp".to_string(),
+        port: Some(0),
+        event_handlers: Some(vec![serde_json::json!({
+            "event_pattern": "*",
+            "handler": { "type": "static", "actions": [] }
+        })]),
+        ..Default::default()
+    };
+    let server_id = server_form
+        .create(&state, tx.clone())
+        .await
+        .expect("create tcp server");
+    let port = wait_for_port(&state, server_id).await;
+    let remote = format!("127.0.0.1:{port}");
+
+    // Protocols whose loops have adopted the command channel. Keep in step
+    // with `register_command_channel` call sites in src/client/.
+    let adopters: &[&str] = &[
+        "tcp",
+        #[cfg(feature = "telnet")]
+        "telnet",
+        #[cfg(feature = "socket_file")]
+        "SocketFile",
+        #[cfg(feature = "socks5")]
+        "SOCKS5",
+    ];
+
+    for protocol in adopters {
+        // Skip anything not compiled into this build.
+        if netget::protocol::CLIENT_REGISTRY.resolve(protocol).is_err() {
+            continue;
+        }
+        let form = ClientForm {
+            protocol: protocol.to_string(),
+            remote_addr: Some(remote.clone()),
+            instruction: Some("handle registration probe".to_string()),
+            ..Default::default()
+        };
+        let Ok(client_id) = form
+            .create(
+                &state,
+                netget::llm::OllamaClient::new("http://127.0.0.1:1".to_string()),
+                tx.clone(),
+            )
+            .await
+        else {
+            // A protocol that cannot complete its handshake against a plain
+            // TCP server is out of scope here; the wiring test is about
+            // registration, not about faking every protocol's peer.
+            continue;
+        };
+
+        let mut registered = false;
+        for _ in 0..100 {
+            if state.has_client_handle(client_id).await {
+                registered = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+        assert!(
+            registered,
+            "{protocol} connected but never registered a command handle — \
+             [send] would be dead for it"
+        );
+        state.remove_client(client_id).await;
+    }
+}
+
 #[cfg(feature = "telnet")]
 #[tokio::test]
 async fn injected_telnet_command_reaches_our_own_server() {
