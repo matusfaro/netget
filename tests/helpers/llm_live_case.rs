@@ -338,8 +338,26 @@ impl EventCase {
             model.clone(),
             state.get_rate_limiter().await,
             RequestSource::Network,
-        )
-        .with_native_tools(&advertised_actions);
+        );
+
+        // Native tool schemas are OFF, because `call_llm` does not attach them —
+        // see tests/llm_native_tools_test.rs. This suite is what established that:
+        // with schemas attached, 6 of 6 failing protocol cases (modbus x2, radius,
+        // memcached, etcd, ldap) passed the moment they were removed, same model
+        // and same prompts. Tool *capability* is unaffected; the model still asks
+        // with {"tools": [...]} and the loop below executes it.
+        //
+        // `NETGET_LIVE_NATIVE_TOOLS=1` attaches them again. That is a diagnostic for
+        // re-measuring the effect, not a supported mode — it makes the harness
+        // diverge from the server, which is exactly the bug that made two cases look
+        // like model failures earlier in this suite's life.
+        if std::env::var("NETGET_LIVE_NATIVE_TOOLS").as_deref() == Ok("1") {
+            eprintln!(
+                "⚠  native tool schemas ENABLED (NETGET_LIVE_NATIVE_TOOLS=1) — diagnostic \
+                 mode; the server does not do this"
+            );
+            conversation = conversation.with_native_tools(&advertised_actions);
+        }
         conversation.add_user_message(event_message);
 
         let actions: Vec<Value> = conversation
