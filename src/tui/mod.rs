@@ -23,6 +23,7 @@ pub mod modal;
 pub mod projection;
 pub mod render;
 pub mod theme;
+pub mod tree;
 pub mod uimsg;
 
 use std::sync::Arc;
@@ -102,7 +103,7 @@ pub async fn run_dashboard(
     }
 
     // ASCII banner streams into chat like any other status output.
-    if !args.suppress_art {
+    if args.show_art {
         let base_url = resolved.base_url.clone();
         let model = resolved.model.clone();
         let tx = status_tx.clone();

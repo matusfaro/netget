@@ -8,10 +8,9 @@ use tokio::sync::mpsc;
 
 use crate::events::EventHandler;
 use crate::state::app_state::AppState;
-use crate::tui::app::{DashboardApp, Focus, PaneKind, RailSel, Section, UiKey};
+use crate::tui::app::{DashboardApp, Focus, RailSel, Section, UiKey};
 use crate::tui::hit::{ButtonId, HitTarget, SegmentId};
 use crate::tui::modal::{confirm, Modal, PendingAction};
-use crate::tui::render::band::pane_row_count;
 use crate::tui::uimsg::{ActionOrigin, UiMsg};
 
 /// What the event loop should do after handling an event.
@@ -247,103 +246,119 @@ async fn handle_rail_key(
     state: &AppState,
 ) -> Outcome {
     let count = app.band_count(sel.section);
-    let key_of_band = app.band_key(sel.section, sel.band);
+    let band_key = app.band_key(sel.section, sel.band);
+    let rows = band_key
+        .map(|k| crate::tui::render::band::band_rows(app, k))
+        .unwrap_or_default();
 
     match key.code {
-        KeyCode::Up => match (sel.pane, sel.row) {
-            (Some(pane), Some(row)) => {
-                let _ = pane;
-                sel.row = Some(row.saturating_sub(1));
-            }
-            _ => {
-                if sel.band > 0 {
-                    sel.band -= 1;
-                }
-            }
-        },
-        KeyCode::Down => match (sel.pane, sel.row) {
-            (Some(pane), Some(row)) => {
-                let max = key_of_band
-                    .map(|k| pane_row_count(app, k, pane))
-                    .unwrap_or(0);
-                if row + 1 < max {
-                    sel.row = Some(row + 1);
-                }
-            }
-            _ => {
+        // Up/Down walk the tree; at the top edge they step to the previous or
+        // next band, so the whole rail reads as one list.
+        KeyCode::Down => match sel.row {
+            None => sel.row = Some(0),
+            Some(row) if row + 1 < rows.len() => sel.row = Some(row + 1),
+            Some(_) => {
                 if sel.band + 1 < count {
                     sel.band += 1;
+                    sel.row = Some(0);
                 }
             }
         },
-        KeyCode::Left => {
-            sel.row = None;
-            sel.pane = match sel.pane {
-                None => Some(PaneKind::Requests),
-                Some(pane) => {
-                    let idx = PaneKind::ALL.iter().position(|p| *p == pane).unwrap_or(0);
-                    if idx == 0 {
-                        None
-                    } else {
-                        Some(PaneKind::ALL[idx - 1])
-                    }
+        KeyCode::Up => match sel.row {
+            None | Some(0) => {
+                if sel.band > 0 {
+                    sel.band -= 1;
+                    let previous = app
+                        .band_key(sel.section, sel.band)
+                        .map(|k| crate::tui::render::band::band_row_count(app, k))
+                        .unwrap_or(0);
+                    sel.row = Some(previous.saturating_sub(1));
+                } else {
+                    sel.row = Some(0);
                 }
-            };
-        }
+            }
+            Some(row) => sel.row = Some(row - 1),
+        },
+        // Right expands (or steps into the first child); Left collapses, and on
+        // an already-collapsed row steps out to the parent level.
         KeyCode::Right => {
-            sel.row = None;
-            sel.pane = match sel.pane {
-                None => Some(PaneKind::Info),
-                Some(pane) => {
-                    let idx = PaneKind::ALL.iter().position(|p| *p == pane).unwrap_or(0);
-                    if idx + 1 >= PaneKind::ALL.len() {
-                        None
-                    } else {
-                        Some(PaneKind::ALL[idx + 1])
+            if let (Some(bk), Some(row)) = (band_key, sel.row) {
+                if let Some(tree_row) = rows.get(row) {
+                    let node = tree_row.node.clone();
+                    let tree = &mut app.rail.band_mut(bk).tree;
+                    if tree_row.expanded == Some(false) {
+                        tree.expand(&node);
+                    } else if tree_row.expanded == Some(true) && row + 1 < rows.len() {
+                        sel.row = Some(row + 1);
                     }
                 }
-            };
+            }
         }
-        KeyCode::Enter => match (sel.pane, sel.row) {
-            (Some(_), None) => sel.row = Some(0),
-            (Some(pane), Some(row)) => {
-                if let Some(band_key) = key_of_band {
-                    open_row_detail(app, band_key, pane, row, state);
+        KeyCode::Left => {
+            if let (Some(bk), Some(row)) = (band_key, sel.row) {
+                if let Some(tree_row) = rows.get(row) {
+                    let node = tree_row.node.clone();
+                    let depth = tree_row.depth;
+                    if tree_row.expanded == Some(true) {
+                        app.rail.band_mut(bk).tree.collapse(&node);
+                    } else if depth > 0 {
+                        // Walk back to the nearest shallower row: the parent.
+                        if let Some(parent) = rows[..row]
+                            .iter()
+                            .rposition(|candidate| candidate.depth < depth)
+                        {
+                            sel.row = Some(parent);
+                        }
+                    } else {
+                        sel.row = None;
+                    }
                 }
             }
-            (None, _) => {
-                if let Some(band_key) = key_of_band {
-                    app.modals.push(Modal::BandDetail {
-                        key: band_key,
-                        scroll: 0,
-                    });
-                }
+        }
+        KeyCode::Enter => {
+            if let (Some(bk), Some(row)) = (band_key, sel.row) {
+                activate_row(app, bk, &rows, row, state);
+            } else if let Some(bk) = band_key {
+                // No row selected yet: start at the root.
+                let _ = bk;
+                sel.row = Some(0);
             }
-        },
+        }
         KeyCode::Esc => {
             if sel.row.is_some() {
                 sel.row = None;
-            } else if sel.pane.is_some() {
-                sel.pane = None;
             } else {
                 app.focus = Focus::ChatInput;
                 return Outcome::Continue;
             }
         }
         KeyCode::Char(' ') => {
-            if let Some(band_key) = key_of_band {
-                let band = app.rail.band_mut(band_key);
-                band.maximized = !band.maximized;
+            // Space toggles the row under the cursor, or maximizes the band
+            // when the selection is the band itself.
+            match (band_key, sel.row) {
+                (Some(bk), Some(row)) => {
+                    if let Some(tree_row) = rows.get(row) {
+                        let node = tree_row.node.clone();
+                        if tree_row.expanded.is_some() {
+                            app.rail.band_mut(bk).tree.toggle(&node);
+                        }
+                    }
+                }
+                (Some(bk), None) => {
+                    let band = app.rail.band_mut(bk);
+                    band.maximized = !band.maximized;
+                }
+                _ => {}
             }
         }
         KeyCode::Char('x') => {
-            if let Some(band_key) = key_of_band {
-                push_stop_confirm(app, band_key);
+            if let Some(bk) = band_key {
+                push_stop_confirm(app, bk);
             }
         }
         KeyCode::Char('e') | KeyCode::Char('r') | KeyCode::Char('d') | KeyCode::Char('n')
         | KeyCode::Char('c') | KeyCode::Char('a') => {
-            handle_band_shortcut(app, key.code, sel.section, key_of_band, state).await;
+            handle_band_shortcut(app, key.code, sel.section, band_key, state).await;
         }
         _ => {}
     }
@@ -355,54 +370,36 @@ async fn handle_rail_key(
     Outcome::Continue
 }
 
-fn open_row_detail(
+/// Enter on a tree row: toggle a group, lift a "… N more" cap, or open the
+/// editor that owns the row.
+fn activate_row(
     app: &mut DashboardApp,
     key: UiKey,
-    pane: PaneKind,
+    rows: &[crate::tui::tree::TreeRow],
     row: usize,
     state: &AppState,
 ) {
-    // Drilling into a pane opens the editor that owns it, not a read-only
-    // dump: clicking a routing row and pressing Enter must be a way to *edit*
-    // routing, which is the obvious expectation and the one that was missing.
-    match pane {
-        PaneKind::Routing => {
-            open_routing(app, key, state);
-            return;
-        }
-        PaneKind::Config | PaneKind::Info => {
-            open_editor(app, key);
-            return;
-        }
-        _ => {}
-    }
-    if pane != PaneKind::Requests {
-        app.modals.push(Modal::BandDetail { key, scroll: 0 });
+    use crate::tui::tree::NodeId;
+
+    let Some(tree_row) = rows.get(row) else {
+        return;
+    };
+    let node = tree_row.node.clone();
+
+    // A group toggles; that includes a request, whose detail is its children.
+    if tree_row.expanded.is_some() {
+        app.rail.band_mut(key).tree.toggle(&node);
         return;
     }
-    // Requests pane: the row indexes into that band's request list, offset by
-    // the client's leading [send] row.
-    let entry = match key {
-        UiKey::Server(id) => app
-            .snapshot
-            .servers
-            .iter()
-            .find(|s| s.id == id)
-            .and_then(|s| s.requests.get(row))
-            .cloned(),
-        UiKey::Client(id) => app
-            .snapshot
-            .clients
-            .iter()
-            .find(|c| c.id == id)
-            .and_then(|c| c.requests.get(row.saturating_sub(1)))
-            .cloned(),
-    };
-    if let Some(entry) = entry {
-        app.modals.push(Modal::RequestDetail {
-            entry: Box::new(entry),
-            scroll: 0,
-        });
+
+    match node {
+        NodeId::More(group) => {
+            app.rail.band_mut(key).tree.show_all(&group);
+        }
+        NodeId::ConfigItem(k, _) => open_editor(app, k),
+        NodeId::Route(k, _) => open_routing(app, k, state),
+        NodeId::RequestDetail(..) => {}
+        _ => {}
     }
 }
 
@@ -1042,30 +1039,19 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
                 app.focus = Focus::Rail(RailSel {
                     section,
                     band,
-                    pane: None,
                     row: None,
                 });
             }
         }
-        HitTarget::Pane { key, pane } => {
+        HitTarget::TreeRow { key, index } => {
             if let Some((section, band)) = app.locate(key) {
                 app.focus = Focus::Rail(RailSel {
                     section,
                     band,
-                    pane: Some(pane),
-                    row: None,
+                    row: Some(index),
                 });
-            }
-        }
-        HitTarget::Row { key, pane, row } => {
-            if let Some((section, band)) = app.locate(key) {
-                app.focus = Focus::Rail(RailSel {
-                    section,
-                    band,
-                    pane: Some(pane),
-                    row: Some(row),
-                });
-                open_row_detail(app, key, pane, row, state);
+                let rows = crate::tui::render::band::band_rows(app, key);
+                activate_row(app, key, &rows, index, state);
             }
         }
         // Buttons run the same code as their keyboard shortcuts — clicking

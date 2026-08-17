@@ -1,24 +1,23 @@
-//! One instance band: a title row plus vertical sub-panes
-//! (info | config | routing | peers | requests).
+//! One instance band: a scrollable tree.
+//!
+//! The instance is the root; `config`, `routing` and `peers` hang off it, a
+//! peer's requests hang off that peer, and an expanded request shows its full
+//! detail one level deeper. Indentation carries the nesting, so nothing has to
+//! be squeezed into a fixed-width column.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
-use crate::scripting::EventHandlerType;
-use crate::state::client::ClientStatus;
-use crate::state::server::ServerStatus;
-use crate::tui::app::{DashboardApp, Focus, PaneKind, Section, UiKey};
+use crate::tui::app::{DashboardApp, Focus, Section, UiKey};
 use crate::tui::bands::BandLayout;
-use crate::tui::hit::{ButtonId, HitTarget};
-use crate::tui::modal::request_detail::summary_line;
-use crate::tui::projection::{ClientRow, SendState, ServerRow};
+use crate::tui::hit::HitTarget;
+use crate::tui::tree::{self, RowStyle, TreeRow, TreeState};
 
-/// Narrow rails drop panes in this order (least → most essential).
-const DROP_ORDER: [PaneKind; 3] = [PaneKind::Connections, PaneKind::Config, PaneKind::Routing];
-const MIN_PANE_WIDTH: u16 = 14;
+/// Columns per nesting level.
+const INDENT: usize = 2;
 
 pub fn draw(
     frame: &mut Frame,
@@ -34,512 +33,166 @@ pub fn draw(
     };
     app.hits.push(area, HitTarget::Band { key });
 
-    // Collapsed bands are a single summary line with no box — a border would
-    // cost the only row they have.
+    let rows = band_rows(app, key);
+
+    // A collapsed band shows only its root row; a frame would cost the single
+    // line it has.
     if layout.collapsed || area.height <= 2 {
-        let title_area = Rect {
-            height: 1,
-            ..area
-        };
-        frame.render_widget(Paragraph::new(title_line(app, key, selected)), title_area);
+        if let Some(root) = rows.first() {
+            let title_area = Rect {
+                height: 1,
+                ..area
+            };
+            frame.render_widget(Paragraph::new(row_line(app, root, false)), title_area);
+        }
         return;
     }
 
-    // Each instance gets its own framed pane, so two servers never read as one
-    // continuous list.
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(if selected {
             app.styles.accent
         } else {
             app.styles.separator
-        })
-        .title(title_line(app, key, selected));
+        });
     let body = block.inner(area);
     frame.render_widget(block, area);
-
     if body.height == 0 {
         return;
     }
-    draw_panes(frame, app, body, key, selected);
-}
 
-fn status_style(app: &DashboardApp, key: UiKey) -> (String, Style) {
-    match key {
-        UiKey::Server(id) => {
-            let Some(row) = app.snapshot.servers.iter().find(|s| s.id == id) else {
-                return (String::new(), app.styles.dimmed);
-            };
-            match &row.status {
-                ServerStatus::Running => ("RUNNING".into(), app.styles.success),
-                ServerStatus::Starting => ("STARTING".into(), app.styles.warning),
-                ServerStatus::Stopped => ("STOPPED".into(), app.styles.dimmed),
-                ServerStatus::Error(e) => (
-                    format!("ERROR: {}", crate::utils::truncate_for_log(e, 40)),
-                    app.styles.error,
-                ),
-            }
+    // Scroll so the selected row stays inside the band.
+    let selected_row = match &app.focus {
+        Focus::Rail(sel) if selected => sel.row,
+        _ => None,
+    };
+    let viewport = body.height as usize;
+    let max_offset = rows.len().saturating_sub(viewport);
+    let mut offset = app.rail.band(key).map(|b| b.scroll).unwrap_or(0).min(max_offset);
+    if let Some(row) = selected_row {
+        if row < offset {
+            offset = row;
+        } else if row >= offset + viewport {
+            offset = row + 1 - viewport;
         }
-        UiKey::Client(id) => {
-            let Some(row) = app.snapshot.clients.iter().find(|c| c.id == id) else {
-                return (String::new(), app.styles.dimmed);
-            };
-            match &row.status {
-                ClientStatus::Connected => ("CONNECTED".into(), app.styles.success),
-                ClientStatus::Connecting => ("CONNECTING".into(), app.styles.warning),
-                ClientStatus::Disconnected => ("DISCONNECTED".into(), app.styles.dimmed),
-                ClientStatus::Error(e) => (
-                    format!("ERROR: {}", crate::utils::truncate_for_log(e, 40)),
-                    app.styles.error,
-                ),
+    }
+    app.rail.band_mut(key).scroll = offset;
+
+    let mut lines: Vec<Line> = Vec::new();
+    for (screen_index, row) in rows.iter().skip(offset).take(viewport).enumerate() {
+        let absolute = offset + screen_index;
+        let is_selected = selected && selected_row == Some(absolute);
+        lines.push(row_line(app, row, is_selected));
+
+        let row_area = Rect {
+            x: body.x,
+            y: body.y + screen_index as u16,
+            width: body.width,
+            height: 1,
+        };
+        app.hits.push(
+            row_area,
+            HitTarget::TreeRow {
+                key,
+                index: absolute,
+            },
+        );
+        // The action sits at the right edge; register it after the row so it
+        // wins the click (hit testing resolves most-recent-first).
+        if let Some((label, id)) = &row.button {
+            let width = label.chars().count() as u16;
+            if row_area.width > width + 1 {
+                let button_area = Rect {
+                    x: row_area.x + row_area.width - width,
+                    y: row_area.y,
+                    width,
+                    height: 1,
+                };
+                app.hits.push(button_area, HitTarget::Button(id.clone()));
             }
         }
     }
+    frame.render_widget(Paragraph::new(lines), body);
+
+    // Position indicator when the tree overflows its band.
+    if rows.len() > viewport {
+        let hint = format!(" {}–{}/{} ", offset + 1, offset + viewport, rows.len());
+        let width = (hint.chars().count() as u16).min(body.width);
+        let hint_area = Rect {
+            x: body.x + body.width.saturating_sub(width),
+            y: body.y + body.height - 1,
+            width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(hint, app.styles.dimmed)),
+            hint_area,
+        );
+    }
 }
 
-fn title_line<'a>(app: &DashboardApp, key: UiKey, selected: bool) -> Line<'a> {
-    let (status_text, status_style) = status_style(app, key);
-    let name = match key {
+/// Flatten a band's tree using its stored expansion state.
+pub fn band_rows(app: &DashboardApp, key: UiKey) -> Vec<TreeRow> {
+    let empty = TreeState::default();
+    let state = app.rail.band(key).map(|b| &b.tree).unwrap_or(&empty);
+    match key {
         UiKey::Server(id) => app
             .snapshot
             .servers
             .iter()
             .find(|s| s.id == id)
-            .map(|r| {
-                let addr = r
-                    .local_addr
-                    .clone()
-                    .unwrap_or_else(|| format!(":{}", r.port));
-                format!("#{} {} {}", id.as_u32(), r.protocol, addr)
-            })
+            .map(|row| tree::server_rows(row, state))
             .unwrap_or_default(),
         UiKey::Client(id) => app
             .snapshot
             .clients
             .iter()
             .find(|c| c.id == id)
-            .map(|r| format!("#{} {} → {}", id.as_u32(), r.protocol, r.remote_addr))
+            .map(|row| tree::client_rows(row, state))
             .unwrap_or_default(),
-    };
+    }
+}
 
-    let name_style = if selected {
-        app.styles.accent
+/// Row count for a band, for bounding the selection.
+pub fn band_row_count(app: &DashboardApp, key: UiKey) -> usize {
+    band_rows(app, key).len()
+}
+
+fn style_for(app: &DashboardApp, style: RowStyle) -> Style {
+    match style {
+        RowStyle::Instance | RowStyle::Group => app.styles.title,
+        RowStyle::Normal => app.styles.normal,
+        RowStyle::Dim => app.styles.dimmed,
+        RowStyle::Good => app.styles.success,
+        RowStyle::Warn => app.styles.warning,
+        RowStyle::Bad => app.styles.error,
+        RowStyle::Button => app.styles.button,
+    }
+}
+
+fn row_line<'a>(app: &DashboardApp, row: &TreeRow, selected: bool) -> Line<'a> {
+    let indent = " ".repeat(row.depth as usize * INDENT);
+    let marker = match row.expanded {
+        Some(true) => "▾ ",
+        Some(false) => "▸ ",
+        None => "  ",
+    };
+    let base = if selected {
+        app.styles.selected
     } else {
-        app.styles.title
-    };
-    Line::from(vec![
-        Span::styled(format!(" {name} "), name_style),
-        Span::styled(format!("{status_text} "), status_style),
-    ])
-}
-
-/// Count shown next to a pane's name, so the band spends no rows on numbers
-/// the header can carry.
-fn pane_count(app: &DashboardApp, key: UiKey, pane: PaneKind) -> Option<usize> {
-    match key {
-        UiKey::Server(id) => {
-            let row = app.snapshot.servers.iter().find(|s| s.id == id)?;
-            match pane {
-                PaneKind::Connections => Some(row.conns.len()),
-                PaneKind::Requests => Some(row.requests.len()),
-                PaneKind::Routing => Some(row.routing.as_ref().map_or(0, |r| r.handlers.len())),
-                PaneKind::Config => Some(row.task_count),
-                PaneKind::Info => None,
-            }
-        }
-        UiKey::Client(id) => {
-            let row = app.snapshot.clients.iter().find(|c| c.id == id)?;
-            match pane {
-                // Most client protocols never populate `connection` — status is
-                // the honest signal for whether a peer is attached.
-                PaneKind::Connections => Some(usize::from(
-                    row.connection.is_some() || row.status == ClientStatus::Connected,
-                )),
-                PaneKind::Requests => Some(row.requests.len()),
-                PaneKind::Routing => Some(row.routing.as_ref().map_or(0, |r| r.handlers.len())),
-                PaneKind::Config => Some(row.task_count),
-                PaneKind::Info => None,
-            }
-        }
-    }
-}
-
-/// Which panes fit at this width, in display order.
-fn visible_panes(width: u16) -> Vec<PaneKind> {
-    let mut panes: Vec<PaneKind> = PaneKind::ALL.to_vec();
-    for drop in DROP_ORDER {
-        if panes.len() as u16 * MIN_PANE_WIDTH <= width {
-            break;
-        }
-        panes.retain(|p| *p != drop);
-    }
-    panes
-}
-
-fn draw_panes(frame: &mut Frame, app: &mut DashboardApp, area: Rect, key: UiKey, selected: bool) {
-    let panes = visible_panes(area.width);
-    if panes.is_empty() {
-        return;
-    }
-    let total_percent: u16 = panes.iter().map(|p| p.width_percent()).sum();
-    let constraints: Vec<Constraint> = panes
-        .iter()
-        .map(|p| Constraint::Ratio(p.width_percent() as u32, total_percent as u32))
-        .collect();
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(constraints)
-        .split(area);
-
-    let focused_pane = match &app.focus {
-        Focus::Rail(sel) if selected => sel.pane,
-        _ => None,
-    };
-    let focused_row = match &app.focus {
-        Focus::Rail(sel) if selected => sel.row,
-        _ => None,
+        style_for(app, row.style)
     };
 
-    for (pane, chunk) in panes.iter().zip(chunks.iter()) {
-        let is_focused = focused_pane == Some(*pane);
-        let border_style = if is_focused {
-            app.styles.accent
-        } else {
-            app.styles.separator
-        };
-        let heading = match pane_count(app, key, *pane) {
-            Some(count) => format!(" {} ({})", pane.title(), count),
-            None => format!(" {}", pane.title()),
-        };
-        let block = Block::default()
-            .borders(Borders::LEFT)
-            .border_style(border_style)
-            .title(Span::styled(
-                heading,
-                if is_focused {
-                    app.styles.accent
-                } else {
-                    app.styles.dimmed
-                },
-            ));
-        let inner = block.inner(*chunk);
-        frame.render_widget(block, *chunk);
-        app.hits.push(*chunk, HitTarget::Pane { key, pane: *pane });
-
-        let rows = pane_rows(app, key, *pane);
-        let scroll = app
-            .rail
-            .band(key)
-            .and_then(|b| b.pane_scroll.get(pane).copied())
-            .unwrap_or(0);
-        let visible = inner.height as usize;
-        let start = scroll.min(rows.len().saturating_sub(1).max(0));
-
-        let mut lines: Vec<Line> = Vec::new();
-        for (offset, (text, style, target)) in
-            rows.iter().skip(start).take(visible).enumerate()
-        {
-            let row_index = start + offset;
-            let row_selected = is_focused && focused_row == Some(row_index);
-            let style = if row_selected {
-                app.styles.selected
-            } else {
-                *style
-            };
-            lines.push(Line::from(Span::styled(text.clone(), style)));
-            if let Some(hit) = target {
-                let row_area = Rect {
-                    x: inner.x,
-                    y: inner.y + offset as u16,
-                    width: inner.width,
-                    height: 1,
-                };
-                if row_area.y < inner.y + inner.height {
-                    app.hits.push(row_area, hit.clone());
-                }
-            } else {
-                let row_area = Rect {
-                    x: inner.x,
-                    y: inner.y + offset as u16,
-                    width: inner.width,
-                    height: 1,
-                };
-                if row_area.y < inner.y + inner.height {
-                    app.hits.push(
-                        row_area,
-                        HitTarget::Row {
-                            key,
-                            pane: *pane,
-                            row: row_index,
-                        },
-                    );
-                }
-            }
-        }
-        frame.render_widget(Paragraph::new(lines), inner);
+    let mut spans = vec![
+        Span::styled(
+            format!("{indent}{marker}"),
+            if selected { base } else { app.styles.separator },
+        ),
+        Span::styled(row.label.clone(), base),
+    ];
+    if let Some((label, _)) = &row.button {
+        spans.push(Span::styled("  ", app.styles.dimmed));
+        spans.push(Span::styled(label.clone(), app.styles.button));
     }
-}
-
-/// Rows of one pane: display text, style, and an optional explicit hit target
-/// (buttons); `None` means the row is a plain selectable row.
-type PaneRow = (String, Style, Option<HitTarget>);
-
-fn pane_rows(app: &DashboardApp, key: UiKey, pane: PaneKind) -> Vec<PaneRow> {
-    match key {
-        UiKey::Server(id) => match app.snapshot.servers.iter().find(|s| s.id == id) {
-            Some(row) => server_pane_rows(app, row, pane),
-            None => Vec::new(),
-        },
-        UiKey::Client(id) => match app.snapshot.clients.iter().find(|c| c.id == id) {
-            Some(row) => client_pane_rows(app, row, pane),
-            None => Vec::new(),
-        },
-    }
-}
-
-fn routing_rows(
-    app: &DashboardApp,
-    key: UiKey,
-    routing: &Option<crate::scripting::EventHandlerConfig>,
-) -> Vec<PaneRow> {
-    // The pane is a summary; the editor is behind `r`. Without a visible
-    // affordance there is nothing telling you routing can be changed at all.
-    let mut rows: Vec<PaneRow> = vec![(
-        "[ edit routing ]".to_string(),
-        app.styles.button,
-        Some(HitTarget::Button(ButtonId::Routing(key))),
-    )];
-    if let Some(config) = routing {
-        for handler in &config.handlers {
-            let pattern = match &handler.event_pattern {
-                crate::scripting::event_handler::EventPattern::Specific(s) => s.clone(),
-                crate::scripting::event_handler::EventPattern::Wildcard => "*".to_string(),
-            };
-            let (kind, style) = match &handler.handler {
-                EventHandlerType::Llm { .. } => ("LLM", app.styles.info),
-                EventHandlerType::Script { language, .. } => {
-                    return_script_label(language, app, &mut rows, &pattern);
-                    continue;
-                }
-                EventHandlerType::Static { actions } => {
-                    rows.push((
-                        format!("{pattern} → STATIC ({})", actions.len()),
-                        app.styles.success,
-                        None,
-                    ));
-                    continue;
-                }
-            };
-            rows.push((format!("{pattern} → {kind}"), style, None));
-        }
-    }
-    rows.push((
-        "otherwise → LLM".to_string(),
-        app.styles.dimmed,
-        None,
-    ));
-    rows
-}
-
-fn return_script_label(
-    language: &str,
-    app: &DashboardApp,
-    rows: &mut Vec<PaneRow>,
-    pattern: &str,
-) {
-    rows.push((
-        format!("{pattern} → SCRIPT ({language})"),
-        app.styles.warning,
-        None,
-    ));
-}
-
-fn server_pane_rows(app: &DashboardApp, row: &ServerRow, pane: PaneKind) -> Vec<PaneRow> {
-    match pane {
-        // Counts live in the pane headings ("peers (3)"), so info spends its
-        // narrow column on actions rather than numbers.
-        PaneKind::Info => {
-            let mut rows = Vec::new();
-            rows.push((
-                "[ edit ]".to_string(),
-                app.styles.button,
-                Some(HitTarget::Button(ButtonId::Edit(UiKey::Server(row.id)))),
-            ));
-            rows.push((
-                "[ stop ]".to_string(),
-                app.styles.failure,
-                Some(HitTarget::Button(ButtonId::Stop(UiKey::Server(row.id)))),
-            ));
-            rows
-        }
-        PaneKind::Config => {
-            let mut rows = Vec::new();
-            if let Some(params) = row.startup_params.as_ref().and_then(|p| p.as_object()) {
-                for (k, v) in params {
-                    rows.push((format!("{k}: {v}"), app.styles.normal, None));
-                }
-            }
-            if rows.is_empty() {
-                rows.push(("(defaults)".to_string(), app.styles.dimmed, None));
-            }
-            rows.push((
-                format!(
-                    "instr: {}",
-                    crate::utils::truncate_for_log(&row.instruction, 60)
-                ),
-                app.styles.dimmed,
-                None,
-            ));
-            rows.push((
-                format!("memory: {} bytes", row.memory_len),
-                app.styles.dimmed,
-                None,
-            ));
-            rows
-        }
-        PaneKind::Routing => routing_rows(app, UiKey::Server(row.id), &row.routing),
-        PaneKind::Connections => {
-            // The affordance that adds a peer lives with the peers.
-            let mut rows: Vec<PaneRow> = Vec::new();
-            if row.client_counterpart.is_some() {
-                rows.push((
-                    "[ + client ]".to_string(),
-                    app.styles.button,
-                    Some(HitTarget::Button(ButtonId::AddClientFor(row.id))),
-                ));
-            }
-            rows.extend(row.conns.iter().map(|c| {
-                (
-                    format!("{} ↓{} ↑{}", c.remote_addr, c.bytes_received, c.bytes_sent),
-                    if c.active {
-                        app.styles.connection
-                    } else {
-                        app.styles.dimmed
-                    },
-                    None,
-                )
-            }));
-            if !row.recent.is_empty() {
-                rows.push(("── recent ──".to_string(), app.styles.separator, None));
-                rows.extend(row.recent.iter().map(|c| {
-                    (
-                        format!("{} ↓{} ↑{}", c.remote_addr, c.bytes_received, c.bytes_sent),
-                        app.styles.dimmed,
-                        None,
-                    )
-                }));
-            }
-            if row.conns.is_empty() && row.recent.is_empty() {
-                rows.push(("(no connections)".to_string(), app.styles.dimmed, None));
-            }
-            rows
-        }
-        PaneKind::Requests => {
-            if row.requests.is_empty() {
-                vec![("(no requests yet)".to_string(), app.styles.dimmed, None)]
-            } else {
-                row.requests
-                    .iter()
-                    .map(|e| (summary_line(e), app.styles.normal, None))
-                    .collect()
-            }
-        }
-    }
-}
-
-fn client_pane_rows(app: &DashboardApp, row: &ClientRow, pane: PaneKind) -> Vec<PaneRow> {
-    match pane {
-        PaneKind::Info => {
-            let mut rows = Vec::new();
-            rows.push((
-                "[ edit ]".to_string(),
-                app.styles.button,
-                Some(HitTarget::Button(ButtonId::Edit(UiKey::Client(row.id)))),
-            ));
-            rows.push((
-                "[ stop ]".to_string(),
-                app.styles.failure,
-                Some(HitTarget::Button(ButtonId::Stop(UiKey::Client(row.id)))),
-            ));
-            rows
-        }
-        PaneKind::Config => {
-            let mut rows = Vec::new();
-            if let Some(params) = row.startup_params.as_ref().and_then(|p| p.as_object()) {
-                for (k, v) in params {
-                    rows.push((format!("{k}: {v}"), app.styles.normal, None));
-                }
-            }
-            if rows.is_empty() {
-                rows.push(("(defaults)".to_string(), app.styles.dimmed, None));
-            }
-            rows.push((
-                format!(
-                    "instr: {}",
-                    crate::utils::truncate_for_log(&row.instruction, 60)
-                ),
-                app.styles.dimmed,
-                None,
-            ));
-            rows
-        }
-        PaneKind::Routing => routing_rows(app, UiKey::Client(row.id), &row.routing),
-        PaneKind::Connections => {
-            let mut rows: Vec<PaneRow> = Vec::new();
-            if let Some(c) = &row.connection {
-                rows.push((
-                    format!("{} ↓{} ↑{}", c.remote_addr, c.bytes_received, c.bytes_sent),
-                    if c.active {
-                        app.styles.connection
-                    } else {
-                        app.styles.dimmed
-                    },
-                    None,
-                ));
-            }
-            if !row.history.is_empty() {
-                rows.push(("── attempts ──".to_string(), app.styles.separator, None));
-                rows.extend(row.history.iter().rev().map(|a| {
-                    (
-                        format!("{} {}", a.remote_addr, a.outcome),
-                        app.styles.dimmed,
-                        None,
-                    )
-                }));
-            }
-            if rows.is_empty() {
-                rows.push(("(not connected)".to_string(), app.styles.dimmed, None));
-            }
-            rows
-        }
-        PaneKind::Requests => {
-            let mut rows: Vec<PaneRow> = Vec::new();
-            let (label, style) = match row.send_state {
-                SendState::Ready => ("[ send ]".to_string(), app.styles.button),
-                SendState::NotConnected => {
-                    ("[ send ] — not connected".to_string(), app.styles.dimmed)
-                }
-                SendState::ProtocolUnsupported => (
-                    format!("[ send ] — {} has no command channel yet", row.protocol),
-                    app.styles.dimmed,
-                ),
-            };
-            rows.push((label, style, Some(HitTarget::Button(ButtonId::Send(row.id)))));
-            if row.requests.is_empty() {
-                rows.push(("(no requests yet)".to_string(), app.styles.dimmed, None));
-            } else {
-                rows.extend(
-                    row.requests
-                        .iter()
-                        .map(|e| (summary_line(e), app.styles.normal, None)),
-                );
-            }
-            rows
-        }
-    }
-}
-
-/// Row count for a pane, so the key handler can bound row selection.
-pub fn pane_row_count(app: &DashboardApp, key: UiKey, pane: PaneKind) -> usize {
-    pane_rows(app, key, pane).len()
+    Line::from(spans)
 }

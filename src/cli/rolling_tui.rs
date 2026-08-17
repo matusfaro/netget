@@ -193,7 +193,7 @@ pub async fn run_rolling_tui(
     // Spawn async task to generate and stream ASCII art banner (unless suppressed)
     // This runs in the background and doesn't block TUI startup
     // The banner is sent through status_tx and appears in the TUI output
-    if !args.suppress_art {
+    if args.show_art {
         let ollama_url_clone = base_url.to_string();
         let model_clone = selected_model.clone();
         let status_tx_clone = status_tx.clone();

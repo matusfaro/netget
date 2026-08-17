@@ -1,0 +1,754 @@
+//! The rail's tree model.
+//!
+//! An instance is a root; under it sit `config`, `routing` and `peers`; under
+//! a peer sit the requests that arrived on it. Fixed columns forced every
+//! group to the same width and could not express that nesting — a request
+//! belongs to the connection that carried it, not to a parallel column.
+//!
+//! Long lists are capped so one busy peer cannot bury everything below it;
+//! the cap lifts per node ("show all"), and any group can be collapsed.
+
+use std::collections::HashSet;
+
+use crate::state::app_state::AccessLogEntry;
+use crate::tui::app::UiKey;
+use crate::tui::hit::ButtonId;
+use crate::tui::modal::request_detail::summary_line;
+use crate::tui::projection::{ClientRow, SendState, ServerRow};
+
+/// How many children a group shows before the "… N more" row.
+pub const CHILD_LIMIT: usize = 5;
+
+/// Identity of a tree node, stable across re-polls so expansion state and the
+/// selection survive polling.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum NodeId {
+    Instance(UiKey),
+    Config(UiKey),
+    ConfigItem(UiKey, String),
+    Routing(UiKey),
+    Route(UiKey, usize),
+    Peers(UiKey),
+    /// A connection, by its id. `None` is the bucket for connectionless
+    /// protocols, whose events carry no connection.
+    Peer(UiKey, Option<u32>),
+    Request(UiKey, u64),
+    /// Client connection attempts, and one attempt by its start time.
+    Attempts(UiKey),
+    Attempt(UiKey, u64),
+    /// One line of an expanded request's detail (index into its detail lines).
+    RequestDetail(UiKey, u64, usize),
+    /// The "… N more" row belonging to a group.
+    More(Box<NodeId>),
+}
+
+/// How a row should be styled, resolved against the palette at render time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RowStyle {
+    Instance,
+    Group,
+    Normal,
+    Dim,
+    Good,
+    Warn,
+    Bad,
+    Button,
+}
+
+#[derive(Debug, Clone)]
+pub struct TreeRow {
+    pub node: NodeId,
+    pub depth: u16,
+    pub label: String,
+    pub style: RowStyle,
+    /// Present on group rows; `None` on leaves.
+    pub expanded: Option<bool>,
+    /// A right-aligned action on this row (clickable, and reachable by its
+    /// keyboard shortcut).
+    pub button: Option<(String, ButtonId)>,
+}
+
+impl TreeRow {
+    fn leaf(node: NodeId, depth: u16, label: impl Into<String>, style: RowStyle) -> Self {
+        Self {
+            node,
+            depth,
+            label: label.into(),
+            style,
+            expanded: None,
+            button: None,
+        }
+    }
+
+    fn group(node: NodeId, depth: u16, label: impl Into<String>, expanded: bool) -> Self {
+        Self {
+            node,
+            depth,
+            label: label.into(),
+            style: RowStyle::Group,
+            expanded: Some(expanded),
+            button: None,
+        }
+    }
+
+    fn with_button(mut self, label: &str, id: ButtonId) -> Self {
+        self.button = Some((label.to_string(), id));
+        self
+    }
+}
+
+/// Per-band expansion state.
+#[derive(Debug, Default, Clone)]
+pub struct TreeState {
+    /// Nodes the user collapsed. Groups are expanded by default, so storing
+    /// the collapsed set means a new server arrives fully visible.
+    pub collapsed: HashSet<NodeId>,
+    /// Nodes whose child cap has been lifted.
+    pub show_all: HashSet<NodeId>,
+    /// Nodes that are collapsed by default and have been opened explicitly
+    /// (requests: a peer with thirty of them should read as a list).
+    pub opened: HashSet<NodeId>,
+}
+
+impl TreeState {
+    pub fn is_expanded(&self, node: &NodeId) -> bool {
+        !self.collapsed.contains(node)
+    }
+
+    /// Whether a node is collapsed unless explicitly opened.
+    pub fn defaults_closed(node: &NodeId) -> bool {
+        matches!(node, NodeId::Request(_, _))
+    }
+
+    pub fn is_open(&self, node: &NodeId) -> bool {
+        if Self::defaults_closed(node) {
+            self.opened.contains(node)
+        } else {
+            self.is_expanded(node)
+        }
+    }
+
+    pub fn toggle(&mut self, node: &NodeId) {
+        if Self::defaults_closed(node) {
+            if self.opened.contains(node) {
+                self.opened.remove(node);
+            } else {
+                self.opened.insert(node.clone());
+            }
+            return;
+        }
+        if self.collapsed.contains(node) {
+            self.collapsed.remove(node);
+        } else {
+            self.collapsed.insert(node.clone());
+        }
+    }
+
+    pub fn expand(&mut self, node: &NodeId) {
+        if Self::defaults_closed(node) {
+            self.opened.insert(node.clone());
+        }
+        self.collapsed.remove(node);
+    }
+
+    pub fn collapse(&mut self, node: &NodeId) {
+        if Self::defaults_closed(node) {
+            self.opened.remove(node);
+            return;
+        }
+        self.collapsed.insert(node.clone());
+    }
+
+    pub fn show_all(&mut self, node: &NodeId) {
+        self.show_all.insert(node.clone());
+    }
+
+    fn limit_for(&self, node: &NodeId) -> usize {
+        if self.show_all.contains(node) {
+            usize::MAX
+        } else {
+            CHILD_LIMIT
+        }
+    }
+}
+
+/// Detail lines shown for an expanded request before "… N more".
+///
+/// Generous on purpose: the header alone is ~7 lines, so a tight cap cut off
+/// before the response — the half you opened the request to read. Expanding is
+/// opt-in and the band scrolls, so the cost of being generous is low; the cap
+/// only exists to stop a megabyte payload from becoming a megabyte of rows.
+pub const DETAIL_LIMIT: usize = 60;
+
+/// Push children with an explicit cap.
+fn push_capped_with_limit(
+    rows: &mut Vec<TreeRow>,
+    state: &TreeState,
+    group: &NodeId,
+    depth: u16,
+    children: Vec<TreeRow>,
+    limit: usize,
+) {
+    let limit = if state.show_all.contains(group) {
+        usize::MAX
+    } else {
+        limit
+    };
+    let total = children.len();
+    let shown = total.min(limit);
+    rows.extend(children.into_iter().take(shown));
+    if total > shown {
+        rows.push(TreeRow::leaf(
+            NodeId::More(Box::new(group.clone())),
+            depth,
+            format!("… {} more", total - shown),
+            RowStyle::Dim,
+        ));
+    }
+}
+
+/// Push item-groups with the cap applied to the number of ITEMS, not to the
+/// number of rows they flatten into.
+///
+/// This matters for requests: an expanded one contributes its whole detail, and
+/// charging those rows against the peer's request cap silently truncated the
+/// list the moment you opened anything.
+fn push_capped_groups(
+    rows: &mut Vec<TreeRow>,
+    state: &TreeState,
+    group: &NodeId,
+    depth: u16,
+    items: Vec<Vec<TreeRow>>,
+) {
+    let limit = state.limit_for(group);
+    let total = items.len();
+    let shown = total.min(limit);
+    for item in items.into_iter().take(shown) {
+        rows.extend(item);
+    }
+    if total > shown {
+        rows.push(TreeRow::leaf(
+            NodeId::More(Box::new(group.clone())),
+            depth,
+            format!("… {} more", total - shown),
+            RowStyle::Dim,
+        ));
+    }
+}
+
+/// Push children with the group's cap applied, plus a "… N more" row when the
+/// cap hides something.
+fn push_capped(
+    rows: &mut Vec<TreeRow>,
+    state: &TreeState,
+    group: &NodeId,
+    depth: u16,
+    children: Vec<TreeRow>,
+) {
+    let limit = state.limit_for(group);
+    let total = children.len();
+    let shown = total.min(limit);
+    rows.extend(children.into_iter().take(shown));
+    if total > shown {
+        rows.push(TreeRow::leaf(
+            NodeId::More(Box::new(group.clone())),
+            depth,
+            format!("… {} more", total - shown),
+            RowStyle::Dim,
+        ));
+    }
+}
+
+/// Flatten one server into display rows.
+pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
+    let key = UiKey::Server(row.id);
+    let mut rows = Vec::new();
+
+    let instance = NodeId::Instance(key);
+    let instance_expanded = state.is_expanded(&instance);
+    let addr = row
+        .local_addr
+        .clone()
+        .unwrap_or_else(|| format!(":{}", row.port));
+    rows.push(
+        TreeRow::group(
+            instance.clone(),
+            0,
+            format!("#{} {} {}  {}", row.id.as_u32(), row.protocol, addr, row.status),
+            instance_expanded,
+        )
+        .with_button("[ edit ]", ButtonId::Edit(key)),
+    );
+    if !instance_expanded {
+        return rows;
+    }
+
+    // ---- config ----
+    let config = NodeId::Config(key);
+    let config_expanded = state.is_expanded(&config);
+    let mut config_items: Vec<TreeRow> = Vec::new();
+    if let Some(params) = row.startup_params.as_ref().and_then(|p| p.as_object()) {
+        for (k, v) in params {
+            config_items.push(TreeRow::leaf(
+                NodeId::ConfigItem(key, k.clone()),
+                2,
+                format!("{k}: {v}"),
+                RowStyle::Normal,
+            ));
+        }
+    }
+    config_items.push(TreeRow::leaf(
+        NodeId::ConfigItem(key, "instruction".into()),
+        2,
+        format!(
+            "instruction: {}",
+            crate::utils::truncate_for_log(&row.instruction, 80)
+        ),
+        RowStyle::Dim,
+    ));
+    config_items.push(TreeRow::leaf(
+        NodeId::ConfigItem(key, "memory".into()),
+        2,
+        format!("memory: {} bytes", row.memory_len),
+        RowStyle::Dim,
+    ));
+    if row.task_count > 0 {
+        config_items.push(TreeRow::leaf(
+            NodeId::ConfigItem(key, "tasks".into()),
+            2,
+            format!("scheduled tasks: {}", row.task_count),
+            RowStyle::Dim,
+        ));
+    }
+    rows.push(
+        TreeRow::group(
+            config.clone(),
+            1,
+            format!("config ({})", config_items.len()),
+            config_expanded,
+        )
+        .with_button("[ edit ]", ButtonId::Edit(key)),
+    );
+    if config_expanded {
+        push_capped(&mut rows, state, &config, 2, config_items);
+    }
+
+    // ---- routing ----
+    let routing = NodeId::Routing(key);
+    let routing_expanded = state.is_expanded(&routing);
+    let routes = route_rows(key, 2, row.routing.as_ref());
+    rows.push(
+        TreeRow::group(
+            routing.clone(),
+            1,
+            format!("routing ({})", routes.len().saturating_sub(1)),
+            routing_expanded,
+        )
+        .with_button("[ edit ]", ButtonId::Routing(key)),
+    );
+    if routing_expanded {
+        push_capped(&mut rows, state, &routing, 2, routes);
+    }
+
+    // ---- peers, with each peer's requests beneath it ----
+    let peers = NodeId::Peers(key);
+    let peers_expanded = state.is_expanded(&peers);
+    let live = row.conns.len();
+    let mut peers_group = TreeRow::group(
+        peers.clone(),
+        1,
+        format!("peers ({live} live, {} recent)", row.recent.len()),
+        peers_expanded,
+    );
+    if row.client_counterpart.is_some() {
+        peers_group = peers_group.with_button("[ + client ]", ButtonId::AddClientFor(row.id));
+    }
+    rows.push(peers_group);
+
+    if peers_expanded {
+        let mut peer_rows: Vec<TreeRow> = Vec::new();
+        for conn in &row.conns {
+            peer_rows.push(peer_with_requests(
+                key,
+                state,
+                Some(conn.id),
+                format!(
+                    "{}  ↓{} ↑{}",
+                    conn.remote_addr, conn.bytes_received, conn.bytes_sent
+                ),
+                if conn.active {
+                    RowStyle::Good
+                } else {
+                    RowStyle::Dim
+                },
+                &row.requests,
+                &mut rows,
+            ));
+        }
+        for closed in &row.recent {
+            peer_rows.push(peer_with_requests(
+                key,
+                state,
+                Some(closed.id),
+                format!(
+                    "{}  ↓{} ↑{}  (closed)",
+                    closed.remote_addr, closed.bytes_received, closed.bytes_sent
+                ),
+                RowStyle::Dim,
+                &row.requests,
+                &mut rows,
+            ));
+        }
+        // Connectionless events (DNS, UDP…) have no peer to hang from.
+        if row.requests.iter().any(|r| r.connection_id.is_none()) {
+            peer_rows.push(peer_with_requests(
+                key,
+                state,
+                None,
+                "(connectionless)".to_string(),
+                RowStyle::Dim,
+                &row.requests,
+                &mut rows,
+            ));
+        }
+        // `peer_with_requests` pushed straight into `rows`; the vec above only
+        // tracks how many peers there were.
+        if peer_rows.is_empty() {
+            rows.push(TreeRow::leaf(
+                NodeId::Peer(key, None),
+                2,
+                "(no connections yet)",
+                RowStyle::Dim,
+            ));
+        }
+    }
+
+    rows
+}
+
+/// Push one peer row plus its requests, returning a marker row so the caller
+/// can tell whether any peer existed.
+#[allow(clippy::too_many_arguments)]
+fn peer_with_requests(
+    key: UiKey,
+    state: &TreeState,
+    conn_id: Option<u32>,
+    label: String,
+    style: RowStyle,
+    requests: &[AccessLogEntry],
+    rows: &mut Vec<TreeRow>,
+) -> TreeRow {
+    let node = NodeId::Peer(key, conn_id);
+    let mine: Vec<&AccessLogEntry> = requests
+        .iter()
+        .filter(|r| r.connection_id == conn_id)
+        .collect();
+    let expanded = state.is_expanded(&node);
+    let row = TreeRow::group(
+        node.clone(),
+        2,
+        format!("{label}  · {} req", mine.len()),
+        expanded,
+    );
+    let mut row_styled = row;
+    row_styled.style = style;
+    rows.push(row_styled.clone());
+
+    if expanded && !mine.is_empty() {
+        let items: Vec<Vec<TreeRow>> = mine
+            .iter()
+            .map(|entry| request_rows(key, state, entry, 3))
+            .collect();
+        push_capped_groups(rows, state, &node, 3, items);
+    }
+    row_styled
+}
+
+/// A request row, plus its full request/response detail when expanded.
+///
+/// The detail is the same text the request modal shows; having it inline means
+/// following a conversation does not cost a round trip through an overlay.
+fn request_rows(
+    key: UiKey,
+    state: &TreeState,
+    entry: &AccessLogEntry,
+    depth: u16,
+) -> Vec<TreeRow> {
+    let node = NodeId::Request(key, entry.id);
+    // Requests default to collapsed: a peer with thirty of them should read as
+    // a list, not a wall of JSON.
+    let expanded = state.is_open(&node);
+    let mut rows = vec![TreeRow::group(
+        node.clone(),
+        depth,
+        summary_line(entry),
+        expanded,
+    )];
+    if expanded {
+        let detail: Vec<TreeRow> = crate::tui::modal::request_detail::detail_lines(entry)
+            .into_iter()
+            .enumerate()
+            .map(|(index, line)| {
+                TreeRow::leaf(
+                    NodeId::RequestDetail(key, entry.id, index),
+                    depth + 1,
+                    line,
+                    RowStyle::Dim,
+                )
+            })
+            .collect();
+        push_capped_with_limit(&mut rows, state, &node, depth + 1, detail, DETAIL_LIMIT);
+    }
+    rows
+}
+
+fn route_rows(
+    key: UiKey,
+    depth: u16,
+    routing: Option<&crate::scripting::EventHandlerConfig>,
+) -> Vec<TreeRow> {
+    use crate::scripting::event_handler::EventPattern;
+    use crate::scripting::EventHandlerType;
+
+    let mut rows = Vec::new();
+    if let Some(config) = routing {
+        for (index, handler) in config.handlers.iter().enumerate() {
+            let pattern = match &handler.event_pattern {
+                EventPattern::Specific(s) => s.clone(),
+                EventPattern::Wildcard => "*".to_string(),
+            };
+            let (body, style) = match &handler.handler {
+                EventHandlerType::Llm { instruction } => (
+                    format!("LLM — {}", crate::utils::truncate_for_log(instruction, 40)),
+                    RowStyle::Normal,
+                ),
+                EventHandlerType::Script {
+                    language, resident, ..
+                } => (
+                    format!(
+                        "SCRIPT ({language}{})",
+                        if *resident { ", resident" } else { "" }
+                    ),
+                    RowStyle::Warn,
+                ),
+                EventHandlerType::Static { actions } => {
+                    let names: Vec<&str> = actions
+                        .iter()
+                        .filter_map(|a| a.get("type").and_then(|t| t.as_str()))
+                        .collect();
+                    (
+                        format!(
+                            "STATIC — {}",
+                            if names.is_empty() {
+                                "(no actions)".to_string()
+                            } else {
+                                names.join(", ")
+                            }
+                        ),
+                        RowStyle::Good,
+                    )
+                }
+            };
+            rows.push(TreeRow::leaf(
+                NodeId::Route(key, index),
+                depth,
+                format!("{pattern} → {body}"),
+                style,
+            ));
+        }
+    }
+    rows.push(TreeRow::leaf(
+        NodeId::Route(key, usize::MAX),
+        depth,
+        "otherwise → LLM (the instance instruction)",
+        RowStyle::Dim,
+    ));
+    rows
+}
+
+/// Flatten one client into display rows.
+pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
+    let key = UiKey::Client(row.id);
+    let mut rows = Vec::new();
+
+    let instance = NodeId::Instance(key);
+    let instance_expanded = state.is_expanded(&instance);
+    let send_label = match row.send_state {
+        SendState::Ready => "[ send ]",
+        SendState::NotConnected => "[ send ] not connected",
+        SendState::ProtocolUnsupported => "[ send ] unsupported",
+    };
+    rows.push(
+        TreeRow::group(
+            instance.clone(),
+            0,
+            format!(
+                "#{} {} → {}  {}",
+                row.id.as_u32(),
+                row.protocol,
+                row.remote_addr,
+                row.status
+            ),
+            instance_expanded,
+        )
+        .with_button(send_label, ButtonId::Send(row.id)),
+    );
+    if !instance_expanded {
+        return rows;
+    }
+
+    // ---- config ----
+    let config = NodeId::Config(key);
+    let config_expanded = state.is_expanded(&config);
+    let mut config_items: Vec<TreeRow> = Vec::new();
+    if let Some(params) = row.startup_params.as_ref().and_then(|p| p.as_object()) {
+        for (k, v) in params {
+            config_items.push(TreeRow::leaf(
+                NodeId::ConfigItem(key, k.clone()),
+                2,
+                format!("{k}: {v}"),
+                RowStyle::Normal,
+            ));
+        }
+    }
+    config_items.push(TreeRow::leaf(
+        NodeId::ConfigItem(key, "instruction".into()),
+        2,
+        format!(
+            "instruction: {}",
+            crate::utils::truncate_for_log(&row.instruction, 80)
+        ),
+        RowStyle::Dim,
+    ));
+    config_items.push(TreeRow::leaf(
+        NodeId::ConfigItem(key, "memory".into()),
+        2,
+        format!("memory: {} bytes", row.memory_len),
+        RowStyle::Dim,
+    ));
+    rows.push(
+        TreeRow::group(
+            config.clone(),
+            1,
+            format!("config ({})", config_items.len()),
+            config_expanded,
+        )
+        .with_button("[ edit ]", ButtonId::Edit(key)),
+    );
+    if config_expanded {
+        push_capped(&mut rows, state, &config, 2, config_items);
+    }
+
+    // ---- routing ----
+    let routing = NodeId::Routing(key);
+    let routing_expanded = state.is_expanded(&routing);
+    let routes = route_rows(key, 2, row.routing.as_ref());
+    rows.push(
+        TreeRow::group(
+            routing.clone(),
+            1,
+            format!("routing ({})", routes.len().saturating_sub(1)),
+            routing_expanded,
+        )
+        .with_button("[ edit ]", ButtonId::Routing(key)),
+    );
+    if routing_expanded {
+        push_capped(&mut rows, state, &routing, 2, routes);
+    }
+
+    // ---- peer (a client has one) with its requests ----
+    let peers = NodeId::Peers(key);
+    let peers_expanded = state.is_expanded(&peers);
+    rows.push(TreeRow::group(
+        peers.clone(),
+        1,
+        format!("peer · {} req", row.requests.len()),
+        peers_expanded,
+    ));
+    if peers_expanded {
+        let conn_label = match &row.connection {
+            Some(c) => format!(
+                "{}  ↓{} ↑{}",
+                c.remote_addr, c.bytes_received, c.bytes_sent
+            ),
+            None => row.remote_addr.clone(),
+        };
+        peer_with_requests(
+            key,
+            state,
+            row.connection.as_ref().map(|c| c.id),
+            conn_label,
+            match row.send_state {
+                SendState::Ready => RowStyle::Good,
+                _ => RowStyle::Dim,
+            },
+            &row.requests,
+            &mut rows,
+        );
+
+        // A client's injected actions carry no connection id, so they would
+        // otherwise be invisible; show them under the peer they went through.
+        let orphans: Vec<&AccessLogEntry> = row
+            .requests
+            .iter()
+            .filter(|r| r.connection_id != row.connection.as_ref().map(|c| c.id))
+            .collect();
+        if !orphans.is_empty() {
+            let node = NodeId::Peer(key, None);
+            let expanded = state.is_expanded(&node);
+            rows.push(TreeRow::group(
+                node.clone(),
+                2,
+                format!("(no connection id) · {} req", orphans.len()),
+                expanded,
+            ));
+            if expanded {
+                let items: Vec<Vec<TreeRow>> = orphans
+                    .iter()
+                    .map(|e| request_rows(key, state, e, 3))
+                    .collect();
+                push_capped_groups(&mut rows, state, &node, 3, items);
+            }
+        }
+
+        if row.requests.is_empty() && row.connection.is_none() {
+            rows.push(TreeRow::leaf(
+                NodeId::Peer(key, None),
+                2,
+                "(nothing yet)",
+                RowStyle::Dim,
+            ));
+        }
+    }
+
+    // Connection attempts are diagnostic history, a sibling of `peer` rather
+    // than one of its children.
+    if !row.history.is_empty() {
+        let attempts = NodeId::Attempts(key);
+        let expanded = state.is_expanded(&attempts);
+        rows.push(TreeRow::group(
+            attempts.clone(),
+            1,
+            format!("attempts ({})", row.history.len()),
+            expanded,
+        ));
+        if expanded {
+            let children: Vec<TreeRow> = row
+                .history
+                .iter()
+                .rev()
+                .map(|attempt| {
+                    TreeRow::leaf(
+                        NodeId::Attempt(key, attempt.started_unix_ms),
+                        2,
+                        format!("{} — {}", attempt.remote_addr, attempt.outcome),
+                        RowStyle::Dim,
+                    )
+                })
+                .collect();
+            push_capped(&mut rows, state, &attempts, 2, children);
+        }
+    }
+
+    rows
+}

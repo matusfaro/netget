@@ -8,7 +8,7 @@
 
 use ratatui::layout::Rect;
 
-use crate::tui::app::{PaneKind, Section, UiKey};
+use crate::tui::app::{Section, UiKey};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HitTarget {
@@ -19,14 +19,10 @@ pub enum HitTarget {
     Band {
         key: UiKey,
     },
-    Pane {
+    /// A row of a band's flattened tree, by index.
+    TreeRow {
         key: UiKey,
-        pane: PaneKind,
-    },
-    Row {
-        key: UiKey,
-        pane: PaneKind,
-        row: usize,
+        index: usize,
     },
     /// A labelled button inside a band or header.
     Button(ButtonId),

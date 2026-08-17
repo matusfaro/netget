@@ -23,6 +23,45 @@ pub struct BandLayout {
     pub collapsed: bool,
 }
 
+/// Trim any band down to what its content actually needs, and hand the freed
+/// rows to bands that are still short.
+///
+/// Without this a collapsed instance keeps a full-size frame full of blank
+/// space while its neighbours scroll — the opposite of what collapsing it was
+/// for. `desired` is the rows each band would use if unconstrained (its tree
+/// size plus the frame).
+pub fn fit_to_content(layout: &mut [BandLayout], desired: &[u16]) {
+    let mut surplus = 0u16;
+    for (band, want) in layout.iter_mut().zip(desired.iter()) {
+        if band.collapsed || band.height == 0 {
+            continue;
+        }
+        let want = (*want).max(BAND_MIN);
+        if band.height > want {
+            surplus += band.height - want;
+            band.height = want;
+        }
+    }
+    if surplus == 0 {
+        return;
+    }
+    // Give it to whoever is still cramped, nearest-first.
+    for (band, want) in layout.iter_mut().zip(desired.iter()) {
+        if surplus == 0 {
+            break;
+        }
+        if band.collapsed || band.height == 0 {
+            continue;
+        }
+        let want = (*want).min(BAND_MAX);
+        if band.height < want {
+            let give = surplus.min(want - band.height);
+            band.height += give;
+            surplus -= give;
+        }
+    }
+}
+
 /// Allocate heights for `count` bands within `available` rows, keeping
 /// `selected` as usable as possible.
 ///

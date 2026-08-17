@@ -25,47 +25,6 @@ pub enum Section {
     Clients,
 }
 
-/// The vertical sub-panes inside one band.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PaneKind {
-    Info,
-    Config,
-    Routing,
-    Connections,
-    Requests,
-}
-
-impl PaneKind {
-    pub const ALL: [PaneKind; 5] = [
-        PaneKind::Info,
-        PaneKind::Config,
-        PaneKind::Routing,
-        PaneKind::Connections,
-        PaneKind::Requests,
-    ];
-
-    pub fn title(&self) -> &'static str {
-        match self {
-            PaneKind::Info => "info",
-            PaneKind::Config => "config",
-            PaneKind::Routing => "routing",
-            PaneKind::Connections => "peers",
-            PaneKind::Requests => "requests",
-        }
-    }
-
-    /// Percentage of band width.
-    pub fn width_percent(&self) -> u16 {
-        match self {
-            PaneKind::Info => 18,
-            PaneKind::Config => 20,
-            PaneKind::Routing => 20,
-            PaneKind::Connections => 18,
-            PaneKind::Requests => 24,
-        }
-    }
-}
-
 /// Where keyboard input goes when no modal is open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Focus {
@@ -74,14 +33,13 @@ pub enum Focus {
     Rail(RailSel),
 }
 
-/// The rail selection: which section, which band, and how deep inside it.
+/// The rail selection: which section, which band, and which tree row inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RailSel {
     pub section: Section,
     pub band: usize,
-    /// `None` = the band itself is selected; `Some` = a pane is highlighted.
-    pub pane: Option<PaneKind>,
-    /// `Some` = a row inside the pane is selected (drill-in level).
+    /// `None` = the band is selected but no row within it; `Some(i)` = the
+    /// i-th row of the band's flattened tree.
     pub row: Option<usize>,
 }
 
@@ -90,17 +48,18 @@ impl RailSel {
         Self {
             section,
             band: 0,
-            pane: None,
             row: None,
         }
     }
 }
 
-/// Per-band UI state that must survive re-polls (scroll offsets, maximize).
+/// Per-band UI state that must survive re-polls: which nodes are expanded,
+/// where the tree is scrolled, and whether the band is maximized.
 #[derive(Debug, Clone, Default)]
 pub struct BandUiState {
     pub maximized: bool,
-    pub pane_scroll: HashMap<PaneKind, usize>,
+    pub scroll: usize,
+    pub tree: crate::tui::tree::TreeState,
 }
 
 /// Rail-wide UI state.
@@ -268,10 +227,21 @@ impl DashboardApp {
             };
             if count == 0 {
                 sel.band = 0;
-                sel.pane = None;
                 sel.row = None;
             } else if sel.band >= count {
                 sel.band = count - 1;
+            }
+        }
+        // Row indices come from the previous frame's tree; a collapse or a
+        // vanished connection can shorten it.
+        if let Some(key) = self.selected_key() {
+            let rows = crate::tui::render::band::band_row_count(self, key);
+            if let Focus::Rail(sel) = &mut self.focus {
+                match sel.row {
+                    Some(_) if rows == 0 => sel.row = None,
+                    Some(row) if row >= rows => sel.row = Some(rows - 1),
+                    _ => {}
+                }
             }
         }
     }

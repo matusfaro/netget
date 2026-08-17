@@ -5,13 +5,15 @@
 /// a section heading.
 pub fn help_lines() -> Vec<(Option<&'static str>, &'static str)> {
     vec![
-        (None, "Navigation"),
+        (None, "Navigation — the rail is a tree"),
         (Some("Tab / Shift-Tab"), "move between chat, servers, clients"),
-        (Some("↑ / ↓"), "select band (or row, inside a pane)"),
-        (Some("← / →"), "select pane within a band"),
-        (Some("Enter"), "drill in (pane → rows → detail)"),
-        (Some("Esc"), "back out one level"),
-        (Some("Space"), "maximize / restore the selected band"),
+        (Some("↑ / ↓"), "walk the tree (crosses into the next instance)"),
+        (Some("→"), "expand a group, or step into it"),
+        (Some("←"), "collapse a group, or step out to its parent"),
+        (Some("Enter / Space"), "toggle the row; on '… N more' show them all"),
+        (Some("Enter on a request"), "expand its full request/response inline"),
+        (Some("Esc"), "leave the tree, back to chat"),
+        (Some("Space on an instance"), "maximize / restore that band"),
         (Some("PageUp / PageDown"), "scroll chat history"),
         (None, "Instances"),
         (Some("a"), "add: new server / client (protocol picker)"),

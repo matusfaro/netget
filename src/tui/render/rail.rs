@@ -121,7 +121,20 @@ fn draw_section(frame: &mut Frame, app: &mut DashboardApp, area: Rect, section: 
         .and_then(|key| app.rail.band(key).map(|b| b.maximized))
         .unwrap_or(false);
 
-    let layouts = bands::allocate(count, body.height, selected_idx, maximized);
+    let mut layouts = bands::allocate(count, body.height, selected_idx, maximized);
+    // Reclaim space from bands whose tree is shorter than their slot (a
+    // collapsed instance needs three rows, not ten).
+    let desired: Vec<u16> = (0..count)
+        .map(|index| {
+            app.band_key(section, index)
+                .map(|key| {
+                    let rows = super::band::band_row_count(app, key) as u16;
+                    rows.saturating_add(2)
+                })
+                .unwrap_or(bands::BAND_MIN)
+        })
+        .collect();
+    bands::fit_to_content(&mut layouts, &desired);
 
     let mut y = body.y;
     for (index, layout) in layouts.iter().enumerate() {
