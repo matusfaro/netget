@@ -103,10 +103,14 @@ impl LdapProtocol {
             .and_then(|v| v.as_i64())
             .unwrap_or(1) as i32;
 
+        // Not defaulted to `true`. `success` is only consulted to pick a resultCode when the
+        // model names none, so a forgotten field used to encode resultCode 0 - the directory
+        // telling the client the entry was added. An omission is not an outcome. An explicit
+        // `result_code` still wins on its own, so naming either field works as before.
         let success = action
             .get("success")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         let result_code = action
             .get("result_code")
@@ -130,10 +134,11 @@ impl LdapProtocol {
             .and_then(|v| v.as_i64())
             .unwrap_or(1) as i32;
 
+        // See `execute_ldap_add_response`: an omitted `success` must not encode resultCode 0.
         let success = action
             .get("success")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         let result_code = action
             .get("result_code")
@@ -157,10 +162,11 @@ impl LdapProtocol {
             .and_then(|v| v.as_i64())
             .unwrap_or(1) as i32;
 
+        // See `execute_ldap_add_response`: an omitted `success` must not encode resultCode 0.
         let success = action
             .get("success")
             .and_then(|v| v.as_bool())
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         let result_code = action
             .get("result_code")

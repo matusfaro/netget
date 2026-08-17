@@ -82,7 +82,11 @@ CouchDB-compatible server implementing the CouchDB HTTP/JSON REST API. The serve
    model call)
 8. Process action result:
    - `couchdb_response`: Build HTTP response with status/body/etag
-9. If no action, return default JSON `{"ok": true}`
+9. If no action, return **500** `{"error": "no_response", ...}` — never a 2xx. A 200
+   `{"ok": true}` is the claim that the document was written (or, on `_session`, that the
+   login succeeded), and nothing here is in a position to make it. `no_response` is a
+   distinct `error` string from the backend-failure branch's `internal_server_error`, so a
+   silent handler and a dead backend stay distinguishable in the client's error and the log
 10. Keep the connection open for further requests
 
 ### Operation Detection

@@ -403,15 +403,29 @@ impl SipServer {
         let response_data = response_action
             .as_object()
             .expect("Action should be an object");
-        let status_code = response_data
+        // A missing `status_code` is a malformed action, not a decision, so it must not
+        // become 200. On REGISTER a defaulted 200 is an accepted registration and on INVITE
+        // an accepted call - granted because a field was forgotten. SIP has no default
+        // status, so the honest answer is the server's own 500; the model's actual choices
+        // (401, 403, 486) are unaffected because they name the field.
+        let (status_code, default_reason) = match response_data
             .get("status_code")
             .and_then(|v| v.as_u64())
-            .unwrap_or(200) as u16;
+        {
+            Some(code) => (code as u16, "OK"),
+            None => {
+                tracing::warn!(
+                    "SIP action carried no status_code; answering 500 rather than defaulting \
+                     to 200, which would accept the request"
+                );
+                (500u16, "Server Internal Error")
+            }
+        };
 
         let reason_phrase = response_data
             .get("reason_phrase")
             .and_then(|v| v.as_str())
-            .unwrap_or("OK");
+            .unwrap_or(default_reason);
 
         // Build status line
         let mut response = format!("SIP/2.0 {} {}\r\n", status_code, reason_phrase);
