@@ -21,5 +21,6 @@ pub mod server;
 pub mod settings;
 pub mod state;
 pub mod system_stats;
+pub mod tui;
 pub mod ui;
 pub mod utils;

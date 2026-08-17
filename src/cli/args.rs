@@ -306,6 +306,13 @@ pub struct Args {
     )]
     pub suppress_art: bool,
 
+    /// Use the legacy rolling-terminal TUI instead of the full-screen dashboard
+    #[clap(
+        long = "legacy-tui",
+        help = "Use the legacy rolling-terminal TUI (scrollback-based, no mouse) instead of the default full-screen dashboard"
+    )]
+    pub legacy_tui: bool,
+
     /// Maximum concurrent LLM requests (default: 1)
     #[clap(
         long = "llm-max-concurrent",
