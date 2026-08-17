@@ -92,6 +92,9 @@ pub struct FormModel {
     /// editing.
     pub editing: Option<String>,
     pub error: Option<String>,
+    /// An apply is in flight. The work is spawned (it does network I/O), so
+    /// the form stays on screen, refuses a second submit, and says so.
+    pub busy: bool,
 }
 
 impl FormModel {
@@ -225,6 +228,7 @@ impl FormModel {
             selected: 0,
             editing: None,
             error: None,
+            busy: false,
         }
     }
 
@@ -247,6 +251,7 @@ impl FormModel {
             selected: 0,
             editing: None,
             error: None,
+            busy: false,
         }
     }
 

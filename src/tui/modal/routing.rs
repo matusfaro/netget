@@ -180,6 +180,8 @@ pub struct RoutingModel {
     draft_is_new: bool,
     pub error: Option<String>,
     pub dirty: bool,
+    /// An apply is in flight (spawned; see `crate::tui::uimsg`).
+    pub busy: bool,
 }
 
 impl RoutingModel {
@@ -201,6 +203,7 @@ impl RoutingModel {
             draft_is_new: false,
             error: None,
             dirty: false,
+            busy: false,
         }
     }
 

@@ -6,12 +6,13 @@
 //! scrollable, and past that they collapse to one-line summaries with the
 //! selection kept visible.
 
-/// Most rows one band ever gets (title + content), however much space is free.
-pub const BAND_MAX: u16 = 14;
-/// Comfortable height: enough for a few connections and requests.
-pub const BAND_PREF: u16 = 9;
-/// Smallest height that still shows content (1 title + 3 content rows).
-pub const BAND_MIN: u16 = 4;
+/// Most rows one band ever gets, however much space is free. Each band is a
+/// bordered box, so two of these rows are its frame.
+pub const BAND_MAX: u16 = 16;
+/// Comfortable height: frame plus enough for a few peers and requests.
+pub const BAND_PREF: u16 = 10;
+/// Smallest height that still shows content (2 frame rows + 3 content rows).
+pub const BAND_MIN: u16 = 5;
 /// A collapsed band: title row only.
 pub const BAND_COLLAPSED: u16 = 1;
 

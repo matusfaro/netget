@@ -12,6 +12,7 @@ use crate::tui::app::{DashboardApp, Focus, PaneKind, RailSel, Section, UiKey};
 use crate::tui::hit::{ButtonId, HitTarget, SegmentId};
 use crate::tui::modal::{confirm, Modal, PendingAction};
 use crate::tui::render::band::pane_row_count;
+use crate::tui::uimsg::{ActionOrigin, UiMsg};
 
 /// What the event loop should do after handling an event.
 pub enum Outcome {
@@ -307,7 +308,7 @@ async fn handle_rail_key(
             (Some(_), None) => sel.row = Some(0),
             (Some(pane), Some(row)) => {
                 if let Some(band_key) = key_of_band {
-                    open_row_detail(app, band_key, pane, row);
+                    open_row_detail(app, band_key, pane, row, state);
                 }
             }
             (None, _) => {
@@ -354,7 +355,27 @@ async fn handle_rail_key(
     Outcome::Continue
 }
 
-fn open_row_detail(app: &mut DashboardApp, key: UiKey, pane: PaneKind, row: usize) {
+fn open_row_detail(
+    app: &mut DashboardApp,
+    key: UiKey,
+    pane: PaneKind,
+    row: usize,
+    state: &AppState,
+) {
+    // Drilling into a pane opens the editor that owns it, not a read-only
+    // dump: clicking a routing row and pressing Enter must be a way to *edit*
+    // routing, which is the obvious expectation and the one that was missing.
+    match pane {
+        PaneKind::Routing => {
+            open_routing(app, key, state);
+            return;
+        }
+        PaneKind::Config | PaneKind::Info => {
+            open_editor(app, key);
+            return;
+        }
+        _ => {}
+    }
     if pane != PaneKind::Requests {
         app.modals.push(Modal::BandDetail { key, scroll: 0 });
         return;
@@ -752,20 +773,29 @@ async fn handle_form_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState
             }
         }
         KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            if form.busy {
+                return Outcome::Continue;
+            }
+            form.busy = true;
+            form.error = None;
+            // Spawned, never awaited here: creating a server or connecting a
+            // client does network I/O, and awaiting it on the event loop
+            // freezes the whole dashboard until the kernel gives up.
             let model = form.clone();
             let llm = app.llm_client.clone();
             let status_tx = app.status_tx.clone();
-            match model.apply(state, llm, &status_tx).await {
-                Ok(summary) => {
-                    app.modals.pop();
-                    app.push_system(summary);
-                }
-                Err(e) => {
-                    if let Some(Modal::Form(form)) = app.modals.last_mut() {
-                        form.error = Some(e.to_string());
-                    }
-                }
-            }
+            let ui_tx = app.ui_tx.clone();
+            let state = state.clone();
+            tokio::spawn(async move {
+                let result = model
+                    .apply(&state, llm, &status_tx)
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = ui_tx.send(UiMsg::ActionDone {
+                    origin: ActionOrigin::Form,
+                    result,
+                });
+            });
         }
         _ => {}
     }
@@ -860,23 +890,31 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
         }
         KeyCode::Char('j') | KeyCode::Char('J') if ctrl => composer.toggle_raw_json(),
         KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
-            let model = composer.clone();
-            match model.send(state).await {
-                Ok(outcome) => {
-                    let line = format!(
-                        "client #{}: {}",
-                        model.client_id.as_u32(),
-                        crate::tui::modal::composer::describe(&outcome)
-                    );
-                    app.modals.pop();
-                    app.push_system(line);
-                }
-                Err(e) => {
-                    if let Some(Modal::Composer(composer)) = app.modals.last_mut() {
-                        composer.error = Some(e.to_string());
-                    }
-                }
+            if composer.busy {
+                return Outcome::Continue;
             }
+            composer.busy = true;
+            composer.error = None;
+            let model = composer.clone();
+            let ui_tx = app.ui_tx.clone();
+            let state = state.clone();
+            tokio::spawn(async move {
+                let result = model
+                    .send(&state)
+                    .await
+                    .map(|outcome| {
+                        format!(
+                            "client #{}: {}",
+                            model.client_id.as_u32(),
+                            crate::tui::modal::composer::describe(&outcome)
+                        )
+                    })
+                    .map_err(|e| e.to_string());
+                let _ = ui_tx.send(UiMsg::ActionDone {
+                    origin: ActionOrigin::Composer,
+                    result,
+                });
+            });
         }
         _ => {}
     }
@@ -968,25 +1006,23 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
                     pane: Some(pane),
                     row: Some(row),
                 });
-                open_row_detail(app, key, pane, row);
+                open_row_detail(app, key, pane, row, state);
             }
         }
+        // Buttons run the same code as their keyboard shortcuts — clicking
+        // [ edit ] must not do something different from pressing `e`.
         HitTarget::Button(button) => match button {
             ButtonId::Stop(key) => push_stop_confirm(app, key),
             ButtonId::StopAll => app.modals.push(Modal::Confirm {
                 message: "Stop every running server and client?".to_string(),
                 action: PendingAction::StopAll,
             }),
-            ButtonId::Edit(key) | ButtonId::Routing(key) => {
-                app.modals.push(Modal::BandDetail { key, scroll: 0 })
+            ButtonId::Edit(key) => open_editor(app, key),
+            ButtonId::Routing(key) => open_routing(app, key, state),
+            ButtonId::AddClientFor(server_id) => {
+                open_client_for_server(app, server_id, state).await
             }
-            ButtonId::AddClientFor(_) => app.push_system(
-                "Connecting a client to this server interactively is coming in the next build stage."
-                    .to_string(),
-            ),
-            ButtonId::Send(_) => {
-                app.push_system("The send composer is coming in the next build stage.".to_string())
-            }
+            ButtonId::Send(client_id) => open_composer(app, client_id, state).await,
         },
         HitTarget::StatusSegment(segment) => match segment {
             SegmentId::LogLevel => {
@@ -1151,20 +1187,26 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
         KeyCode::Char('K') => model.reorder(-1),
         KeyCode::Char('J') => model.reorder(1),
         KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            if model.busy {
+                return Outcome::Continue;
+            }
+            model.busy = true;
+            model.error = None;
             let snapshot = model.clone();
             let llm = app.llm_client.clone();
             let status_tx = app.status_tx.clone();
-            match snapshot.apply(state, llm, &status_tx).await {
-                Ok(summary) => {
-                    app.modals.pop();
-                    app.push_system(summary);
-                }
-                Err(e) => {
-                    if let Some(Modal::Routing(model)) = app.modals.last_mut() {
-                        model.error = Some(e.to_string());
-                    }
-                }
-            }
+            let ui_tx = app.ui_tx.clone();
+            let state = state.clone();
+            tokio::spawn(async move {
+                let result = snapshot
+                    .apply(&state, llm, &status_tx)
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = ui_tx.send(UiMsg::ActionDone {
+                    origin: ActionOrigin::Routing,
+                    result,
+                });
+            });
         }
         _ => {}
     }
@@ -1193,6 +1235,52 @@ fn example_actions(actions: &[crate::llm::actions::ActionDefinition]) -> String 
                 .unwrap_or_else(|_| "[]".to_string())
         }
         None => "[]".to_string(),
+    }
+}
+
+/// Fold the result of a spawned action back into the UI: on success the
+/// originating modal closes and the summary goes to chat; on failure the modal
+/// stays open showing the error, so the user can fix and retry.
+pub fn handle_ui_msg(app: &mut DashboardApp, msg: UiMsg) {
+    let UiMsg::ActionDone { origin, result } = msg;
+    app.dirty = true;
+
+    let matches_origin = match (origin, app.modal()) {
+        (ActionOrigin::Form, Some(Modal::Form(_))) => true,
+        (ActionOrigin::Routing, Some(Modal::Routing(_))) => true,
+        (ActionOrigin::Composer, Some(Modal::Composer(_))) => true,
+        _ => false,
+    };
+
+    match result {
+        Ok(summary) => {
+            if matches_origin {
+                app.modals.pop();
+            }
+            app.push_system(summary);
+        }
+        Err(error) => {
+            if matches_origin {
+                match app.modals.last_mut() {
+                    Some(Modal::Form(form)) => {
+                        form.busy = false;
+                        form.error = Some(error);
+                    }
+                    Some(Modal::Routing(model)) => {
+                        model.busy = false;
+                        model.error = Some(error);
+                    }
+                    Some(Modal::Composer(composer)) => {
+                        composer.busy = false;
+                        composer.error = Some(error);
+                    }
+                    _ => {}
+                }
+            } else {
+                // The user moved on; the failure still has to be visible.
+                app.push_system(format!("✗ {error}"));
+            }
+        }
     }
 }
 

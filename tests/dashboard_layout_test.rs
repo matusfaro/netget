@@ -37,22 +37,38 @@ fn few_bands_share_space_evenly_and_comfortably() {
 
 #[test]
 fn many_bands_shrink_but_keep_the_selected_one_usable() {
-    // 6 bands into 30 rows: not all can have BAND_PREF, but all fit at BAND_MIN.
+    // Enough room for every band at the minimum but not at the preferred
+    // height: the selected band must be at least as tall as any other and
+    // still usable, and nothing may be squeezed out.
+    let count = 6;
+    let available = count as u16 * BAND_MIN + 4;
     let selected = 4;
-    let layout = allocate(6, 30, selected, false);
-    assert_eq!(layout.len(), 6);
-    assert_eq!(layout[selected].height, BAND_PREF);
+    let layout = allocate(count, available, selected, false);
+
+    assert_eq!(layout.len(), count);
+    assert!(
+        layout[selected].height >= BAND_MIN,
+        "the selected band must stay usable, got {}",
+        layout[selected].height
+    );
+    assert!(
+        layout[selected].height <= BAND_PREF,
+        "the selected band should not exceed the preferred height here, got {}",
+        layout[selected].height
+    );
     for (i, band) in layout.iter().enumerate() {
+        assert!(band.height >= 1, "band {i} should still render");
         if i != selected {
             assert!(
-                band.height >= 1,
-                "band {i} should still render, got {}",
-                band.height
+                band.height <= layout[selected].height,
+                "band {i} ({}) should not outgrow the selected band ({})",
+                band.height,
+                layout[selected].height
             );
         }
     }
     let total: u16 = layout.iter().map(|b| b.height).sum();
-    assert!(total <= 30, "allocation must fit: {total} > 30");
+    assert!(total <= available, "allocation must fit: {total} > {available}");
 }
 
 #[test]

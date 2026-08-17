@@ -124,7 +124,9 @@ impl Modal {
             Modal::WebApproval { .. } => "y allow once · a always · n/Esc deny",
             Modal::ProtocolPicker { .. } => "type to filter · ↑/↓ select · Enter choose · Esc cancel",
             Modal::Form(form) => {
-                if form.editing.is_some() {
+                if form.busy {
+                    "working… (network call in flight)"
+                } else if form.editing.is_some() {
                     "type to edit · Enter accept · Esc cancel field"
                 } else {
                     "↑/↓ field · Enter edit · Ctrl-S apply · Esc cancel"
@@ -132,7 +134,9 @@ impl Modal {
             }
             Modal::TextEditor { .. } => "Ctrl-S accept · Esc cancel",
             Modal::Composer(composer) => {
-                if composer.editing.is_some() {
+                if composer.busy {
+                    "sending…"
+                } else if composer.editing.is_some() {
                     "type to edit · Enter accept · Esc cancel field"
                 } else if composer.chosen.is_some() {
                     "↑/↓ field · Enter edit · Ctrl-J raw JSON · Ctrl-S send · Esc back"
@@ -141,7 +145,9 @@ impl Modal {
                 }
             }
             Modal::Routing(model) => {
-                if model.draft.is_some() {
+                if model.busy {
+                    "applying…"
+                } else if model.draft.is_some() {
                     "Tab section · ←/→ change · Enter edit · Ctrl-S accept handler · Esc back"
                 } else {
                     "a add · Enter edit · d delete · J/K reorder · Ctrl-S apply · Esc close"

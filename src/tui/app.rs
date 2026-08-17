@@ -166,6 +166,9 @@ pub struct DashboardApp {
     /// Clone of the status channel, so modal actions (create/update/send) can
     /// stream their progress into the same chat pane.
     pub status_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    /// Results of spawned actions (see `crate::tui::uimsg`). Network work must
+    /// never be awaited on the event loop.
+    pub ui_tx: tokio::sync::mpsc::UnboundedSender<crate::tui::uimsg::UiMsg>,
     /// The configured LLM client, needed when creating/updating clients.
     pub llm_client: crate::llm::OllamaClient,
 }
@@ -175,10 +178,12 @@ impl DashboardApp {
         core: App,
         styles: Styles,
         status_tx: tokio::sync::mpsc::UnboundedSender<String>,
+        ui_tx: tokio::sync::mpsc::UnboundedSender<crate::tui::uimsg::UiMsg>,
         llm_client: crate::llm::OllamaClient,
     ) -> Self {
         Self {
             status_tx,
+            ui_tx,
             llm_client,
             core,
             chat: ChatState::new(),

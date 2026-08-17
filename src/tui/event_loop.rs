@@ -56,6 +56,8 @@ pub struct LoopContext {
     pub status_tx: mpsc::UnboundedSender<String>,
     pub status_rx: mpsc::UnboundedReceiver<String>,
     pub web_approval_rx: mpsc::UnboundedReceiver<crate::state::app_state::WebApprovalRequest>,
+    /// Results of spawned create/update/send actions.
+    pub ui_rx: mpsc::UnboundedReceiver<crate::tui::uimsg::UiMsg>,
 }
 
 pub async fn run(mut app: DashboardApp, mut ctx: LoopContext) -> Result<()> {
@@ -148,6 +150,12 @@ pub async fn run(mut app: DashboardApp, mut ctx: LoopContext) -> Result<()> {
                     }
                     None => break,
                 }
+            }
+            Some(msg) = ctx.ui_rx.recv() => {
+                keymap::handle_ui_msg(&mut app, msg);
+                app.snapshot = projection::build_snapshot(&ctx.state).await;
+                app.rail.prune(&app.snapshot);
+                app.clamp_selection();
             }
             Some(request) = ctx.web_approval_rx.recv() => {
                 app.modals.push(Modal::WebApproval {

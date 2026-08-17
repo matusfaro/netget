@@ -23,6 +23,7 @@ pub mod modal;
 pub mod projection;
 pub mod render;
 pub mod theme;
+pub mod uimsg;
 
 use std::sync::Arc;
 
@@ -76,10 +77,17 @@ pub async fn run_dashboard(
 
     let (status_tx, status_rx) = mpsc::unbounded_channel::<String>();
     let (web_approval_tx, web_approval_rx) = mpsc::unbounded_channel();
+    let (ui_tx, ui_rx) = mpsc::unbounded_channel::<uimsg::UiMsg>();
     state.set_web_approval_channel(web_approval_tx).await;
 
     let styles = Styles::from_palette(&palette);
-    let mut app = DashboardApp::new(core, styles, status_tx.clone(), llm_client.clone());
+    let mut app = DashboardApp::new(
+        core,
+        styles,
+        status_tx.clone(),
+        ui_tx,
+        llm_client.clone(),
+    );
 
     app.push_system(format!(
         "NetGet dashboard — Tab moves between chat and the instance rail, F1 for keys{}",
@@ -112,6 +120,7 @@ pub async fn run_dashboard(
         status_tx,
         status_rx,
         web_approval_rx,
+        ui_rx,
     };
 
     event_loop::run(app, ctx).await

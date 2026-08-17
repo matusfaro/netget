@@ -37,6 +37,8 @@ pub struct ComposerModel {
     pub raw_json: Option<String>,
     pub error: Option<String>,
     pub result: Option<String>,
+    /// A send is in flight (spawned; see `crate::tui::uimsg`).
+    pub busy: bool,
 }
 
 impl ComposerModel {
@@ -52,6 +54,7 @@ impl ComposerModel {
             raw_json: None,
             error: None,
             result: None,
+            busy: false,
         }
     }
 

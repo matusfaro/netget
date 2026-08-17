@@ -34,23 +34,33 @@ pub fn draw(
     };
     app.hits.push(area, HitTarget::Band { key });
 
-    let title = title_line(app, key, selected);
-    let title_area = Rect {
-        height: 1,
-        ..area
-    };
-    frame.render_widget(Paragraph::new(title), title_area);
-
-    if layout.collapsed || area.height <= 1 {
+    // Collapsed bands are a single summary line with no box — a border would
+    // cost the only row they have.
+    if layout.collapsed || area.height <= 2 {
+        let title_area = Rect {
+            height: 1,
+            ..area
+        };
+        frame.render_widget(Paragraph::new(title_line(app, key, selected)), title_area);
         return;
     }
 
-    let body = Rect {
-        x: area.x,
-        y: area.y + 1,
-        width: area.width,
-        height: area.height - 1,
-    };
+    // Each instance gets its own framed pane, so two servers never read as one
+    // continuous list.
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(if selected {
+            app.styles.accent
+        } else {
+            app.styles.separator
+        })
+        .title(title_line(app, key, selected));
+    let body = block.inner(area);
+    frame.render_widget(block, area);
+
+    if body.height == 0 {
+        return;
+    }
     draw_panes(frame, app, body, key, selected);
 }
 
@@ -89,39 +99,27 @@ fn status_style(app: &DashboardApp, key: UiKey) -> (String, Style) {
 
 fn title_line<'a>(app: &DashboardApp, key: UiKey, selected: bool) -> Line<'a> {
     let (status_text, status_style) = status_style(app, key);
-    let (gutter, name, extra) = match key {
-        UiKey::Server(id) => {
-            let row = app.snapshot.servers.iter().find(|s| s.id == id);
-            let name = row
-                .map(|r| {
-                    let addr = r
-                        .local_addr
-                        .clone()
-                        .unwrap_or_else(|| format!(":{}", r.port));
-                    format!("#{} {} {}", id.as_u32(), r.protocol, addr)
-                })
-                .unwrap_or_default();
-            let extra = row
-                .map(|r| format!("{} conn", r.conns.len()))
-                .unwrap_or_default();
-            ("▎", name, extra)
-        }
-        UiKey::Client(id) => {
-            let row = app.snapshot.clients.iter().find(|c| c.id == id);
-            let name = row
-                .map(|r| format!("#{} {} → {}", id.as_u32(), r.protocol, r.remote_addr))
-                .unwrap_or_default();
-            let extra = row
-                .map(|r| {
-                    if r.sendable {
-                        "[ send ]".to_string()
-                    } else {
-                        String::new()
-                    }
-                })
-                .unwrap_or_default();
-            ("▎", name, extra)
-        }
+    let name = match key {
+        UiKey::Server(id) => app
+            .snapshot
+            .servers
+            .iter()
+            .find(|s| s.id == id)
+            .map(|r| {
+                let addr = r
+                    .local_addr
+                    .clone()
+                    .unwrap_or_else(|| format!(":{}", r.port));
+                format!("#{} {} {}", id.as_u32(), r.protocol, addr)
+            })
+            .unwrap_or_default(),
+        UiKey::Client(id) => app
+            .snapshot
+            .clients
+            .iter()
+            .find(|c| c.id == id)
+            .map(|r| format!("#{} {} → {}", id.as_u32(), r.protocol, r.remote_addr))
+            .unwrap_or_default(),
     };
 
     let name_style = if selected {
@@ -130,18 +128,40 @@ fn title_line<'a>(app: &DashboardApp, key: UiKey, selected: bool) -> Line<'a> {
         app.styles.title
     };
     Line::from(vec![
-        Span::styled(
-            gutter,
-            if selected {
-                app.styles.accent
-            } else {
-                app.styles.separator
-            },
-        ),
         Span::styled(format!(" {name} "), name_style),
-        Span::styled(status_text, status_style),
-        Span::styled(format!("  {extra}"), app.styles.dimmed),
+        Span::styled(format!("{status_text} "), status_style),
     ])
+}
+
+/// Count shown next to a pane's name, so the band spends no rows on numbers
+/// the header can carry.
+fn pane_count(app: &DashboardApp, key: UiKey, pane: PaneKind) -> Option<usize> {
+    match key {
+        UiKey::Server(id) => {
+            let row = app.snapshot.servers.iter().find(|s| s.id == id)?;
+            match pane {
+                PaneKind::Connections => Some(row.conns.len()),
+                PaneKind::Requests => Some(row.requests.len()),
+                PaneKind::Routing => Some(row.routing.as_ref().map_or(0, |r| r.handlers.len())),
+                PaneKind::Config => Some(row.task_count),
+                PaneKind::Info => None,
+            }
+        }
+        UiKey::Client(id) => {
+            let row = app.snapshot.clients.iter().find(|c| c.id == id)?;
+            match pane {
+                // Most client protocols never populate `connection` — status is
+                // the honest signal for whether a peer is attached.
+                PaneKind::Connections => Some(usize::from(
+                    row.connection.is_some() || row.status == ClientStatus::Connected,
+                )),
+                PaneKind::Requests => Some(row.requests.len()),
+                PaneKind::Routing => Some(row.routing.as_ref().map_or(0, |r| r.handlers.len())),
+                PaneKind::Config => Some(row.task_count),
+                PaneKind::Info => None,
+            }
+        }
+    }
 }
 
 /// Which panes fit at this width, in display order.
@@ -187,11 +207,15 @@ fn draw_panes(frame: &mut Frame, app: &mut DashboardApp, area: Rect, key: UiKey,
         } else {
             app.styles.separator
         };
+        let heading = match pane_count(app, key, *pane) {
+            Some(count) => format!(" {} ({})", pane.title(), count),
+            None => format!(" {}", pane.title()),
+        };
         let block = Block::default()
             .borders(Borders::LEFT)
             .border_style(border_style)
             .title(Span::styled(
-                format!(" {}", pane.title()),
+                heading,
                 if is_focused {
                     app.styles.accent
                 } else {
@@ -275,9 +299,16 @@ fn pane_rows(app: &DashboardApp, key: UiKey, pane: PaneKind) -> Vec<PaneRow> {
 
 fn routing_rows(
     app: &DashboardApp,
+    key: UiKey,
     routing: &Option<crate::scripting::EventHandlerConfig>,
 ) -> Vec<PaneRow> {
-    let mut rows = Vec::new();
+    // The pane is a summary; the editor is behind `r`. Without a visible
+    // affordance there is nothing telling you routing can be changed at all.
+    let mut rows: Vec<PaneRow> = vec![(
+        "[ edit routing ]".to_string(),
+        app.styles.button,
+        Some(HitTarget::Button(ButtonId::Routing(key))),
+    )];
     if let Some(config) = routing {
         for handler in &config.handlers {
             let pattern = match &handler.event_pattern {
@@ -325,28 +356,10 @@ fn return_script_label(
 
 fn server_pane_rows(app: &DashboardApp, row: &ServerRow, pane: PaneKind) -> Vec<PaneRow> {
     match pane {
+        // Counts live in the pane headings ("peers (3)"), so info spends its
+        // narrow column on actions rather than numbers.
         PaneKind::Info => {
-            let mut rows = vec![
-                (format!("proto  {}", row.protocol), app.styles.normal, None),
-                (
-                    format!(
-                        "addr   {}",
-                        row.local_addr.clone().unwrap_or_else(|| format!(":{}", row.port))
-                    ),
-                    app.styles.normal,
-                    None,
-                ),
-                (
-                    format!("conns  {} live", row.conns.len()),
-                    app.styles.normal,
-                    None,
-                ),
-                (
-                    format!("tasks  {}", row.task_count),
-                    app.styles.dimmed,
-                    None,
-                ),
-            ];
+            let mut rows = Vec::new();
             rows.push((
                 "[ edit ]".to_string(),
                 app.styles.button,
@@ -391,7 +404,7 @@ fn server_pane_rows(app: &DashboardApp, row: &ServerRow, pane: PaneKind) -> Vec<
             ));
             rows
         }
-        PaneKind::Routing => routing_rows(app, &row.routing),
+        PaneKind::Routing => routing_rows(app, UiKey::Server(row.id), &row.routing),
         PaneKind::Connections => {
             let mut rows: Vec<PaneRow> = row
                 .conns
@@ -439,15 +452,7 @@ fn server_pane_rows(app: &DashboardApp, row: &ServerRow, pane: PaneKind) -> Vec<
 fn client_pane_rows(app: &DashboardApp, row: &ClientRow, pane: PaneKind) -> Vec<PaneRow> {
     match pane {
         PaneKind::Info => {
-            let mut rows = vec![
-                (format!("proto  {}", row.protocol), app.styles.normal, None),
-                (format!("remote {}", row.remote_addr), app.styles.normal, None),
-                (
-                    format!("tasks  {}", row.task_count),
-                    app.styles.dimmed,
-                    None,
-                ),
-            ];
+            let mut rows = Vec::new();
             rows.push((
                 "[ edit ]".to_string(),
                 app.styles.button,
@@ -480,7 +485,7 @@ fn client_pane_rows(app: &DashboardApp, row: &ClientRow, pane: PaneKind) -> Vec<
             ));
             rows
         }
-        PaneKind::Routing => routing_rows(app, &row.routing),
+        PaneKind::Routing => routing_rows(app, UiKey::Client(row.id), &row.routing),
         PaneKind::Connections => {
             let mut rows: Vec<PaneRow> = Vec::new();
             if let Some(c) = &row.connection {
