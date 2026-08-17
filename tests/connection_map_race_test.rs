@@ -29,7 +29,12 @@
 //!   --test connection_map_race_test -- --test-threads=100
 //! ```
 
-#![cfg(any(feature = "tcp", feature = "tls", feature = "ssh-agent"))]
+#![cfg(any(
+    feature = "tcp",
+    feature = "tls",
+    feature = "ssh-agent",
+    feature = "bitcoin"
+))]
 
 use netget::scripting::{EventHandler, EventHandlerConfig, EventHandlerType, EventPattern};
 use netget::state::app_state::AppState;
@@ -482,6 +487,140 @@ async fn ssh_agent_request_written_before_accept_is_answered() {
         BURST,
         "{} of {BURST} agent requests went unanswered: {:?} — the frame was consumed and \
          dropped because the connection was not yet in the map",
+        failures.len(),
+        failures
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Bitcoin
+// ---------------------------------------------------------------------------
+
+/// Bitcoin had this bug until `d052d838`, and had it worse than the others: a Bitcoin peer
+/// sends `version` the instant it connects, so the race was hit on essentially every
+/// connection rather than occasionally. Three E2E tests sat out their 120s read timeouts and
+/// the failure count varied per run, which is what disguised it as flakiness.
+///
+/// The insert lived inside `handle_connection_opened`, spawned alongside the reader task; a
+/// miss in `handle_data_with_actions` returned with no event, no queue and no log at all.
+#[cfg(feature = "bitcoin")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn bitcoin_version_written_before_accept_is_answered() {
+    use bitcoin::consensus::{Decodable, Encodable};
+    use bitcoin::p2p::address::Address;
+    use bitcoin::p2p::message::{NetworkMessage, RawNetworkMessage};
+    use bitcoin::p2p::message_network::VersionMessage;
+    use bitcoin::p2p::{Magic, ServiceFlags};
+    use netget::llm::ollama_client::OllamaClient;
+    use netget::server::bitcoin::BitcoinServer;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let state = Arc::new(AppState::new());
+    let server_id = server_with_static_handlers(
+        &state,
+        "bitcoin",
+        vec![(
+            "bitcoin_message_received",
+            serde_json::json!({"type": "send_verack", "network": "mainnet"}),
+        )],
+    )
+    .await;
+
+    let llm = OllamaClient::new("http://127.0.0.1:1");
+    let (status_tx, _status_rx) = tokio::sync::mpsc::unbounded_channel();
+
+    let bound = BitcoinServer::spawn_with_llm_actions(
+        "127.0.0.1:0".parse().unwrap(),
+        llm,
+        state.clone(),
+        status_tx,
+        server_id,
+        "mainnet".to_string(),
+    )
+    .await
+    .expect("Bitcoin server should start");
+
+    // One encoded `version` message, reused by every client in the burst.
+    let version_bytes = {
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 8333));
+        let message = RawNetworkMessage::new(
+            Magic::BITCOIN,
+            NetworkMessage::Version(VersionMessage {
+                version: 70015,
+                services: ServiceFlags::NONE,
+                timestamp: 1_700_000_000,
+                receiver: Address::new(&addr, ServiceFlags::NONE),
+                sender: Address::new(&addr, ServiceFlags::NONE),
+                nonce: 0x1234_5678,
+                user_agent: "/RaceTest:0.1.0/".to_string(),
+                start_height: 0,
+                relay: false,
+            }),
+        );
+        let mut bytes = Vec::new();
+        message
+            .consensus_encode(&mut bytes)
+            .expect("version message should encode");
+        Arc::new(bytes)
+    };
+
+    let mut clients = Vec::with_capacity(BURST);
+    for _ in 0..BURST {
+        let payload = version_bytes.clone();
+        clients.push(tokio::spawn(async move {
+            let mut stream = tokio::net::TcpStream::connect(bound)
+                .await
+                .expect("connect should succeed");
+            // Write immediately, before the server has accepted — the losing interleaving.
+            stream
+                .write_all(&payload)
+                .await
+                .expect("write should succeed");
+
+            // Read one whole message: 24-byte header, then the declared payload length.
+            let mut header = [0u8; 24];
+            tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut header))
+                .await
+                .map_err(|_| "timed out waiting for a reply".to_string())?
+                .map_err(|e| format!("header read failed: {e}"))?;
+            let payload_len =
+                u32::from_le_bytes([header[16], header[17], header[18], header[19]]) as usize;
+            let mut body = vec![0u8; payload_len];
+            if payload_len > 0 {
+                tokio::time::timeout(Duration::from_secs(10), stream.read_exact(&mut body))
+                    .await
+                    .map_err(|_| "timed out reading payload".to_string())?
+                    .map_err(|e| format!("payload read failed: {e}"))?;
+            }
+
+            let mut whole = header.to_vec();
+            whole.extend_from_slice(&body);
+            let decoded = RawNetworkMessage::consensus_decode(&mut std::io::Cursor::new(&whole))
+                .map_err(|e| format!("reply did not decode as a Bitcoin message: {e}"))?;
+            Ok::<String, String>(match decoded.payload() {
+                NetworkMessage::Verack => "verack".to_string(),
+                other => format!("unexpected: {other:?}"),
+            })
+        }));
+    }
+
+    let mut answered = 0usize;
+    let mut failures = Vec::new();
+    for client in clients {
+        match client.await.expect("client task should not panic") {
+            Ok(reply) => {
+                assert_eq!(reply, "verack", "server answered with the wrong message");
+                answered += 1;
+            }
+            Err(e) => failures.push(e),
+        }
+    }
+
+    assert_eq!(
+        answered, BURST,
+        "{} of {BURST} version messages went unanswered: {:?} — the connection was not in the \
+         map when the reader delivered the payload, so the bytes were dropped with no event \
+         and no log",
         failures.len(),
         failures
     );
