@@ -34,17 +34,14 @@ async fn test_ollama_list_models() -> E2EResult<()> {
             // Mock 2: Models list request (GET /api/tags)
             .on_event("ollama_models_request")
             .respond_with_actions(serde_json::json!([
+                // `ollama_models_response` with a list of model *names*. This mock used to
+                // say `send_ollama_response` with a nested `body`, an action Ollama has
+                // never had, so the server rejected it as unknown and answered with its
+                // fallback — the assertions below were passing against that fallback rather
+                // than against anything the mock said.
                 {
-                    "type": "send_ollama_response",
-                    "body": {
-                        "models": [
-                            {
-                                "name": "qwen2.5-coder:0.5b",
-                                "size": 524288000,
-                                "modified_at": "2024-01-01T00:00:00Z"
-                            }
-                        ]
-                    }
+                    "type": "ollama_models_response",
+                    "models": ["qwen2.5-coder:0.5b"]
                 }
             ]))
             .expect_calls(1)
