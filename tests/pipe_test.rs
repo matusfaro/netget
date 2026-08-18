@@ -355,7 +355,8 @@ async fn http_access_event_pipes_into_tcp_server() {
     // the source event's own fields, so this asserts the mapping too, not just
     // that *something* arrived.
     assert_eq!(
-        delivered, "GET /pipe-test\n",
+        delivered,
+        "GET /pipe-test\n",
         "sink #{} received the wrong bytes for the piped http_request",
         tcp_id.as_u32()
     );

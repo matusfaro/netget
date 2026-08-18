@@ -252,8 +252,7 @@ async fn handle_npm_request(
         }),
     );
 
-    Log::new(Some(&status_tx))
-        .debug(format!("Calling LLM for NPM request: {} {}", method, path));
+    Log::new(Some(&status_tx)).debug(format!("Calling LLM for NPM request: {} {}", method, path));
 
     // Call LLM
     let llm_result = call_llm(
@@ -366,8 +365,7 @@ async fn process_npm_action_result(
                     )
                 }
                 "npm_package_tarball" => {
-                    let Some(tarball_data) =
-                        data.get("tarball_data").and_then(|v| v.as_str())
+                    let Some(tarball_data) = data.get("tarball_data").and_then(|v| v.as_str())
                     else {
                         return Some(npm_server_error(
                             status_tx,
@@ -382,23 +380,22 @@ async fn process_npm_action_result(
                     // an empty package was indistinguishable from a real one. The
                     // action's own example made it likely rather than theoretical: it
                     // showed an elided `"H4sIAAAAAAAAA..."`, which does not decode.
-                    let decoded = match base64::engine::general_purpose::STANDARD
-                        .decode(tarball_data)
-                    {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            return Some(npm_server_error(
-                                status_tx,
-                                &format!(
-                                    "tarball_data is not valid base64 ({}). A tarball is \
+                    let decoded =
+                        match base64::engine::general_purpose::STANDARD.decode(tarball_data) {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                return Some(npm_server_error(
+                                    status_tx,
+                                    &format!(
+                                        "tarball_data is not valid base64 ({}). A tarball is \
                                      binary, so base64 is the only faithful form; send \
                                      the whole encoded string, never an abbreviation \
                                      ending in \"...\"",
-                                    e
-                                ),
-                            ));
-                        }
-                    };
+                                        e
+                                    ),
+                                ));
+                            }
+                        };
 
                     if decoded.is_empty() {
                         return Some(npm_server_error(
@@ -410,8 +407,10 @@ async fn process_npm_action_result(
 
                     // FileOnly: the npm_package_tarball action's own log_template already
                     // reports "-> NPM tarball (...)" to the TUI at INFO.
-                    Log::new(Some(status_tx))
-                        .debug(format!("NPM package tarball response: {} bytes", decoded.len()));
+                    Log::new(Some(status_tx)).debug(format!(
+                        "NPM package tarball response: {} bytes",
+                        decoded.len()
+                    ));
                     Some(
                         Response::builder()
                             .status(StatusCode::OK)

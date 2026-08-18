@@ -628,8 +628,10 @@ async fn handle_token_request(
             // permanently, and the damage would outlive the outage. A backend failure is a
             // server error, and clients retry those.
             let (status, code) = oauth2_backend_failure(&e);
-            Log::new(Some(&status_tx))
-                .error(format!("OAuth2 /token failing with {} {}: {}", status, code, e));
+            Log::new(Some(&status_tx)).error(format!(
+                "OAuth2 /token failing with {} {}: {}",
+                status, code, e
+            ));
             Ok(json_response(
                 status,
                 json!({
@@ -728,8 +730,10 @@ async fn handle_introspect_request(
             // the introspection did not happen, which every resource server already treats as
             // "cannot validate" and therefore also refuses.
             let (status, code) = oauth2_backend_failure(&e);
-            Log::new(Some(&status_tx))
-                .error(format!("OAuth2 /introspect failing with {} {}: {}", status, code, e));
+            Log::new(Some(&status_tx)).error(format!(
+                "OAuth2 /introspect failing with {} {}: {}",
+                status, code, e
+            ));
             Ok(json_response(
                 status,
                 json!({
@@ -791,8 +795,10 @@ async fn handle_revoke_request(
         // processed the request - the model never saw it, so nothing was revoked, and the
         // client would stop trying.
         let (status, code) = oauth2_backend_failure(&e);
-        Log::new(Some(&status_tx))
-            .error(format!("OAuth2 /revoke failing with {} {}: {}", status, code, e));
+        Log::new(Some(&status_tx)).error(format!(
+            "OAuth2 /revoke failing with {} {}: {}",
+            status, code, e
+        ));
         return Ok(json_response(
             status,
             json!({

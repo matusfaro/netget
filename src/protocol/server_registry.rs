@@ -967,14 +967,14 @@ impl ServerRegistry {
         let mut out: Vec<(String, u16)> = self
             .protocols
             .iter()
-            .filter_map(|(name, protocol)| {
-                match protocol.metadata().privilege_requirement {
+            .filter_map(
+                |(name, protocol)| match protocol.metadata().privilege_requirement {
                     crate::protocol::metadata::PrivilegeRequirement::PrivilegedPort(port) => {
                         Some((name.clone(), port))
                     }
                     _ => None,
-                }
-            })
+                },
+            )
             .collect();
         out.sort();
         out

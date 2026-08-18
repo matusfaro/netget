@@ -64,10 +64,8 @@ impl PypiClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        Log::new(Some(&status_tx)).info(format!(
-            "PyPI client {} ready for {}",
-            client_id, index_url
-        ));
+        Log::new(Some(&status_tx))
+            .info(format!("PyPI client {} ready for {}", client_id, index_url));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn background task to monitor client lifecycle
@@ -324,8 +322,10 @@ impl PypiClient {
         let download_url = file_info["url"].as_str().context("No download URL")?;
         let file_name = file_info["filename"].as_str().context("No filename")?;
 
-        Log::new(Some(&status_tx))
-            .info(format!("PyPI client {} downloading: {}", client_id, file_name));
+        Log::new(Some(&status_tx)).info(format!(
+            "PyPI client {} downloading: {}",
+            client_id, file_name
+        ));
 
         // Download the file
         let response = http_client.get(download_url).send().await?;

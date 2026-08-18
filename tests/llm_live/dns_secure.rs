@@ -172,10 +172,7 @@ async fn dot_a_query_uses_the_dns_action() -> E2EResult<()> {
             let ttl = v.as_f64().or_else(|| v.as_str()?.parse().ok());
             match ttl {
                 Some(t) if (t - 3600.0).abs() < 1.0 => Ok(()),
-                Some(t) => Err(format!(
-                    "ttl is in seconds; one hour is 3600, got {}",
-                    t
-                )),
+                Some(t) => Err(format!("ttl is in seconds; one hour is 3600, got {}", t)),
                 None => Err(format!("ttl is missing or not a number: {}", v)),
             }
         },

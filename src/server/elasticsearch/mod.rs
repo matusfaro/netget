@@ -130,10 +130,8 @@ impl ElasticsearchServer {
                             app_state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
-                            Log::new(Some(&status_tx_clone)).info(format!(
-                                "Elasticsearch connection {} closed",
-                                connection_id
-                            ));
+                            Log::new(Some(&status_tx_clone))
+                                .info(format!("Elasticsearch connection {} closed", connection_id));
                             let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                         });
                     }

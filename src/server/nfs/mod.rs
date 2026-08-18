@@ -53,8 +53,10 @@ impl NfsServer {
     ) -> Result<SocketAddr> {
         use nfsserve::tcp::{NFSTcp, NFSTcpListener};
 
-        Log::new(Some(&status_tx))
-            .info(format!("NFS server (LLM-controlled) starting on {}", listen_addr));
+        Log::new(Some(&status_tx)).info(format!(
+            "NFS server (LLM-controlled) starting on {}",
+            listen_addr
+        ));
 
         let protocol = Arc::new(NfsProtocol::new());
 
@@ -144,8 +146,10 @@ impl LlmNfsFileSystem {
         operation: &str,
         params: serde_json::Value,
     ) -> Result<Vec<serde_json::Value>> {
-        Log::new(Some(&self.status_tx))
-            .debug(format!("Consulting LLM for NFS {} operation: {:?}", operation, params));
+        Log::new(Some(&self.status_tx)).debug(format!(
+            "Consulting LLM for NFS {} operation: {:?}",
+            operation, params
+        ));
 
         // Create NFS operation event
         let event = Event::new(
@@ -156,7 +160,8 @@ impl LlmNfsFileSystem {
             }),
         );
 
-        Log::new(Some(&self.status_tx)).trace(format!("Calling LLM for NFS {} operation", operation));
+        Log::new(Some(&self.status_tx))
+            .trace(format!("Calling LLM for NFS {} operation", operation));
 
         // Call LLM with Event-based approach
         let execution_result = call_llm(

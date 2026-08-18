@@ -30,9 +30,9 @@ use super::llm_live::{
 };
 use netget::llm::actions::{get_network_event_common_actions, normalize_action_object};
 use netget::llm::{prompt::PromptBuilder, ConversationHandler, OllamaClient, RequestSource};
-use netget::state::app_state::WebSearchMode;
 use netget::protocol::server_registry::registry;
 use netget::state::app_state::AppState;
+use netget::state::app_state::WebSearchMode;
 use netget::state::ServerId;
 use serde_json::Value;
 
