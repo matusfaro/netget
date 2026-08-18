@@ -90,17 +90,38 @@ pub fn entries(section: Section, caps: &SystemCapabilities) -> Vec<ProtocolEntry
     entries
 }
 
-/// Case-insensitive substring filter over name and description.
+/// Case-insensitive filter over name and description, ranked by how well the
+/// match fits the name.
+///
+/// Ranking matters once every protocol is compiled in: typing "tcp" matches
+/// Modbus, MQTT and a dozen others whose *description* mentions TCP, and an
+/// alphabetical list puts one of those first. Someone typing "tcp" wants TCP.
 pub fn filter<'a>(entries: &'a [ProtocolEntry], needle: &str) -> Vec<&'a ProtocolEntry> {
     if needle.is_empty() {
         return entries.iter().collect();
     }
     let needle = needle.to_lowercase();
-    entries
+
+    let mut matches: Vec<(u8, &ProtocolEntry)> = entries
         .iter()
-        .filter(|e| {
-            e.name.to_lowercase().contains(&needle)
-                || e.description.to_lowercase().contains(&needle)
+        .filter_map(|entry| {
+            let name = entry.name.to_lowercase();
+            let rank = if name == needle {
+                0
+            } else if name.starts_with(&needle) {
+                1
+            } else if name.contains(&needle) {
+                2
+            } else if entry.description.to_lowercase().contains(&needle) {
+                3
+            } else {
+                return None;
+            };
+            Some((rank, entry))
         })
-        .collect()
+        .collect();
+
+    // Stable sort keeps the alphabetical order within each rank.
+    matches.sort_by_key(|(rank, _)| *rank);
+    matches.into_iter().map(|(_, entry)| entry).collect()
 }

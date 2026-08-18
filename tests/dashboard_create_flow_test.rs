@@ -70,6 +70,16 @@ fn picker_lists_and_filters_protocols_with_badges() {
     assert!(filtered.iter().any(|e| e.name.eq_ignore_ascii_case("tcp")));
     assert!(protocol_picker::filter(&entries, "zzzz-no-such").is_empty());
     assert_eq!(protocol_picker::filter(&entries, "").len(), entries.len());
+
+    // An exact name match ranks first. In an all-protocols build, plenty of
+    // protocols mention TCP in their description (Modbus, MQTT, …), and
+    // alphabetical order would put one of those ahead of TCP itself — so
+    // typing "tcp" and pressing Enter would start the wrong server.
+    assert!(
+        filtered[0].name.eq_ignore_ascii_case("tcp"),
+        "exact name match must rank first, got {:?}",
+        filtered.iter().take(3).map(|e| &e.name).collect::<Vec<_>>()
+    );
 }
 
 #[test]
