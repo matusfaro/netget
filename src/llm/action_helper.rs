@@ -357,7 +357,60 @@ async fn record_event_access_log(
         .await;
 }
 
+/// Record a request whose handling failed, so it is still visible.
+///
+/// The response slot carries the error rather than actions. Without this an
+/// unreachable model, a timeout or a failed action made the request vanish
+/// from `list_access_logs` — the request pane went empty precisely when
+/// something had gone wrong.
+async fn record_failed_event_access_log(
+    state: &AppState,
+    server_id: ServerId,
+    connection_id: Option<crate::server::connection::ConnectionId>,
+    protocol: &dyn Server,
+    event: &Event,
+    error: &anyhow::Error,
+) {
+    state
+        .record_access_log(
+            crate::state::AccessLogOwner::Server(server_id.as_u32()),
+            protocol.protocol_name(),
+            connection_id.map(|c| c.as_u32()),
+            event.id(),
+            event.data.clone(),
+            vec![serde_json::json!({
+                "type": format!("FAILED: {}", event.id()),
+                "error": error.to_string(),
+            })],
+        )
+        .await;
+}
+
 pub async fn call_llm(
+    llm_client: &OllamaClient,
+    state: &AppState,
+    server_id: ServerId,
+    connection_id: Option<crate::server::connection::ConnectionId>,
+    event: &Event,
+    protocol: &dyn Server,
+) -> Result<ExecutionResult> {
+    let outcome = call_llm_inner(
+        llm_client,
+        state,
+        server_id,
+        connection_id,
+        event,
+        protocol,
+    )
+    .await;
+    if let Err(e) = &outcome {
+        record_failed_event_access_log(state, server_id, connection_id, protocol, event, e).await;
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn call_llm_inner(
     llm_client: &OllamaClient,
     state: &AppState,
     server_id: ServerId,

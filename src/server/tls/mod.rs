@@ -486,7 +486,7 @@ impl TlsServer {
         // may have removed this connection in the meantime (client disconnected).
         // Unwrapping here panicked the task on that race, and a panicked task
         // leaves the server reporting Running.
-        let all_data = {
+        let mut all_data = {
             let mut conns = connections.lock().await;
             let Some(conn_data) = conns.get_mut(&connection_id) else {
                 return; // Connection closed while we were waiting for the lock
@@ -649,9 +649,26 @@ impl TlsServer {
                     };
 
                     if has_queued {
-                        Log::new(Some(&status_tx))
-                            .debug(format!("Processing queued data for {connection_id}"));
-                        // Loop continues to process queued data
+                        // Take the queue and make it the next iteration's payload.
+                        // Leaving it in place re-sent the SAME bytes to the model on
+                        // every pass and never emptied the queue: one response per
+                        // iteration, forever, for a single line of input.
+                        let queued = {
+                            let mut conns = connections.lock().await;
+                            match conns.get_mut(&connection_id) {
+                                Some(conn) => std::mem::take(&mut conn.queued_data),
+                                None => return,
+                            }
+                        };
+                        if queued.is_empty() {
+                            connections
+                                .lock()
+                                .await
+                                .entry(connection_id)
+                                .and_modify(|conn| conn.state = ConnectionState::Idle);
+                            return;
+                        }
+                        all_data = Bytes::from(queued);
                     } else {
                         // Go to Idle state
                         connections
