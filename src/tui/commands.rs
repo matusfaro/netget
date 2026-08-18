@@ -70,17 +70,52 @@ pub async fn submit(
             )),
         },
         UserCommand::ShowModel => {
-            let model = state.get_ollama_model().await.unwrap_or_default();
-            app.push_system(if model.is_empty() {
-                "No model selected".to_string()
-            } else {
-                format!("Model: {model}")
+            // `/model` with no argument should show what you can switch TO,
+            // not just repeat what is already on the status bar.
+            let current = state.get_ollama_model().await.unwrap_or_default();
+            let llm = app.llm_client.clone();
+            let ui_tx = app.ui_tx.clone();
+            app.push_system("Listing available models…");
+            tokio::spawn(async move {
+                let message = match llm.list_models().await {
+                    Ok(models) if models.is_empty() => {
+                        "No models available from the backend.".to_string()
+                    }
+                    Ok(models) => {
+                        let mut lines = vec!["Available models (/model <name> to switch):".to_string()];
+                        for model in models {
+                            let marker = if model == current { "→" } else { " " };
+                            lines.push(format!("  {marker} {model}"));
+                        }
+                        lines.join("\n")
+                    }
+                    Err(e) => format!(
+                        "Could not list models: {e}\nCurrent model: {}",
+                        if current.is_empty() { "(none)" } else { &current }
+                    ),
+                };
+                let _ = ui_tx.send(crate::tui::uimsg::UiMsg::Chat(message));
             });
         }
         UserCommand::ChangeModel { model } => {
             state.set_ollama_model(Some(model.clone())).await;
             app.status.model = model.clone();
             app.push_system(format!("Model set to {model}"));
+
+            // Verify in the background: a model the backend does not have
+            // fails on first use, far from the command that chose it.
+            let llm = app.llm_client.clone();
+            let ui_tx = app.ui_tx.clone();
+            tokio::spawn(async move {
+                if let Ok(models) = llm.list_models().await {
+                    if !models.iter().any(|m| m == &model) {
+                        let _ = ui_tx.send(crate::tui::uimsg::UiMsg::Chat(format!(
+                            "⚠ '{model}' is not one of the backend's models. Available: {}",
+                            models.join(", ")
+                        )));
+                    }
+                }
+            });
         }
         UserCommand::UnknownSlashCommand { command } => {
             app.chat.push(

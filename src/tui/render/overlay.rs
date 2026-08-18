@@ -83,6 +83,141 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
     frame.render_widget(block, rect);
     app.hits.push(rect, HitTarget::ModalBody);
 
+    // The instance form: fields, then Apply / Cancel.
+    if let Some(Modal::Form(form)) = app.modals.last() {
+        let rows = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Min(3),
+                ratatui::layout::Constraint::Length(1),
+            ])
+            .split(inner);
+        let lines = form_lines(app, form);
+        let buttons = form.buttons();
+        let focused = form.focused_action();
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            rows[0],
+        );
+        draw_button_row(frame, app, rows[1], &buttons, focused);
+        return;
+    }
+
+    // The routing editor: list, then a row of real buttons, then the note
+    // about the implicit fallback.
+    if let Some(Modal::Routing(model)) = app.modals.last() {
+        if let Some(draft) = &model.draft {
+            let rows = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Min(3),
+                    ratatui::layout::Constraint::Length(1),
+                ])
+                .split(inner);
+            let lines = routing_lines(app, model);
+            let buttons = draft.buttons();
+            let focused = draft.focused_action();
+            frame.render_widget(
+                Paragraph::new(lines).wrap(Wrap { trim: false }),
+                rows[0],
+            );
+            draw_button_row(frame, app, rows[1], &buttons, focused);
+            return;
+        }
+        if model.draft.is_none() {
+            use crate::tui::modal::routing::RoutingFocus;
+
+            let rows = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Min(3),
+                    ratatui::layout::Constraint::Length(1),
+                    ratatui::layout::Constraint::Length(2),
+                ])
+                .split(inner);
+
+            // --- handler list ---
+            let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+                "Handlers are matched in order; the first match wins.",
+                app.styles.dimmed,
+            ))];
+            let handler_rows = model.rows();
+            if handler_rows.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  (none yet — Add one to answer an event without the model)",
+                    app.styles.dimmed,
+                )));
+            }
+            for (index, row) in handler_rows.iter().enumerate() {
+                let selected = model.focus == RoutingFocus::List && index == model.selected;
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        if selected { "▸ " } else { "  " },
+                        app.styles.accent,
+                    ),
+                    Span::styled(
+                        row.clone(),
+                        if selected {
+                            app.styles.selected
+                        } else {
+                            app.styles.normal
+                        },
+                    ),
+                ]));
+            }
+            if let Some(error) = &model.error {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    format!("✗ {error}"),
+                    app.styles.error,
+                )));
+            }
+            frame.render_widget(Paragraph::new(lines), rows[0]);
+
+            // --- buttons ---
+            let buttons = model.buttons();
+            let focused = model.focused_button();
+            let mut spans: Vec<Span> = Vec::new();
+            let mut x = rows[1].x;
+            for action in &buttons {
+                let label = action.label();
+                let width = label.chars().count() as u16;
+                if x + width > rows[1].x + rows[1].width {
+                    break;
+                }
+                let is_focused = focused == Some(*action);
+                spans.push(Span::styled(
+                    label,
+                    if is_focused {
+                        app.styles.selected
+                    } else {
+                        app.styles.button
+                    },
+                ));
+                spans.push(Span::raw(" "));
+                app.hits.push(
+                    ratatui::layout::Rect {
+                        x,
+                        y: rows[1].y,
+                        width,
+                        height: 1,
+                    },
+                    HitTarget::ModalActionButton(*action),
+                );
+                x += width + 1;
+            }
+            frame.render_widget(Paragraph::new(Line::from(spans)), rows[1]);
+
+            // --- the implicit fallback, stated rather than faked as a row ---
+            frame.render_widget(
+                Paragraph::new(Span::styled(model.fallback_note(), app.styles.dimmed))
+                    .wrap(Wrap { trim: false }),
+                rows[2],
+            );
+            return;
+        }
+    }
+
     // The picker is a list with a fixed detail pane beneath it.
     if let Some(Modal::ProtocolPicker {
         entries,
@@ -198,6 +333,45 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
 
 /// Detail for the highlighted protocol, rendered in a fixed pane so the list
 /// above it never moves.
+/// Draw a row of modal buttons, registering each as a hit target.
+fn draw_button_row(
+    frame: &mut ratatui::Frame,
+    app: &mut DashboardApp,
+    area: ratatui::layout::Rect,
+    buttons: &[crate::tui::hit::ModalAction],
+    focused: Option<crate::tui::hit::ModalAction>,
+) {
+    let mut spans: Vec<Span> = Vec::new();
+    let mut x = area.x;
+    for action in buttons {
+        let label = action.label();
+        let width = label.chars().count() as u16;
+        if x + width > area.x + area.width {
+            break;
+        }
+        spans.push(Span::styled(
+            label,
+            if focused == Some(*action) {
+                app.styles.selected
+            } else {
+                app.styles.button
+            },
+        ));
+        spans.push(Span::raw(" "));
+        app.hits.push(
+            ratatui::layout::Rect {
+                x,
+                y: area.y,
+                width,
+                height: 1,
+            },
+            HitTarget::ModalActionButton(*action),
+        );
+        x += width + 1;
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
 fn picker_detail_lines<'a>(
     app: &DashboardApp,
     entries: &[crate::tui::modal::protocol_picker::ProtocolEntry],

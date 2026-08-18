@@ -95,6 +95,8 @@ pub struct FormModel {
     /// An apply is in flight. The work is spawned (it does network I/O), so
     /// the form stays on screen, refuses a second submit, and says so.
     pub busy: bool,
+    /// `Some(i)` when focus is on the i-th button rather than a field.
+    pub focused_button: Option<usize>,
 }
 
 impl FormModel {
@@ -232,6 +234,7 @@ impl FormModel {
             editing: None,
             error: None,
             busy: false,
+            focused_button: None,
         }
     }
 
@@ -255,6 +258,43 @@ impl FormModel {
             editing: None,
             error: None,
             busy: false,
+            focused_button: None,
+        }
+    }
+
+    /// Buttons, in Tab order after the fields.
+    pub fn buttons(&self) -> Vec<crate::tui::hit::ModalAction> {
+        use crate::tui::hit::ModalAction::*;
+        vec![FormApply, FormCancel]
+    }
+
+    pub fn focused_action(&self) -> Option<crate::tui::hit::ModalAction> {
+        self.focused_button
+            .and_then(|index| self.buttons().get(index).copied())
+    }
+
+    /// Tab through fields, then buttons, then back to the first field.
+    pub fn cycle_focus(&mut self, backward: bool) {
+        let fields = self.fields.len();
+        let buttons = self.buttons().len();
+        let total = fields + buttons;
+        if total == 0 {
+            return;
+        }
+        let current = match self.focused_button {
+            None => self.selected.min(fields.saturating_sub(1)),
+            Some(index) => fields + index,
+        };
+        let next = if backward {
+            (current + total - 1) % total
+        } else {
+            (current + 1) % total
+        };
+        if next < fields {
+            self.selected = next;
+            self.focused_button = None;
+        } else {
+            self.focused_button = Some(next - fields);
         }
     }
 

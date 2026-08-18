@@ -66,9 +66,51 @@ pub struct HandlerDraft {
     pub selected_action: usize,
     pub editing: Option<String>,
     pub error: Option<String>,
+    /// `Some(i)` when focus is on the i-th button rather than a section.
+    pub focused_button: Option<usize>,
 }
 
 impl HandlerDraft {
+    /// Buttons, in Tab order after the three sections.
+    pub fn buttons(&self) -> Vec<crate::tui::hit::ModalAction> {
+        use crate::tui::hit::ModalAction::*;
+        vec![DraftSave, DraftCancel]
+    }
+
+    pub fn focused_action(&self) -> Option<crate::tui::hit::ModalAction> {
+        self.focused_button
+            .and_then(|index| self.buttons().get(index).copied())
+    }
+
+    /// Tab through pattern → kind → body → Save → Cancel → pattern.
+    pub fn cycle_focus(&mut self, backward: bool) {
+        let sections = 3usize;
+        let buttons = self.buttons().len();
+        let total = sections + buttons;
+        let current = match self.focused_button {
+            None => match self.focus {
+                HandlerEditFocus::Pattern => 0,
+                HandlerEditFocus::Kind => 1,
+                HandlerEditFocus::Body => 2,
+            },
+            Some(index) => sections + index,
+        };
+        let next = if backward {
+            (current + total - 1) % total
+        } else {
+            (current + 1) % total
+        };
+        if next < sections {
+            self.focused_button = None;
+            self.focus = match next {
+                0 => HandlerEditFocus::Pattern,
+                1 => HandlerEditFocus::Kind,
+                _ => HandlerEditFocus::Body,
+            };
+        } else {
+            self.focused_button = Some(next - sections);
+        }
+    }
     pub fn new() -> Self {
         Self {
             pattern: "*".to_string(),
@@ -82,6 +124,7 @@ impl HandlerDraft {
             selected_action: 0,
             editing: None,
             error: None,
+            focused_button: None,
         }
     }
 
@@ -163,6 +206,15 @@ impl Default for HandlerDraft {
     }
 }
 
+/// What has keyboard focus in the routing editor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutingFocus {
+    /// The handler list; Enter edits the selected handler.
+    List,
+    /// One of the buttons, by index into [`RoutingModel::buttons`].
+    Button(usize),
+}
+
 /// The routing editor's state for one instance.
 #[derive(Debug, Clone)]
 pub struct RoutingModel {
@@ -182,6 +234,7 @@ pub struct RoutingModel {
     pub dirty: bool,
     /// An apply is in flight (spawned; see `crate::tui::uimsg`).
     pub busy: bool,
+    pub focus: RoutingFocus,
 }
 
 impl RoutingModel {
@@ -204,6 +257,53 @@ impl RoutingModel {
             error: None,
             dirty: false,
             busy: false,
+            focus: RoutingFocus::List,
+        }
+    }
+
+    /// The buttons offered, in Tab order. Delete/Edit/Move only appear when
+    /// there is a handler to act on, so Tab never lands on a dead control.
+    pub fn buttons(&self) -> Vec<crate::tui::hit::ModalAction> {
+        use crate::tui::hit::ModalAction::*;
+        let mut buttons = vec![RoutingAdd];
+        if !self.handlers.is_empty() {
+            buttons.push(RoutingEdit);
+            buttons.push(RoutingDelete);
+            if self.handlers.len() > 1 {
+                buttons.push(RoutingMoveUp);
+                buttons.push(RoutingMoveDown);
+            }
+        }
+        buttons.push(RoutingSave);
+        buttons.push(RoutingCancel);
+        buttons
+    }
+
+    /// Move focus forward (or back) through the list and the buttons.
+    pub fn cycle_focus(&mut self, backward: bool) {
+        let count = self.buttons().len();
+        // Focus order: the list, then each button.
+        let current = match self.focus {
+            RoutingFocus::List => 0,
+            RoutingFocus::Button(index) => index + 1,
+        };
+        let total = count + 1;
+        let next = if backward {
+            (current + total - 1) % total
+        } else {
+            (current + 1) % total
+        };
+        self.focus = if next == 0 {
+            RoutingFocus::List
+        } else {
+            RoutingFocus::Button(next - 1)
+        };
+    }
+
+    pub fn focused_button(&self) -> Option<crate::tui::hit::ModalAction> {
+        match self.focus {
+            RoutingFocus::Button(index) => self.buttons().get(index).copied(),
+            RoutingFocus::List => None,
         }
     }
 
@@ -306,9 +406,14 @@ impl RoutingModel {
         }
     }
 
-    /// Display rows: each handler plus the trailing "otherwise" pseudo-row.
+    /// Display rows: one per configured handler.
+    ///
+    /// The implicit "anything else goes to the LLM" fallback is deliberately
+    /// NOT here. It is not a handler — there is nothing to select, reorder or
+    /// delete — and listing it alongside real ones invited exactly that.
+    /// `fallback_note` states it instead.
     pub fn rows(&self) -> Vec<String> {
-        let mut rows: Vec<String> = self
+        self
             .handlers
             .iter()
             .map(|h| {
@@ -337,12 +442,12 @@ impl RoutingModel {
                 };
                 format!("{pattern:<26} {body}")
             })
-            .collect();
-        rows.push(format!(
-            "{:<26} LLM (the instance instruction)",
-            "otherwise"
-        ));
-        rows
+            .collect()
+    }
+
+    /// The always-present fallback, stated as prose rather than a fake row.
+    pub fn fallback_note(&self) -> &'static str {
+        "Anything not matched above goes to the LLM, using the instance instruction."
     }
 }
 

@@ -765,8 +765,20 @@ async fn handle_form_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState
         KeyCode::Esc => {
             app.modals.pop();
         }
-        KeyCode::Up => form.move_selection(-1),
-        KeyCode::Down => form.move_selection(1),
+        KeyCode::Tab => form.cycle_focus(false),
+        KeyCode::BackTab => form.cycle_focus(true),
+        KeyCode::Up => {
+            form.focused_button = None;
+            form.move_selection(-1);
+        }
+        KeyCode::Down => {
+            form.focused_button = None;
+            form.move_selection(1);
+        }
+        KeyCode::Enter if form.focused_action().is_some() => {
+            let action = form.focused_action().unwrap();
+            return run_form_action(app, action, state).await;
+        }
         KeyCode::Enter => {
             let Some(field) = form.selected_field().cloned() else {
                 return Outcome::Continue;
@@ -787,14 +799,36 @@ async fn handle_form_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState
             }
         }
         KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            return run_form_action(app, crate::tui::hit::ModalAction::FormApply, state).await;
+        }
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+/// Run one instance-form button. Applying is spawned, never awaited on the
+/// event loop: creating a server or connecting a client does network I/O, and
+/// awaiting it here froze the whole dashboard until the kernel gave up.
+async fn run_form_action(
+    app: &mut DashboardApp,
+    action: crate::tui::hit::ModalAction,
+    state: &AppState,
+) -> Outcome {
+    use crate::tui::hit::ModalAction;
+
+    let Some(Modal::Form(form)) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+    match action {
+        ModalAction::FormCancel => {
+            app.modals.pop();
+        }
+        ModalAction::FormApply => {
             if form.busy {
                 return Outcome::Continue;
             }
             form.busy = true;
             form.error = None;
-            // Spawned, never awaited here: creating a server or connecting a
-            // client does network I/O, and awaiting it on the event loop
-            // freezes the whole dashboard until the kernel gives up.
             let model = form.clone();
             let llm = app.llm_client.clone();
             let status_tx = app.status_tx.clone();
@@ -986,8 +1020,12 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
         return Outcome::Continue;
     };
 
-    // A click anywhere in the modal keeps focus there; only Esc closes it.
+    // Buttons inside a modal are clickable; every other click in a modal is
+    // swallowed so it cannot reach the rail beneath.
     if app.modal().is_some() {
+        if let HitTarget::ModalActionButton(action) = target {
+            return run_modal_action(app, action, state).await;
+        }
         return Outcome::Continue;
     }
 
@@ -1053,6 +1091,7 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
             }
         },
         HitTarget::ModalBody | HitTarget::ModalRow(_) | HitTarget::ModalButton(_) => {}
+        HitTarget::ModalActionButton(_) => {}
     }
     Outcome::Continue
 }
@@ -1091,12 +1130,21 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
 
         match key.code {
             KeyCode::Esc => model.draft = None,
-            KeyCode::Tab => {
-                draft.focus = match draft.focus {
-                    HandlerEditFocus::Pattern => HandlerEditFocus::Kind,
-                    HandlerEditFocus::Kind => HandlerEditFocus::Body,
-                    HandlerEditFocus::Body => HandlerEditFocus::Pattern,
-                };
+            KeyCode::Tab => draft.cycle_focus(false),
+            KeyCode::BackTab => draft.cycle_focus(true),
+            KeyCode::Enter if draft.focused_action().is_some() => {
+                match draft.focused_action() {
+                    Some(crate::tui::hit::ModalAction::DraftSave) => match model.commit_draft() {
+                        Ok(()) => model.error = None,
+                        Err(e) => {
+                            if let Some(draft) = model.draft.as_mut() {
+                                draft.error = Some(e.to_string());
+                            }
+                        }
+                    },
+                    Some(crate::tui::hit::ModalAction::DraftCancel) => model.draft = None,
+                    _ => {}
+                }
             }
             KeyCode::Left | KeyCode::Right if draft.focus == HandlerEditFocus::Kind => {
                 draft.kind = draft.kind.next();
@@ -1169,19 +1217,59 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
         return Outcome::Continue;
     }
 
-    // Handler list.
+    // Handler list and buttons. Tab moves between them; Enter activates what
+    // has focus. The shortcuts still work, but nothing depends on knowing them.
+    use crate::tui::hit::ModalAction;
+    use crate::tui::modal::routing::RoutingFocus;
+
     match key.code {
+        KeyCode::Tab => model.cycle_focus(false),
+        KeyCode::BackTab => model.cycle_focus(true),
         KeyCode::Esc => {
             app.modals.pop();
         }
-        KeyCode::Up => model.move_selection(-1),
-        KeyCode::Down => model.move_selection(1),
+        KeyCode::Up if model.focus == RoutingFocus::List => model.move_selection(-1),
+        KeyCode::Down if model.focus == RoutingFocus::List => model.move_selection(1),
+        KeyCode::Left | KeyCode::Right => model.cycle_focus(key.code == KeyCode::Left),
+        KeyCode::Enter => match model.focused_button() {
+            Some(action) => return run_routing_action(app, action, state).await,
+            None => model.edit_selected(),
+        },
+        // Kept as accelerators for anyone who wants them.
         KeyCode::Char('a') => model.add(),
-        KeyCode::Enter | KeyCode::Char('e') => model.edit_selected(),
+        KeyCode::Char('e') => model.edit_selected(),
         KeyCode::Char('d') => model.delete_selected(),
         KeyCode::Char('K') => model.reorder(-1),
         KeyCode::Char('J') => model.reorder(1),
         KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            return run_routing_action(app, ModalAction::RoutingSave, state).await;
+        }
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+/// Run one routing-editor button.
+async fn run_routing_action(
+    app: &mut DashboardApp,
+    action: crate::tui::hit::ModalAction,
+    state: &AppState,
+) -> Outcome {
+    use crate::tui::hit::ModalAction;
+
+    let Some(Modal::Routing(model)) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+    match action {
+        ModalAction::RoutingAdd => model.add(),
+        ModalAction::RoutingEdit => model.edit_selected(),
+        ModalAction::RoutingDelete => model.delete_selected(),
+        ModalAction::RoutingMoveUp => model.reorder(-1),
+        ModalAction::RoutingMoveDown => model.reorder(1),
+        ModalAction::RoutingCancel => {
+            app.modals.pop();
+        }
+        ModalAction::RoutingSave => {
             if model.busy {
                 return Outcome::Continue;
             }
@@ -1203,6 +1291,7 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
                 });
             });
         }
+        // Draft/form actions are handled by their own modals.
         _ => {}
     }
     Outcome::Continue
@@ -1233,12 +1322,52 @@ fn example_actions(actions: &[crate::llm::actions::ActionDefinition]) -> String 
     }
 }
 
+/// Dispatch a modal button to the editor that owns it.
+pub async fn run_modal_action(
+    app: &mut DashboardApp,
+    action: crate::tui::hit::ModalAction,
+    state: &AppState,
+) -> Outcome {
+    use crate::tui::hit::ModalAction;
+    match action {
+        ModalAction::FormApply | ModalAction::FormCancel => {
+            run_form_action(app, action, state).await
+        }
+        ModalAction::DraftSave => {
+            if let Some(Modal::Routing(model)) = app.modals.last_mut() {
+                match model.commit_draft() {
+                    Ok(()) => model.error = None,
+                    Err(e) => {
+                        if let Some(draft) = model.draft.as_mut() {
+                            draft.error = Some(e.to_string());
+                        }
+                    }
+                }
+            }
+            Outcome::Continue
+        }
+        ModalAction::DraftCancel => {
+            if let Some(Modal::Routing(model)) = app.modals.last_mut() {
+                model.draft = None;
+            }
+            Outcome::Continue
+        }
+        _ => run_routing_action(app, action, state).await,
+    }
+}
+
 /// Fold the result of a spawned action back into the UI: on success the
 /// originating modal closes and the summary goes to chat; on failure the modal
 /// stays open showing the error, so the user can fix and retry.
 pub fn handle_ui_msg(app: &mut DashboardApp, msg: UiMsg) {
-    let UiMsg::ActionDone { origin, result } = msg;
     app.dirty = true;
+    let (origin, result) = match msg {
+        UiMsg::Chat(text) => {
+            app.push_system(text);
+            return;
+        }
+        UiMsg::ActionDone { origin, result } => (origin, result),
+    };
 
     let matches_origin = match (origin, app.modal()) {
         (ActionOrigin::Form, Some(Modal::Form(_))) => true,

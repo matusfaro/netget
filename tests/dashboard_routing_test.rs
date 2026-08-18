@@ -100,12 +100,21 @@ async fn build_a_static_handler_and_hot_apply_it() {
     assert_eq!(model.handlers.len(), 2);
     assert!(model.dirty);
 
-    // Rows render the table plus the trailing LLM fallback.
+    // Rows are the configured handlers, and only those. The implicit LLM
+    // fallback is stated separately: it is not a handler, so listing it
+    // alongside real ones invited a delete that could never work.
     let rows = model.rows();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 2, "one row per configured handler: {rows:?}");
     assert!(rows[0].contains("tcp_data_received"));
     assert!(rows[0].contains("STATIC"));
-    assert!(rows[2].contains("otherwise"));
+    assert!(
+        !rows.iter().any(|r| r.contains("otherwise")),
+        "the fallback must not appear as a selectable row: {rows:?}"
+    );
+    assert!(
+        model.fallback_note().to_lowercase().contains("llm"),
+        "the fallback should still be explained to the user"
+    );
 
     // Applying is hot: same id, connections kept.
     let summary = model
@@ -129,6 +138,73 @@ async fn build_a_static_handler_and_hot_apply_it() {
     assert!(
         response.contains("pong-from-routing-editor"),
         "static handler should answer on the wire, got {response:?}"
+    );
+}
+
+/// Every action must be reachable by Tab, not only by a remembered shortcut,
+/// and Tab must never land on a control that cannot do anything.
+#[test]
+fn every_action_is_a_focusable_button() {
+    use netget::tui::hit::ModalAction;
+    use netget::tui::modal::routing::RoutingFocus;
+
+    let state = futures::executor::block_on(new_state());
+    let mut model = RoutingModel::new(UiKey::Server(ServerId::new(1)), "TCP", None, &state);
+
+    // With no handlers there is nothing to edit, delete or reorder, so those
+    // buttons are absent rather than present-and-dead.
+    let buttons = model.buttons();
+    assert!(buttons.contains(&ModalAction::RoutingAdd));
+    assert!(buttons.contains(&ModalAction::RoutingSave));
+    assert!(buttons.contains(&ModalAction::RoutingCancel));
+    assert!(!buttons.contains(&ModalAction::RoutingDelete));
+    assert!(!buttons.contains(&ModalAction::RoutingMoveUp));
+
+    // Tab walks the list and then every button, and comes back round.
+    assert_eq!(model.focus, RoutingFocus::List);
+    let mut seen = Vec::new();
+    for _ in 0..buttons.len() {
+        model.cycle_focus(false);
+        seen.push(model.focused_button().expect("a button has focus"));
+    }
+    assert_eq!(seen, buttons, "Tab order should visit each button once");
+    model.cycle_focus(false);
+    assert_eq!(model.focus, RoutingFocus::List, "and wrap back to the list");
+
+    // Once a handler exists, the acting-on-it buttons appear.
+    model.add();
+    {
+        let draft = model.draft.as_mut().unwrap();
+        draft.kind = HandlerKind::Static;
+        draft.actions = vec![serde_json::json!({"type": "send_tcp_data", "data": "x"})];
+    }
+    model.commit_draft().expect("commit");
+    let buttons = model.buttons();
+    assert!(buttons.contains(&ModalAction::RoutingEdit));
+    assert!(buttons.contains(&ModalAction::RoutingDelete));
+}
+
+/// The handler editor's own Save/Cancel must be tab-reachable too, after its
+/// three sections.
+#[test]
+fn the_handler_editor_has_tab_reachable_buttons() {
+    use netget::tui::hit::ModalAction;
+    use netget::tui::modal::routing::HandlerDraft;
+
+    let mut draft = HandlerDraft::new();
+    assert!(draft.focused_action().is_none(), "starts on a section");
+
+    // Three sections, then the two buttons.
+    for _ in 0..3 {
+        draft.cycle_focus(false);
+    }
+    assert_eq!(draft.focused_action(), Some(ModalAction::DraftSave));
+    draft.cycle_focus(false);
+    assert_eq!(draft.focused_action(), Some(ModalAction::DraftCancel));
+    draft.cycle_focus(false);
+    assert!(
+        draft.focused_action().is_none(),
+        "wraps back to the sections"
     );
 }
 

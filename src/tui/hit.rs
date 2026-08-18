@@ -33,6 +33,8 @@ pub enum HitTarget {
     ModalBody,
     ModalRow(usize),
     ModalButton(ModalButtonId),
+    /// A labelled button inside a modal.
+    ModalActionButton(ModalAction),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,6 +63,41 @@ pub enum SegmentId {
 pub enum ModalButtonId {
     Confirm,
     Cancel,
+}
+
+/// A labelled action inside a modal. These are focusable with Tab and
+/// clickable — the editors should not depend on remembering shortcuts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModalAction {
+    RoutingAdd,
+    RoutingEdit,
+    RoutingDelete,
+    RoutingMoveUp,
+    RoutingMoveDown,
+    RoutingSave,
+    RoutingCancel,
+    DraftSave,
+    DraftCancel,
+    FormApply,
+    FormCancel,
+}
+
+impl ModalAction {
+    pub fn label(&self) -> &'static str {
+        match self {
+            ModalAction::RoutingAdd => "[ Add ]",
+            ModalAction::RoutingEdit => "[ Edit ]",
+            ModalAction::RoutingDelete => "[ Delete ]",
+            ModalAction::RoutingMoveUp => "[ Move up ]",
+            ModalAction::RoutingMoveDown => "[ Move down ]",
+            ModalAction::RoutingSave => "[ Save ]",
+            ModalAction::RoutingCancel => "[ Cancel ]",
+            ModalAction::DraftSave => "[ Save response ]",
+            ModalAction::DraftCancel => "[ Cancel ]",
+            ModalAction::FormApply => "[ Apply ]",
+            ModalAction::FormCancel => "[ Cancel ]",
+        }
+    }
 }
 
 /// Per-frame registry of drawn regions.

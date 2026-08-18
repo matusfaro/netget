@@ -24,4 +24,7 @@ pub enum UiMsg {
         origin: ActionOrigin,
         result: Result<String, String>,
     },
+    /// Text from background work that is purely informational — it goes to
+    /// chat and must never close whatever modal happens to be open.
+    Chat(String),
 }
