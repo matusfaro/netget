@@ -1,90 +1,78 @@
-//! The instance rail: SERVERS and CLIENTS sections, each a stack of bands.
+//! The instance rail: one borderless, scrollable tree holding every server and
+//! client.
+//!
+//! There is deliberately no per-instance frame and no servers/clients split.
+//! Both cost rows and neither carries information the root row does not — an
+//! instance already says what it is. Collapsing what you are not looking at is
+//! what makes room, so the height algorithm that used to divide the rail into
+//! bands is gone.
 
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::tui::app::{DashboardApp, Focus, Section};
-use crate::tui::bands;
 use crate::tui::hit::HitTarget;
 
 use super::band;
 
-/// Rows taken by a section header line.
+/// Rows taken by the header line.
 const HEADER_HEIGHT: u16 = 1;
 
 pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
-    // Split the rail between the two sections proportionally to how much each
-    // wants, so a session with only servers gives them everything.
-    let server_count = app.snapshot.servers.len().max(1) as u16;
-    let client_count = app.snapshot.clients.len().max(1) as u16;
-    let want_servers = (server_count * bands::BAND_PREF + HEADER_HEIGHT).min(area.height);
-    let want_clients = (client_count * bands::BAND_PREF + HEADER_HEIGHT).min(area.height);
-    let total_want = want_servers + want_clients;
-    let servers_height = if total_want <= area.height {
-        want_servers
-    } else {
-        ((want_servers as u32 * area.height as u32) / total_want as u32) as u16
-    };
-    let servers_height = servers_height
-        .max(HEADER_HEIGHT + bands::BAND_MIN.min(area.height))
-        .min(area.height.saturating_sub(HEADER_HEIGHT + 1));
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(servers_height),
-            Constraint::Min(HEADER_HEIGHT + 1),
-        ])
-        .split(area);
-
-    draw_section(frame, app, chunks[0], Section::Servers);
-    draw_section(frame, app, chunks[1], Section::Clients);
-}
-
-fn draw_section(frame: &mut Frame, app: &mut DashboardApp, area: Rect, section: Section) {
     if area.height == 0 {
         return;
     }
-    let count = app.band_count(section);
-    let (label, add_label) = match section {
-        Section::Servers => ("SERVERS", "[ + server ]"),
-        Section::Clients => ("CLIENTS", "[ + client ]"),
-    };
 
-    let section_focused = matches!(&app.focus, Focus::Rail(sel) if sel.section == section);
+    let servers = app.snapshot.servers.len();
+    let clients = app.snapshot.clients.len();
+    let focused = matches!(app.focus, Focus::Rail(_));
 
-    // Header: label + count on the left, [add] button on the right.
+    // Header: counts on the left, the two add affordances on the right.
     let header_area = Rect {
         height: HEADER_HEIGHT,
         ..area
     };
-    let title_style = if section_focused {
-        app.styles.accent
-    } else {
-        app.styles.title
-    };
     let header = Line::from(vec![
-        Span::styled(format!(" {label} "), title_style),
-        Span::styled(format!("({count})  "), app.styles.dimmed),
+        Span::styled(
+            " INSTANCES ",
+            if focused {
+                app.styles.accent
+            } else {
+                app.styles.title
+            },
+        ),
+        Span::styled(
+            format!("({servers} server{}, {clients} client{})",
+                if servers == 1 { "" } else { "s" },
+                if clients == 1 { "" } else { "s" }),
+            app.styles.dimmed,
+        ),
     ]);
     frame.render_widget(Paragraph::new(header), header_area);
-    app.hits.push(header_area, HitTarget::SectionHeader(section));
 
-    let add_width = add_label.chars().count() as u16;
-    if header_area.width > add_width + 2 {
-        let add_area = Rect {
-            x: header_area.x + header_area.width - add_width - 1,
+    let mut x = header_area.x + header_area.width;
+    for (label, section) in [
+        ("[ + client ]", Section::Clients),
+        ("[ + server ]", Section::Servers),
+    ] {
+        let width = label.chars().count() as u16 + 1;
+        if x < header_area.x + width {
+            break;
+        }
+        x -= width;
+        let button = Rect {
+            x,
             y: header_area.y,
-            width: add_width,
+            width: width - 1,
             height: 1,
         };
         frame.render_widget(
-            Paragraph::new(Span::styled(add_label, app.styles.button)),
-            add_area,
+            Paragraph::new(Span::styled(label, app.styles.button)),
+            button,
         );
-        app.hits.push(add_area, HitTarget::AddButton(section));
+        app.hits.push(button, HitTarget::AddButton(section));
     }
 
     let body = Rect {
@@ -97,64 +85,84 @@ fn draw_section(frame: &mut Frame, app: &mut DashboardApp, area: Rect, section: 
         return;
     }
 
-    if count == 0 {
-        let hint = match section {
-            Section::Servers => "no servers — press a (or click [ + server ]) to add one",
-            Section::Clients => {
-                "no clients — press a here, or c on a server to connect one to it"
-            }
-        };
+    let rows = band::rail_rows(app);
+    if rows.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled(format!("  {hint}"), app.styles.dimmed)),
+            Paragraph::new(Span::styled(
+                "  nothing running — press a for a server, or click [ + server ]",
+                app.styles.dimmed,
+            )),
             body,
         );
         return;
     }
 
-    let selected = match &app.focus {
-        Focus::Rail(sel) if sel.section == section => sel.band,
-        _ => usize::MAX, // nothing selected in this section
+    // Scroll so the selection stays visible.
+    let viewport = body.height as usize;
+    let max_offset = rows.len().saturating_sub(viewport);
+    let mut offset = app.rail.scroll.min(max_offset);
+    if let Focus::Rail(sel) = &app.focus {
+        if let Some(row) = sel.row {
+            if row < offset {
+                offset = row;
+            } else if row >= offset + viewport {
+                offset = row + 1 - viewport;
+            }
+        }
+    }
+    app.rail.scroll = offset;
+
+    let selected_row = match &app.focus {
+        Focus::Rail(sel) => sel.row,
+        _ => None,
     };
-    let selected_idx = if selected == usize::MAX { 0 } else { selected };
-    let maximized = app
-        .band_key(section, selected_idx)
-        .and_then(|key| app.rail.band(key).map(|b| b.maximized))
-        .unwrap_or(false);
 
-    let mut layouts = bands::allocate(count, body.height, selected_idx, maximized);
-    // Reclaim space from bands whose tree is shorter than their slot (a
-    // collapsed instance needs three rows, not ten).
-    let desired: Vec<u16> = (0..count)
-        .map(|index| {
-            app.band_key(section, index)
-                .map(|key| {
-                    let rows = super::band::band_row_count(app, key) as u16;
-                    rows.saturating_add(2)
-                })
-                .unwrap_or(bands::BAND_MIN)
-        })
-        .collect();
-    bands::fit_to_content(&mut layouts, &desired);
+    let mut lines: Vec<Line> = Vec::new();
+    for (screen_index, row) in rows.iter().skip(offset).take(viewport).enumerate() {
+        let absolute = offset + screen_index;
+        let is_selected = focused && selected_row == Some(absolute);
+        lines.push(band::row_line(app, &row.row, is_selected));
 
-    let mut y = body.y;
-    for (index, layout) in layouts.iter().enumerate() {
-        if layout.height == 0 {
-            continue;
-        }
-        let band_area = Rect {
+        let row_area = Rect {
             x: body.x,
-            y,
+            y: body.y + screen_index as u16,
             width: body.width,
-            height: layout.height.min(body.y + body.height - y),
+            height: 1,
         };
-        if band_area.height == 0 {
-            break;
+        app.hits.push(
+            row_area,
+            HitTarget::TreeRow {
+                key: row.key,
+                index: absolute,
+            },
+        );
+        if let Some((label, id)) = &row.row.button {
+            let width = label.chars().count() as u16;
+            if row_area.width > width + 1 {
+                let button_area = Rect {
+                    x: row_area.x + row_area.width - width,
+                    y: row_area.y,
+                    width,
+                    height: 1,
+                };
+                app.hits.push(button_area, HitTarget::Button(id.clone()));
+            }
         }
-        let is_selected = selected == index;
-        band::draw(frame, app, band_area, section, index, *layout, is_selected);
-        y += band_area.height;
-        if y >= body.y + body.height {
-            break;
-        }
+    }
+    frame.render_widget(Paragraph::new(lines), body);
+
+    if rows.len() > viewport {
+        let hint = format!(" {}–{}/{} ", offset + 1, offset + viewport, rows.len());
+        let width = (hint.chars().count() as u16).min(body.width);
+        let hint_area = Rect {
+            x: body.x + body.width.saturating_sub(width),
+            y: body.y + body.height - 1,
+            width,
+            height: 1,
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(hint, app.styles.dimmed)),
+            hint_area,
+        );
     }
 }

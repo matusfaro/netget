@@ -54,12 +54,8 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
             Line::from(Span::styled(url.clone(), app.styles.info)),
         ],
         Modal::BandDetail { key, .. } => band_detail_lines(app, *key),
-        Modal::ProtocolPicker {
-            entries,
-            filter,
-            selected,
-            ..
-        } => picker_lines(app, entries, filter, *selected),
+        // Rendered separately below (list + fixed detail pane).
+        Modal::ProtocolPicker { .. } => Vec::new(),
         Modal::Form(form) => form_lines(app, form),
         Modal::TextEditor { editor, .. } => {
             // The textarea widget renders itself; draw it after the chrome.
@@ -86,6 +82,89 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
     let inner = block.inner(rect);
     frame.render_widget(block, rect);
     app.hits.push(rect, HitTarget::ModalBody);
+
+    // The picker is a list with a fixed detail pane beneath it.
+    if let Some(Modal::ProtocolPicker {
+        entries,
+        filter,
+        selected,
+        ..
+    }) = app.modals.last()
+    {
+        const DETAIL_HEIGHT: u16 = 7;
+        let rows = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Min(3),
+                ratatui::layout::Constraint::Length(DETAIL_HEIGHT),
+            ])
+            .split(inner);
+
+        use crate::tui::modal::protocol_picker;
+        let matches = protocol_picker::filter(entries, filter);
+
+        // One header row (the filter), then a window over the matches sized to
+        // what is left. Scrolling here is not optional: with every protocol
+        // compiled in the list is far longer than the modal, and a selection
+        // that runs off the bottom is invisible.
+        let header = Line::from(vec![
+            Span::styled("filter: ", app.styles.dimmed),
+            Span::styled(filter.to_string(), app.styles.accent),
+            Span::styled(
+                format!("   {} of {} protocols", matches.len(), entries.len()),
+                app.styles.dimmed,
+            ),
+        ]);
+        let visible = rows[0].height.saturating_sub(1) as usize;
+        let offset = if matches.is_empty() || visible == 0 {
+            0
+        } else {
+            // Keep the selection inside the window, biased to show context
+            // above it once we are scrolled down.
+            selected.saturating_sub(visible.saturating_sub(1))
+        };
+
+        let mut list = vec![header];
+        if matches.is_empty() {
+            list.push(Line::from(Span::styled(
+                "  (no protocol matches that filter)",
+                app.styles.dimmed,
+            )));
+        }
+        for (index, entry) in matches.iter().enumerate().skip(offset).take(visible) {
+            let style = if index == *selected {
+                app.styles.selected
+            } else {
+                app.styles.normal
+            };
+            let badge_style = match entry.state {
+                crate::protocol::metadata::DevelopmentState::Beta
+                | crate::protocol::metadata::DevelopmentState::Stable => app.styles.success,
+                _ => app.styles.warning,
+            };
+            list.push(Line::from(vec![
+                Span::styled(format!("  {:<22}", entry.name), style),
+                Span::styled(format!("{:<12}", entry.badge()), badge_style),
+                Span::styled(
+                    crate::utils::truncate_for_log(&entry.description, 70),
+                    app.styles.dimmed,
+                ),
+            ]));
+        }
+        frame.render_widget(Paragraph::new(list), rows[0]);
+
+        let detail = Block::default()
+            .borders(Borders::TOP)
+            .border_style(app.styles.separator);
+        let detail_inner = detail.inner(rows[1]);
+        frame.render_widget(detail, rows[1]);
+        frame.render_widget(
+            Paragraph::new(picker_detail_lines(app, entries, filter, *selected))
+                .wrap(Wrap { trim: false }),
+            detail_inner,
+        );
+        return;
+    }
 
     // The text editor is a live widget rather than static lines.
     if let Some(Modal::TextEditor { editor, .. }) = app.modals.last() {
@@ -117,7 +196,9 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
     frame.render_widget(paragraph, inner);
 }
 
-fn picker_lines<'a>(
+/// Detail for the highlighted protocol, rendered in a fixed pane so the list
+/// above it never moves.
+fn picker_detail_lines<'a>(
     app: &DashboardApp,
     entries: &[crate::tui::modal::protocol_picker::ProtocolEntry],
     filter: &str,
@@ -125,60 +206,37 @@ fn picker_lines<'a>(
 ) -> Vec<Line<'a>> {
     use crate::tui::modal::protocol_picker;
     let matches = protocol_picker::filter(entries, filter);
-    let mut lines = vec![
-        Line::from(vec![
-            Span::styled("filter: ", app.styles.dimmed),
-            Span::styled(filter.to_string(), app.styles.accent),
-            Span::styled(
-                format!("   {} of {} protocols", matches.len(), entries.len()),
-                app.styles.dimmed,
-            ),
-        ]),
-        Line::from(""),
-    ];
-    for (index, entry) in matches.iter().enumerate() {
-        let style = if index == selected {
-            app.styles.selected
-        } else {
-            app.styles.normal
-        };
-        let badge_style = match entry.state {
-            crate::protocol::metadata::DevelopmentState::Beta => app.styles.success,
-            crate::protocol::metadata::DevelopmentState::Stable => app.styles.success,
-            _ => app.styles.warning,
-        };
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {:<22}", entry.name), style),
-            Span::styled(format!("{:<12}", entry.badge()), badge_style),
-            Span::styled(
-                crate::utils::truncate_for_log(&entry.description, 70),
-                app.styles.dimmed,
-            ),
-        ]));
-        if index == selected {
-            if let Some(note) = &entry.privilege_note {
-                lines.push(Line::from(Span::styled(
-                    format!("      ⚠ {note}"),
-                    app.styles.warning,
-                )));
-            }
-            if !entry.has_binding_defaults {
-                lines.push(Line::from(Span::styled(
-                    "      declares no default binding — a port is required".to_string(),
-                    app.styles.dimmed,
-                )));
-            }
-            if let Some(notes) = &entry.notes {
-                lines.push(Line::from(Span::styled(
-                    format!("      {}", crate::utils::truncate_for_log(notes, 90)),
-                    app.styles.dimmed,
-                )));
-            }
-        }
-    }
-    if matches.is_empty() {
+    let Some(entry) = matches.get(selected) else {
+        return vec![Line::from(Span::styled(
+            "(no protocol selected)",
+            app.styles.dimmed,
+        ))];
+    };
+
+    let mut lines = vec![Line::from(vec![
+        Span::styled(entry.name.clone(), app.styles.accent),
+        Span::styled(format!("  {}", entry.badge()), app.styles.dimmed),
+    ])];
+    lines.push(Line::from(Span::styled(
+        entry.description.clone(),
+        app.styles.normal,
+    )));
+    lines.push(Line::from(Span::styled(
+        match entry.default_port {
+            Some(port) => format!("starts on port {port}"),
+            None => "starts on an OS-assigned port (0)".to_string(),
+        },
+        app.styles.dimmed,
+    )));
+    if let Some(note) = &entry.privilege_note {
         lines.push(Line::from(Span::styled(
-            "  (no protocol matches that filter)",
+            format!("⚠ {note}"),
+            app.styles.warning,
+        )));
+    }
+    if let Some(notes) = &entry.notes {
+        lines.push(Line::from(Span::styled(
+            crate::utils::truncate_for_log(notes, 200),
             app.styles.dimmed,
         )));
     }

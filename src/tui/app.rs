@@ -33,32 +33,22 @@ pub enum Focus {
     Rail(RailSel),
 }
 
-/// The rail selection: which section, which band, and which tree row inside it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The rail selection: an index into the one flat list of tree rows.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RailSel {
-    pub section: Section,
-    pub band: usize,
-    /// `None` = the band is selected but no row within it; `Some(i)` = the
-    /// i-th row of the band's flattened tree.
+    /// `None` = the rail is focused but nothing is selected yet.
     pub row: Option<usize>,
 }
 
 impl RailSel {
-    pub fn new(section: Section) -> Self {
-        Self {
-            section,
-            band: 0,
-            row: None,
-        }
+    pub fn new() -> Self {
+        Self { row: None }
     }
 }
 
-/// Per-band UI state that must survive re-polls: which nodes are expanded,
-/// where the tree is scrolled, and whether the band is maximized.
+/// Per-instance UI state that must survive re-polls: which nodes are expanded.
 #[derive(Debug, Clone, Default)]
 pub struct BandUiState {
-    pub maximized: bool,
-    pub scroll: usize,
     pub tree: crate::tui::tree::TreeState,
 }
 
@@ -66,8 +56,8 @@ pub struct BandUiState {
 #[derive(Debug, Default)]
 pub struct RailUiState {
     pub bands: HashMap<UiKey, BandUiState>,
-    /// First visible band index per section, when not all bands fit.
-    pub section_offset: HashMap<Section, usize>,
+    /// First visible row of the rail's single scrolling list.
+    pub scroll: usize,
 }
 
 impl RailUiState {
@@ -192,14 +182,6 @@ impl DashboardApp {
         }
     }
 
-    /// The currently selected band's key, if the rail is focused.
-    pub fn selected_key(&self) -> Option<UiKey> {
-        match &self.focus {
-            Focus::Rail(sel) => self.band_key(sel.section, sel.band),
-            _ => None,
-        }
-    }
-
     /// Locate a band by key in the current snapshot.
     pub fn locate(&self, key: UiKey) -> Option<(Section, usize)> {
         match key {
@@ -219,31 +201,33 @@ impl DashboardApp {
     }
 
     /// Clamp the rail selection to what the latest snapshot actually contains.
+    ///
+    /// Row indices come from the previous frame; a collapse, a stopped server
+    /// or a reaped connection can shorten the list underneath the cursor.
     pub fn clamp_selection(&mut self) {
+        let rows = crate::tui::render::band::rail_row_count(self);
         if let Focus::Rail(sel) = &mut self.focus {
-            let count = match sel.section {
-                Section::Servers => self.snapshot.servers.len(),
-                Section::Clients => self.snapshot.clients.len(),
-            };
-            if count == 0 {
-                sel.band = 0;
-                sel.row = None;
-            } else if sel.band >= count {
-                sel.band = count - 1;
+            match sel.row {
+                _ if rows == 0 => sel.row = None,
+                // A focused rail always has a cursor. Without this, creating
+                // the first server left nothing selected, so `c`, `e` and `r`
+                // silently did nothing until you pressed an arrow key.
+                None => sel.row = Some(0),
+                Some(row) if row >= rows => sel.row = Some(rows - 1),
+                _ => {}
             }
         }
-        // Row indices come from the previous frame's tree; a collapse or a
-        // vanished connection can shorten it.
-        if let Some(key) = self.selected_key() {
-            let rows = crate::tui::render::band::band_row_count(self, key);
-            if let Focus::Rail(sel) = &mut self.focus {
-                match sel.row {
-                    Some(_) if rows == 0 => sel.row = None,
-                    Some(row) if row >= rows => sel.row = Some(rows - 1),
-                    _ => {}
-                }
-            }
-        }
+    }
+
+    /// The instance owning the selected row, if any.
+    pub fn selected_instance(&self) -> Option<UiKey> {
+        let Focus::Rail(sel) = &self.focus else {
+            return None;
+        };
+        let row = sel.row?;
+        crate::tui::render::band::rail_rows(self)
+            .get(row)
+            .map(|r| r.key)
     }
 
     pub fn push_system(&mut self, text: impl Into<String>) {

@@ -12,7 +12,6 @@
 //! grammar.
 
 pub mod app;
-pub mod bands;
 pub mod chat;
 pub mod command_exec;
 pub mod commands;

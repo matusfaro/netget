@@ -109,25 +109,12 @@ pub async fn handle_key(
     }
 }
 
-fn cycle_focus(app: &mut DashboardApp, backward: bool) {
-    let order = [
-        Focus::ChatInput,
-        Focus::Rail(RailSel::new(Section::Servers)),
-        Focus::Rail(RailSel::new(Section::Clients)),
-    ];
-    let current = match &app.focus {
-        Focus::ChatInput | Focus::ChatHistory => 0,
-        Focus::Rail(sel) => match sel.section {
-            Section::Servers => 1,
-            Section::Clients => 2,
-        },
+fn cycle_focus(app: &mut DashboardApp, _backward: bool) {
+    // Two stops now that the rail is a single pane.
+    app.focus = match app.focus {
+        Focus::Rail(_) => Focus::ChatInput,
+        _ => Focus::Rail(RailSel::new()),
     };
-    let next = if backward {
-        (current + order.len() - 1) % order.len()
-    } else {
-        (current + 1) % order.len()
-    };
-    app.focus = order[next].clone();
     app.clamp_selection();
 }
 
@@ -245,120 +232,89 @@ async fn handle_rail_key(
     mut sel: RailSel,
     state: &AppState,
 ) -> Outcome {
-    let count = app.band_count(sel.section);
-    let band_key = app.band_key(sel.section, sel.band);
-    let rows = band_key
-        .map(|k| crate::tui::render::band::band_rows(app, k))
-        .unwrap_or_default();
+    let rows = crate::tui::render::band::rail_rows(app);
+    let owner = sel
+        .row
+        .and_then(|row| rows.get(row))
+        .map(|r| r.key);
 
     match key.code {
-        // Up/Down walk the tree; at the top edge they step to the previous or
-        // next band, so the whole rail reads as one list.
-        KeyCode::Down => match sel.row {
-            None => sel.row = Some(0),
-            Some(row) if row + 1 < rows.len() => sel.row = Some(row + 1),
-            Some(_) => {
-                if sel.band + 1 < count {
-                    sel.band += 1;
-                    sel.row = Some(0);
-                }
-            }
-        },
-        KeyCode::Up => match sel.row {
-            None | Some(0) => {
-                if sel.band > 0 {
-                    sel.band -= 1;
-                    let previous = app
-                        .band_key(sel.section, sel.band)
-                        .map(|k| crate::tui::render::band::band_row_count(app, k))
-                        .unwrap_or(0);
-                    sel.row = Some(previous.saturating_sub(1));
-                } else {
-                    sel.row = Some(0);
-                }
-            }
-            Some(row) => sel.row = Some(row - 1),
-        },
-        // Right expands (or steps into the first child); Left collapses, and on
-        // an already-collapsed row steps out to the parent level.
+        KeyCode::Down => {
+            sel.row = Some(match sel.row {
+                None => 0,
+                Some(row) if row + 1 < rows.len() => row + 1,
+                Some(row) => row,
+            });
+        }
+        KeyCode::Up => {
+            sel.row = Some(match sel.row {
+                None => 0,
+                Some(row) => row.saturating_sub(1),
+            });
+        }
+        KeyCode::PageDown => {
+            let step = 10;
+            sel.row = Some(match sel.row {
+                None => step.min(rows.len().saturating_sub(1)),
+                Some(row) => (row + step).min(rows.len().saturating_sub(1)),
+            });
+        }
+        KeyCode::PageUp => {
+            sel.row = Some(sel.row.unwrap_or(0).saturating_sub(10));
+        }
+        KeyCode::Home => sel.row = Some(0),
+        KeyCode::End => sel.row = Some(rows.len().saturating_sub(1)),
+        // Right expands a group or steps into it; Left collapses, or steps out
+        // to the parent when there is nothing to collapse.
         KeyCode::Right => {
-            if let (Some(bk), Some(row)) = (band_key, sel.row) {
-                if let Some(tree_row) = rows.get(row) {
-                    let node = tree_row.node.clone();
-                    let tree = &mut app.rail.band_mut(bk).tree;
-                    if tree_row.expanded == Some(false) {
-                        tree.expand(&node);
-                    } else if tree_row.expanded == Some(true) && row + 1 < rows.len() {
+            if let (Some(key_owner), Some(row)) = (owner, sel.row) {
+                if let Some(rail_row) = rows.get(row) {
+                    let node = rail_row.row.node.clone();
+                    if rail_row.row.expanded == Some(false) {
+                        app.rail.band_mut(key_owner).tree.expand(&node);
+                    } else if rail_row.row.expanded == Some(true) && row + 1 < rows.len() {
                         sel.row = Some(row + 1);
                     }
                 }
             }
         }
         KeyCode::Left => {
-            if let (Some(bk), Some(row)) = (band_key, sel.row) {
-                if let Some(tree_row) = rows.get(row) {
-                    let node = tree_row.node.clone();
-                    let depth = tree_row.depth;
-                    if tree_row.expanded == Some(true) {
-                        app.rail.band_mut(bk).tree.collapse(&node);
+            if let (Some(key_owner), Some(row)) = (owner, sel.row) {
+                if let Some(rail_row) = rows.get(row) {
+                    let node = rail_row.row.node.clone();
+                    let depth = rail_row.row.depth;
+                    if rail_row.row.expanded == Some(true) {
+                        app.rail.band_mut(key_owner).tree.collapse(&node);
                     } else if depth > 0 {
-                        // Walk back to the nearest shallower row: the parent.
                         if let Some(parent) = rows[..row]
                             .iter()
-                            .rposition(|candidate| candidate.depth < depth)
+                            .rposition(|candidate| candidate.row.depth < depth)
                         {
                             sel.row = Some(parent);
                         }
-                    } else {
-                        sel.row = None;
                     }
                 }
             }
         }
-        KeyCode::Enter => {
-            if let (Some(bk), Some(row)) = (band_key, sel.row) {
-                activate_row(app, bk, &rows, row, state);
-            } else if let Some(bk) = band_key {
-                // No row selected yet: start at the root.
-                let _ = bk;
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            if let (Some(key_owner), Some(row)) = (owner, sel.row) {
+                activate_row(app, key_owner, &rows, row, state);
+            } else if !rows.is_empty() {
                 sel.row = Some(0);
             }
         }
         KeyCode::Esc => {
-            if sel.row.is_some() {
-                sel.row = None;
-            } else {
-                app.focus = Focus::ChatInput;
-                return Outcome::Continue;
-            }
-        }
-        KeyCode::Char(' ') => {
-            // Space toggles the row under the cursor, or maximizes the band
-            // when the selection is the band itself.
-            match (band_key, sel.row) {
-                (Some(bk), Some(row)) => {
-                    if let Some(tree_row) = rows.get(row) {
-                        let node = tree_row.node.clone();
-                        if tree_row.expanded.is_some() {
-                            app.rail.band_mut(bk).tree.toggle(&node);
-                        }
-                    }
-                }
-                (Some(bk), None) => {
-                    let band = app.rail.band_mut(bk);
-                    band.maximized = !band.maximized;
-                }
-                _ => {}
-            }
+            app.focus = Focus::ChatInput;
+            return Outcome::Continue;
         }
         KeyCode::Char('x') => {
-            if let Some(bk) = band_key {
-                push_stop_confirm(app, bk);
+            if let Some(key_owner) = owner {
+                push_stop_confirm(app, key_owner);
             }
         }
         KeyCode::Char('e') | KeyCode::Char('r') | KeyCode::Char('d') | KeyCode::Char('n')
         | KeyCode::Char('c') | KeyCode::Char('a') => {
-            handle_band_shortcut(app, key.code, sel.section, band_key, state).await;
+            handle_band_shortcut(app, key.code, owner, state).await;
         }
         _ => {}
     }
@@ -375,15 +331,16 @@ async fn handle_rail_key(
 fn activate_row(
     app: &mut DashboardApp,
     key: UiKey,
-    rows: &[crate::tui::tree::TreeRow],
+    rows: &[crate::tui::render::band::RailRow],
     row: usize,
     state: &AppState,
 ) {
     use crate::tui::tree::NodeId;
 
-    let Some(tree_row) = rows.get(row) else {
+    let Some(rail_row) = rows.get(row) else {
         return;
     };
+    let tree_row = &rail_row.row;
     let node = tree_row.node.clone();
 
     // A group toggles; that includes a request, whose detail is its children.
@@ -420,12 +377,13 @@ fn push_stop_confirm(app: &mut DashboardApp, key: UiKey) {
 async fn handle_band_shortcut(
     app: &mut DashboardApp,
     code: KeyCode,
-    section: Section,
     key: Option<UiKey>,
     state: &AppState,
 ) {
     match code {
-        KeyCode::Char('a') => open_protocol_picker(app, section, None, state).await,
+        // `a` adds a server; a client normally comes from `c` on a server, and
+        // the header's [ + client ] covers the standalone case.
+        KeyCode::Char('a') => open_protocol_picker(app, Section::Servers, None, state).await,
         KeyCode::Char('e') => {
             if let Some(band_key) = key {
                 open_editor(app, band_key);
@@ -992,6 +950,9 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
                         modal.scroll_by(-3);
                     }
                 }
+                Some(HitTarget::TreeRow { .. }) | Some(HitTarget::Band { .. }) => {
+                    app.rail.scroll = app.rail.scroll.saturating_sub(3);
+                }
                 _ => {}
             }
             app.dirty = true;
@@ -1006,6 +967,10 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
                     if let Some(modal) = app.modal_mut() {
                         modal.scroll_by(3);
                     }
+                }
+                Some(HitTarget::TreeRow { .. }) | Some(HitTarget::Band { .. }) => {
+                    let rows = crate::tui::render::band::rail_row_count(app);
+                    app.rail.scroll = (app.rail.scroll + 3).min(rows.saturating_sub(1));
                 }
                 _ => {}
             }
@@ -1029,30 +994,15 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
     match target {
         HitTarget::ChatHistory => app.focus = Focus::ChatHistory,
         HitTarget::ChatInput => app.focus = Focus::ChatInput,
-        HitTarget::SectionHeader(section) => app.focus = Focus::Rail(RailSel::new(section)),
+        HitTarget::SectionHeader(_) => app.focus = Focus::Rail(RailSel::new()),
         HitTarget::AddButton(section) => {
-            app.focus = Focus::Rail(RailSel::new(section));
-            handle_band_shortcut(app, KeyCode::Char('a'), section, None, state).await;
+            open_protocol_picker(app, section, None, state).await;
         }
-        HitTarget::Band { key } => {
-            if let Some((section, band)) = app.locate(key) {
-                app.focus = Focus::Rail(RailSel {
-                    section,
-                    band,
-                    row: None,
-                });
-            }
-        }
+        HitTarget::Band { .. } => app.focus = Focus::Rail(RailSel::new()),
         HitTarget::TreeRow { key, index } => {
-            if let Some((section, band)) = app.locate(key) {
-                app.focus = Focus::Rail(RailSel {
-                    section,
-                    band,
-                    row: Some(index),
-                });
-                let rows = crate::tui::render::band::band_rows(app, key);
-                activate_row(app, key, &rows, index, state);
-            }
+            app.focus = Focus::Rail(RailSel { row: Some(index) });
+            let rows = crate::tui::render::band::rail_rows(app);
+            activate_row(app, key, &rows, index, state);
         }
         // Buttons run the same code as their keyboard shortcuts — clicking
         // [ edit ] must not do something different from pressing `e`.
