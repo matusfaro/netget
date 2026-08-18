@@ -277,7 +277,7 @@ pub struct Args {
     #[clap(
         long = "llm-request-timeout",
         value_name = "SECONDS",
-        help = "Wall-clock bound (seconds) on a single LLM backend call before it is treated as a transport failure and retried. Default: 120. Raise for slow local models whose responses to large prompts legitimately exceed two minutes."
+        help = "Wall-clock bound (seconds) on a single LLM backend call before it is treated as a transport failure and retried. Default: 300. A locally served 31B reasoning model answering a full prompt with the default tool list was measured at ~79s idle, so the old 120s default failed whenever anything else shared the GPU. Lower it only if you would rather fail fast than wait."
     )]
     pub llm_request_timeout: Option<u64>,
 

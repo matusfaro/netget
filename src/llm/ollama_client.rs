@@ -816,7 +816,34 @@ impl std::str::FromStr for CommandInterpretation {
 }
 
 /// Default per-request wall-clock bound for a backend call.
-pub const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+///
+/// 300s, raised from 120s. 120 was not a safety margin, it was a coin flip: a locally
+/// served 31B reasoning model answering a realistic NetGet request — ~15k characters of
+/// system prompt after stripping, plus the 27 tool schemas a default build advertises —
+/// was measured at **79 seconds on an otherwise idle machine**. That is two thirds of the
+/// old budget spent on a *good* run, so anything else touching the same GPU (a second
+/// model loaded, a test suite, another netget) pushed it over, and the user saw
+/// `LLM request (attempt 1/2)` and then nothing for two minutes.
+///
+/// Reasoning models are what changed the arithmetic: the thinking block and the answer are
+/// generated serially, so latency scales with tool count and prompt size far more steeply
+/// than it did for a non-reasoning model of the same size.
+///
+/// This is a backstop against a hung backend, not a performance target — a request that
+/// legitimately needs four minutes should get four minutes, and one that is never coming
+/// back is equally dead at 120s or 300s. Override with `--llm-request-timeout`.
+pub const DEFAULT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The HTTP client used for OpenAI-compatible backends, bounded by `timeout`.
+///
+/// One constructor so the reqwest-level bound and [`OllamaClient::request_timeout`] cannot
+/// disagree; see [`OllamaClient::with_request_timeout`] for what that disagreement cost.
+fn openai_http_client(timeout: std::time::Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(timeout)
+        .build()
+        .expect("Failed to build HTTP client")
+}
 
 /// Default completion-token budget for one backend call.
 ///
@@ -911,10 +938,7 @@ impl OllamaClient {
 
     /// Create a new client for an OpenAI-compatible API endpoint
     pub fn new_openai(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(120))
-            .build()
-            .expect("Failed to build HTTP client");
+        let client = openai_http_client(DEFAULT_REQUEST_TIMEOUT);
         Self {
             backend: LlmBackend::OpenAI {
                 client,
@@ -1154,8 +1178,18 @@ impl OllamaClient {
 
     /// Override the wall-clock bound on a single backend call
     /// (default [`DEFAULT_REQUEST_TIMEOUT`]).
+    ///
+    /// For the OpenAI backend this **rebuilds the HTTP client**, because reqwest enforces its
+    /// own timeout underneath the `tokio::time::timeout` this field drives. That client was
+    /// built with a hardcoded 120s, so whichever bound was shorter won — and raising
+    /// `--llm-request-timeout` past 120s moved only the outer one. The flag appeared to work
+    /// and the call still died at two minutes, reported as a transport failure rather than a
+    /// timeout the user had asked for.
     pub fn with_request_timeout(mut self, timeout: std::time::Duration) -> Self {
         self.request_timeout = timeout;
+        if let LlmBackend::OpenAI { client, .. } = &mut self.backend {
+            *client = openai_http_client(timeout);
+        }
         self
     }
 
