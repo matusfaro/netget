@@ -12,12 +12,34 @@ use std::collections::HashSet;
 
 use crate::state::app_state::AccessLogEntry;
 use crate::tui::app::UiKey;
-use crate::tui::hit::ButtonId;
 use crate::tui::modal::request_detail::summary_line;
 use crate::tui::projection::{ClientRow, SendState, ServerRow};
 
 /// How many children a group shows before the "… N more" row.
 pub const CHILD_LIMIT: usize = 5;
+
+/// Something the user can do, sitting in the tree as a row of its own.
+///
+/// These used to be right-aligned buttons on the group rows — `[ edit ]` on the
+/// instance, `[ + client ]` on `peers`. That put the verb somewhere the eye does
+/// not travel and gave it no place in the up/down order, so reaching one meant
+/// knowing a shortcut. As rows they are in the same list as everything else:
+/// Enter runs them, a click runs them, and they sit under the thing they act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RowAction {
+    /// Open the instance's config form.
+    EditConfig,
+    /// Open the routing editor on one handler.
+    EditRoute(usize),
+    /// Open the routing editor with a fresh handler.
+    AddRoute,
+    /// Connect a client of the counterpart protocol to this server.
+    AddClient,
+    /// Compose and send a request through this client.
+    Send,
+    /// Stop this instance.
+    Stop,
+}
 
 /// Identity of a tree node, stable across re-polls so expansion state and the
 /// selection survive polling.
@@ -28,6 +50,12 @@ pub enum NodeId {
     ConfigItem(UiKey, String),
     Routing(UiKey),
     Route(UiKey, usize),
+    /// The "anything else goes to the LLM" note. Not a handler — there is
+    /// nothing to edit, reorder or delete — so it gets its own id and does
+    /// nothing when activated.
+    RoutingFallback(UiKey),
+    /// A verb the user can run, placed under whatever it acts on.
+    Action(UiKey, RowAction),
     Peers(UiKey),
     /// A connection, by its id. `None` is the bucket for connectionless
     /// protocols, whose events carry no connection.
@@ -63,9 +91,6 @@ pub struct TreeRow {
     pub style: RowStyle,
     /// Present on group rows; `None` on leaves.
     pub expanded: Option<bool>,
-    /// A right-aligned action on this row (clickable, and reachable by its
-    /// keyboard shortcut).
-    pub button: Option<(String, ButtonId)>,
 }
 
 impl TreeRow {
@@ -76,7 +101,6 @@ impl TreeRow {
             label: label.into(),
             style,
             expanded: None,
-            button: None,
         }
     }
 
@@ -87,14 +111,21 @@ impl TreeRow {
             label: label.into(),
             style: RowStyle::Group,
             expanded: Some(expanded),
-            button: None,
         }
     }
+}
 
-    fn with_button(mut self, label: &str, id: ButtonId) -> Self {
-        self.button = Some((label.to_string(), id));
-        self
-    }
+/// A runnable row. Styled as a button so it reads as a verb among the nouns.
+fn action_row(key: UiKey, action: RowAction, depth: u16, label: impl Into<String>) -> TreeRow {
+    TreeRow::leaf(NodeId::Action(key, action), depth, label, RowStyle::Button)
+}
+
+/// A row for an action that cannot run right now, with the reason in place of
+/// the verb. Dim rather than absent: a missing control reads as a missing
+/// feature, and `[ send ]` on a client whose protocol has no command channel is
+/// worth explaining once rather than hiding forever.
+fn disabled_row(key: UiKey, action: RowAction, depth: u16, label: impl Into<String>) -> TreeRow {
+    TreeRow::leaf(NodeId::Action(key, action), depth, label, RowStyle::Dim)
 }
 
 /// Per-band expansion state.
@@ -270,15 +301,18 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
         .local_addr
         .clone()
         .unwrap_or_else(|| format!(":{}", row.port));
-    rows.push(
-        TreeRow::group(
-            instance.clone(),
-            0,
-            format!("#{} {} {}  {}", row.id.as_u32(), row.protocol, addr, row.status),
-            instance_expanded,
-        )
-        .with_button("[ edit ]", ButtonId::Edit(key)),
-    );
+    rows.push(TreeRow::group(
+        instance.clone(),
+        0,
+        format!(
+            "#{} {} {}  {}",
+            row.id.as_u32(),
+            row.protocol,
+            addr,
+            row.status
+        ),
+        instance_expanded,
+    ));
     if !instance_expanded {
         return rows;
     }
@@ -320,50 +354,56 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
             RowStyle::Dim,
         ));
     }
-    rows.push(
-        TreeRow::group(
-            config.clone(),
-            1,
-            format!("config ({})", config_items.len()),
-            config_expanded,
-        )
-        .with_button("[ edit ]", ButtonId::Edit(key)),
-    );
+    rows.push(TreeRow::group(
+        config.clone(),
+        1,
+        format!("config ({})", config_items.len()),
+        config_expanded,
+    ));
     if config_expanded {
+        // The cap applies to the settings, never to the verb: `[ edit config ]`
+        // is pushed after it, so an instance with many parameters cannot hide
+        // the one row that lets you change them.
         push_capped(&mut rows, state, &config, 2, config_items);
+        rows.push(action_row(key, RowAction::EditConfig, 2, "[ edit config ]"));
     }
 
     // ---- routing ----
     let routing = NodeId::Routing(key);
     let routing_expanded = state.is_expanded(&routing);
-    let routes = route_rows(key, 2, row.routing.as_ref());
-    rows.push(
-        TreeRow::group(
-            routing.clone(),
-            1,
-            format!("routing ({})", routes.len().saturating_sub(1)),
-            routing_expanded,
-        )
-        .with_button("[ edit ]", ButtonId::Routing(key)),
-    );
+    rows.push(TreeRow::group(
+        routing.clone(),
+        1,
+        format!("routing ({})", handler_count(row.routing.as_ref())),
+        routing_expanded,
+    ));
     if routing_expanded {
+        let routes = route_rows(key, 2, row.routing.as_ref());
         push_capped(&mut rows, state, &routing, 2, routes);
+        rows.push(action_row(
+            key,
+            RowAction::AddRoute,
+            2,
+            "[ + add response ]",
+        ));
+        rows.push(TreeRow::leaf(
+            NodeId::RoutingFallback(key),
+            2,
+            "otherwise → LLM (the instance instruction)",
+            RowStyle::Dim,
+        ));
     }
 
     // ---- peers, with each peer's requests beneath it ----
     let peers = NodeId::Peers(key);
     let peers_expanded = state.is_expanded(&peers);
     let live = row.conns.len();
-    let mut peers_group = TreeRow::group(
+    rows.push(TreeRow::group(
         peers.clone(),
         1,
         format!("peers ({live} live, {} recent)", row.recent.len()),
         peers_expanded,
-    );
-    if row.client_counterpart.is_some() {
-        peers_group = peers_group.with_button("[ + client ]", ButtonId::AddClientFor(row.id));
-    }
-    rows.push(peers_group);
+    ));
 
     if peers_expanded {
         let mut peer_rows: Vec<TreeRow> = Vec::new();
@@ -421,8 +461,26 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
                 RowStyle::Dim,
             ));
         }
+
+        // Connecting a client belongs with the peers it will join, not on the
+        // instance row: what it produces is another entry in this list.
+        match &row.client_counterpart {
+            Some(protocol) => rows.push(action_row(
+                key,
+                RowAction::AddClient,
+                2,
+                format!("[ + connect a {protocol} client ]"),
+            )),
+            None => rows.push(disabled_row(
+                key,
+                RowAction::AddClient,
+                2,
+                "(no client implementation for this protocol)",
+            )),
+        }
     }
 
+    rows.push(action_row(key, RowAction::Stop, 1, "[ stop server ]"));
     rows
 }
 
@@ -468,12 +526,7 @@ fn peer_with_requests(
 ///
 /// The detail is the same text the request modal shows; having it inline means
 /// following a conversation does not cost a round trip through an overlay.
-fn request_rows(
-    key: UiKey,
-    state: &TreeState,
-    entry: &AccessLogEntry,
-    depth: u16,
-) -> Vec<TreeRow> {
+fn request_rows(key: UiKey, state: &TreeState, entry: &AccessLogEntry, depth: u16) -> Vec<TreeRow> {
     let node = NodeId::Request(key, entry.id);
     // Requests default to collapsed: a peer with thirty of them should read as
     // a list, not a wall of JSON.
@@ -502,6 +555,15 @@ fn request_rows(
     rows
 }
 
+/// How many handlers are configured. The fallback is not one of them.
+fn handler_count(routing: Option<&crate::scripting::EventHandlerConfig>) -> usize {
+    routing.map(|c| c.handlers.len()).unwrap_or(0)
+}
+
+/// One row per configured handler, in match order.
+///
+/// Activating a row edits *that* handler. The always-present LLM fallback is
+/// not included — it is not a handler, so it is stated separately by the caller.
 fn route_rows(
     key: UiKey,
     depth: u16,
@@ -557,12 +619,6 @@ fn route_rows(
             ));
         }
     }
-    rows.push(TreeRow::leaf(
-        NodeId::Route(key, usize::MAX),
-        depth,
-        "otherwise → LLM (the instance instruction)",
-        RowStyle::Dim,
-    ));
     rows
 }
 
@@ -573,26 +629,18 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
 
     let instance = NodeId::Instance(key);
     let instance_expanded = state.is_expanded(&instance);
-    let send_label = match row.send_state {
-        SendState::Ready => "[ send ]",
-        SendState::NotConnected => "[ send ] not connected",
-        SendState::ProtocolUnsupported => "[ send ] unsupported",
-    };
-    rows.push(
-        TreeRow::group(
-            instance.clone(),
-            0,
-            format!(
-                "#{} {} → {}  {}",
-                row.id.as_u32(),
-                row.protocol,
-                row.remote_addr,
-                row.status
-            ),
-            instance_expanded,
-        )
-        .with_button(send_label, ButtonId::Send(row.id)),
-    );
+    rows.push(TreeRow::group(
+        instance.clone(),
+        0,
+        format!(
+            "#{} {} → {}  {}",
+            row.id.as_u32(),
+            row.protocol,
+            row.remote_addr,
+            row.status
+        ),
+        instance_expanded,
+    ));
     if !instance_expanded {
         return rows;
     }
@@ -626,34 +674,44 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         format!("memory: {} bytes", row.memory_len),
         RowStyle::Dim,
     ));
-    rows.push(
-        TreeRow::group(
-            config.clone(),
-            1,
-            format!("config ({})", config_items.len()),
-            config_expanded,
-        )
-        .with_button("[ edit ]", ButtonId::Edit(key)),
-    );
+    rows.push(TreeRow::group(
+        config.clone(),
+        1,
+        format!("config ({})", config_items.len()),
+        config_expanded,
+    ));
     if config_expanded {
+        // The cap applies to the settings, never to the verb: `[ edit config ]`
+        // is pushed after it, so an instance with many parameters cannot hide
+        // the one row that lets you change them.
         push_capped(&mut rows, state, &config, 2, config_items);
+        rows.push(action_row(key, RowAction::EditConfig, 2, "[ edit config ]"));
     }
 
     // ---- routing ----
     let routing = NodeId::Routing(key);
     let routing_expanded = state.is_expanded(&routing);
-    let routes = route_rows(key, 2, row.routing.as_ref());
-    rows.push(
-        TreeRow::group(
-            routing.clone(),
-            1,
-            format!("routing ({})", routes.len().saturating_sub(1)),
-            routing_expanded,
-        )
-        .with_button("[ edit ]", ButtonId::Routing(key)),
-    );
+    rows.push(TreeRow::group(
+        routing.clone(),
+        1,
+        format!("routing ({})", handler_count(row.routing.as_ref())),
+        routing_expanded,
+    ));
     if routing_expanded {
+        let routes = route_rows(key, 2, row.routing.as_ref());
         push_capped(&mut rows, state, &routing, 2, routes);
+        rows.push(action_row(
+            key,
+            RowAction::AddRoute,
+            2,
+            "[ + add response ]",
+        ));
+        rows.push(TreeRow::leaf(
+            NodeId::RoutingFallback(key),
+            2,
+            "otherwise → LLM (the instance instruction)",
+            RowStyle::Dim,
+        ));
     }
 
     // ---- peer (a client has one) with its requests ----
@@ -667,10 +725,7 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
     ));
     if peers_expanded {
         let conn_label = match &row.connection {
-            Some(c) => format!(
-                "{}  ↓{} ↑{}",
-                c.remote_addr, c.bytes_received, c.bytes_sent
-            ),
+            Some(c) => format!("{}  ↓{} ↑{}", c.remote_addr, c.bytes_received, c.bytes_sent),
             None => row.remote_addr.clone(),
         };
         peer_with_requests(
@@ -719,6 +774,26 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
                 RowStyle::Dim,
             ));
         }
+
+        // Sending is a thing you do to the peer, so it lives with the peer and
+        // the requests it will produce.
+        match row.send_state {
+            SendState::Ready => {
+                rows.push(action_row(key, RowAction::Send, 2, "[ send a request ]"))
+            }
+            SendState::NotConnected => rows.push(disabled_row(
+                key,
+                RowAction::Send,
+                2,
+                "(cannot send — not connected)",
+            )),
+            SendState::ProtocolUnsupported => rows.push(disabled_row(
+                key,
+                RowAction::Send,
+                2,
+                "(cannot send — this client has no command channel yet)",
+            )),
+        }
     }
 
     // Connection attempts are diagnostic history, a sibling of `peer` rather
@@ -750,5 +825,6 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         }
     }
 
+    rows.push(action_row(key, RowAction::Stop, 1, "[ stop client ]"));
     rows
 }

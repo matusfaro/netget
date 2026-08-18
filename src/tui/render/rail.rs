@@ -44,9 +44,11 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
             },
         ),
         Span::styled(
-            format!("({servers} server{}, {clients} client{})",
+            format!(
+                "({servers} server{}, {clients} client{})",
                 if servers == 1 { "" } else { "s" },
-                if clients == 1 { "" } else { "s" }),
+                if clients == 1 { "" } else { "s" }
+            ),
             app.styles.dimmed,
         ),
     ]);
@@ -136,18 +138,6 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
                 index: absolute,
             },
         );
-        if let Some((label, id)) = &row.row.button {
-            let width = label.chars().count() as u16;
-            if row_area.width > width + 1 {
-                let button_area = Rect {
-                    x: row_area.x + row_area.width - width,
-                    y: row_area.y,
-                    width,
-                    height: 1,
-                };
-                app.hits.push(button_area, HitTarget::Button(id.clone()));
-            }
-        }
     }
     frame.render_widget(Paragraph::new(lines), body);
 

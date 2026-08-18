@@ -20,12 +20,15 @@ pub enum HitTarget {
         key: UiKey,
     },
     /// A row of a band's flattened tree, by index.
+    ///
+    /// Actions are rows too (`tree::RowAction`), so there is no separate
+    /// button target inside the rail: clicking a row and pressing Enter on it
+    /// go through exactly the same path, which is what stopped the two from
+    /// drifting apart.
     TreeRow {
         key: UiKey,
         index: usize,
     },
-    /// A labelled button inside a band or header.
-    Button(ButtonId),
     /// A clickable segment of the bottom status bar.
     StatusSegment(SegmentId),
     /// Anywhere inside the active modal (swallows clicks so they do not reach
@@ -35,16 +38,6 @@ pub enum HitTarget {
     ModalButton(ModalButtonId),
     /// A labelled button inside a modal.
     ModalActionButton(ModalAction),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ButtonId {
-    Stop(UiKey),
-    Edit(UiKey),
-    Routing(UiKey),
-    AddClientFor(crate::state::ServerId),
-    Send(crate::state::ClientId),
-    StopAll,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

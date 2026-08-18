@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use crate::events::EventHandler;
 use crate::state::app_state::AppState;
 use crate::tui::app::{DashboardApp, Focus, RailSel, Section, UiKey};
-use crate::tui::hit::{ButtonId, HitTarget, SegmentId};
+use crate::tui::hit::{HitTarget, SegmentId};
 use crate::tui::modal::{confirm, Modal, PendingAction};
 use crate::tui::uimsg::{ActionOrigin, UiMsg};
 
@@ -233,10 +233,7 @@ async fn handle_rail_key(
     state: &AppState,
 ) -> Outcome {
     let rows = crate::tui::render::band::rail_rows(app);
-    let owner = sel
-        .row
-        .and_then(|row| rows.get(row))
-        .map(|r| r.key);
+    let owner = sel.row.and_then(|row| rows.get(row)).map(|r| r.key);
 
     match key.code {
         KeyCode::Down => {
@@ -298,7 +295,7 @@ async fn handle_rail_key(
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
             if let (Some(key_owner), Some(row)) = (owner, sel.row) {
-                activate_row(app, key_owner, &rows, row, state);
+                activate_row(app, key_owner, &rows, row, state).await;
             } else if !rows.is_empty() {
                 sel.row = Some(0);
             }
@@ -312,8 +309,12 @@ async fn handle_rail_key(
                 push_stop_confirm(app, key_owner);
             }
         }
-        KeyCode::Char('e') | KeyCode::Char('r') | KeyCode::Char('d') | KeyCode::Char('n')
-        | KeyCode::Char('c') | KeyCode::Char('a') => {
+        KeyCode::Char('e')
+        | KeyCode::Char('r')
+        | KeyCode::Char('d')
+        | KeyCode::Char('n')
+        | KeyCode::Char('c')
+        | KeyCode::Char('a') => {
             handle_band_shortcut(app, key.code, owner, state).await;
         }
         _ => {}
@@ -328,14 +329,14 @@ async fn handle_rail_key(
 
 /// Enter on a tree row: toggle a group, lift a "… N more" cap, or open the
 /// editor that owns the row.
-fn activate_row(
+async fn activate_row(
     app: &mut DashboardApp,
     key: UiKey,
     rows: &[crate::tui::render::band::RailRow],
     row: usize,
     state: &AppState,
 ) {
-    use crate::tui::tree::NodeId;
+    use crate::tui::tree::{NodeId, RowAction};
 
     let Some(rail_row) = rows.get(row) else {
         return;
@@ -354,16 +355,47 @@ fn activate_row(
             app.rail.band_mut(key).tree.show_all(&group);
         }
         NodeId::ConfigItem(k, _) => open_editor(app, k),
-        NodeId::Route(k, _) => open_routing(app, k, state),
-        NodeId::RequestDetail(..) => {}
+        // Entering a route edits that route, not the table it sits in — the
+        // row you pressed is the one you meant.
+        NodeId::Route(k, index) => open_routing_at(app, k, state, RouteTarget::Edit(index)),
+        NodeId::Action(k, action) => match action {
+            RowAction::EditConfig => open_editor(app, k),
+            RowAction::EditRoute(index) => open_routing_at(app, k, state, RouteTarget::Edit(index)),
+            RowAction::AddRoute => open_routing_at(app, k, state, RouteTarget::New),
+            RowAction::AddClient => {
+                if let UiKey::Server(id) = k {
+                    open_client_for_server(app, id, state).await;
+                }
+            }
+            RowAction::Send => {
+                if let UiKey::Client(id) = k {
+                    open_composer(app, id, state).await;
+                }
+            }
+            RowAction::Stop => push_stop_confirm(app, k),
+        },
+        NodeId::RoutingFallback(_) | NodeId::RequestDetail(..) => {}
         _ => {}
     }
+}
+
+/// Which handler the routing editor should open on.
+enum RouteTarget {
+    /// The table itself, nothing opened.
+    List,
+    /// Edit an existing handler by index.
+    Edit(usize),
+    /// Start a new handler.
+    New,
 }
 
 fn push_stop_confirm(app: &mut DashboardApp, key: UiKey) {
     let (message, action) = match key {
         UiKey::Server(id) => (
-            format!("Stop server #{}? Live connections will be dropped.", id.as_u32()),
+            format!(
+                "Stop server #{}? Live connections will be dropped.",
+                id.as_u32()
+            ),
             PendingAction::StopServer(id),
         ),
         UiKey::Client(id) => (
@@ -400,8 +432,12 @@ async fn handle_band_shortcut(
                     let protocol = row.protocol.clone();
                     match crate::protocol::server_registry::registry().resolve(&protocol) {
                         Ok(p) => {
-                            let text =
-                                format!("{} — {}\n{}", p.protocol_name(), p.description(), p.metadata().summary());
+                            let text = format!(
+                                "{} — {}\n{}",
+                                p.protocol_name(),
+                                p.description(),
+                                p.metadata().summary()
+                            );
                             app.push_system(text);
                         }
                         Err(e) => app.push_system(format!("{e}")),
@@ -468,6 +504,14 @@ fn open_editor(app: &mut DashboardApp, key: UiKey) {
 }
 
 fn open_routing(app: &mut DashboardApp, key: UiKey, state: &AppState) {
+    open_routing_at(app, key, state, RouteTarget::List);
+}
+
+/// Open the routing editor, optionally landing straight on one handler.
+///
+/// Going through the table first was a step with nothing in it: you had already
+/// pointed at the handler you wanted by pressing Enter on its row.
+fn open_routing_at(app: &mut DashboardApp, key: UiKey, state: &AppState, target: RouteTarget) {
     use crate::tui::modal::routing::RoutingModel;
     let model = match key {
         UiKey::Server(id) => app
@@ -483,12 +527,22 @@ fn open_routing(app: &mut DashboardApp, key: UiKey, state: &AppState) {
             .find(|c| c.id == id)
             .map(|row| RoutingModel::new(key, &row.protocol, row.routing.as_ref(), state)),
     };
-    if let Some(model) = model {
+    if let Some(mut model) = model {
+        match target {
+            RouteTarget::List => {}
+            RouteTarget::New => model.add(),
+            RouteTarget::Edit(index) => {
+                if index < model.handlers.len() {
+                    model.selected = index;
+                    model.edit_selected();
+                }
+            }
+        }
         app.modals.push(Modal::Routing(Box::new(model)));
     }
 }
 
-/// `[+ client]` on a server: create a client of the counterpart protocol
+/// `[ + connect a client ]` on a server: create a client of the counterpart protocol
 /// pointed at that very server, so the pair can talk to each other.
 async fn open_client_for_server(
     app: &mut DashboardApp,
@@ -525,7 +579,9 @@ async fn open_client_for_server(
 
     // Everything this client needs is known, so connect it rather than showing
     // a form with nothing left to fill in.
-    app.push_system(format!("Connecting a {client_protocol} client to {remote}…"));
+    app.push_system(format!(
+        "Connecting a {client_protocol} client to {remote}…"
+    ));
     let llm = app.llm_client.clone();
     let status_tx = app.status_tx.clone();
     let ui_tx = app.ui_tx.clone();
@@ -542,7 +598,11 @@ async fn open_client_for_server(
     });
 }
 
-async fn open_composer(app: &mut DashboardApp, client_id: crate::state::ClientId, state: &AppState) {
+async fn open_composer(
+    app: &mut DashboardApp,
+    client_id: crate::state::ClientId,
+    state: &AppState,
+) {
     let Some(row) = app.snapshot.clients.iter().find(|c| c.id == client_id) else {
         return;
     };
@@ -785,14 +845,17 @@ async fn handle_form_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState
             };
             if field.multiline {
                 let json = matches!(field.target, FieldTarget::EventHandlersJson);
-                let editor =
-                    TextEditorModel::new(&field.label, &field.help, &field.value, json);
+                let editor = TextEditorModel::new(&field.label, &field.help, &field.value, json);
                 app.modals.push(Modal::TextEditor {
                     editor: Box::new(editor),
                     target: field.target,
                 });
             } else if field.target == FieldTarget::SendFirst {
-                let toggled = if field.value == "true" { "false" } else { "true" };
+                let toggled = if field.value == "true" {
+                    "false"
+                } else {
+                    "true"
+                };
                 form.set_field_value(&FieldTarget::SendFirst, toggled.to_string());
             } else {
                 form.begin_edit();
@@ -1040,23 +1103,8 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
         HitTarget::TreeRow { key, index } => {
             app.focus = Focus::Rail(RailSel { row: Some(index) });
             let rows = crate::tui::render::band::rail_rows(app);
-            activate_row(app, key, &rows, index, state);
+            activate_row(app, key, &rows, index, state).await;
         }
-        // Buttons run the same code as their keyboard shortcuts — clicking
-        // [ edit ] must not do something different from pressing `e`.
-        HitTarget::Button(button) => match button {
-            ButtonId::Stop(key) => push_stop_confirm(app, key),
-            ButtonId::StopAll => app.modals.push(Modal::Confirm {
-                message: "Stop every running server and client?".to_string(),
-                action: PendingAction::StopAll,
-            }),
-            ButtonId::Edit(key) => open_editor(app, key),
-            ButtonId::Routing(key) => open_routing(app, key, state),
-            ButtonId::AddClientFor(server_id) => {
-                open_client_for_server(app, server_id, state).await
-            }
-            ButtonId::Send(client_id) => open_composer(app, client_id, state).await,
-        },
         HitTarget::StatusSegment(segment) => match segment {
             SegmentId::LogLevel => {
                 let level = app.core.log_level.cycle();
@@ -1132,20 +1180,18 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
             KeyCode::Esc => model.draft = None,
             KeyCode::Tab => draft.cycle_focus(false),
             KeyCode::BackTab => draft.cycle_focus(true),
-            KeyCode::Enter if draft.focused_action().is_some() => {
-                match draft.focused_action() {
-                    Some(crate::tui::hit::ModalAction::DraftSave) => match model.commit_draft() {
-                        Ok(()) => model.error = None,
-                        Err(e) => {
-                            if let Some(draft) = model.draft.as_mut() {
-                                draft.error = Some(e.to_string());
-                            }
+            KeyCode::Enter if draft.focused_action().is_some() => match draft.focused_action() {
+                Some(crate::tui::hit::ModalAction::DraftSave) => match model.commit_draft() {
+                    Ok(()) => model.error = None,
+                    Err(e) => {
+                        if let Some(draft) = model.draft.as_mut() {
+                            draft.error = Some(e.to_string());
                         }
-                    },
-                    Some(crate::tui::hit::ModalAction::DraftCancel) => model.draft = None,
-                    _ => {}
-                }
-            }
+                    }
+                },
+                Some(crate::tui::hit::ModalAction::DraftCancel) => model.draft = None,
+                _ => {}
+            },
             KeyCode::Left | KeyCode::Right if draft.focus == HandlerEditFocus::Kind => {
                 draft.kind = draft.kind.next();
             }
@@ -1297,7 +1343,9 @@ async fn run_routing_action(
     Outcome::Continue
 }
 
-fn model_actions(model: &crate::tui::modal::routing::RoutingModel) -> &[crate::llm::actions::ActionDefinition] {
+fn model_actions(
+    model: &crate::tui::modal::routing::RoutingModel,
+) -> &[crate::llm::actions::ActionDefinition] {
     &model.actions
 }
 

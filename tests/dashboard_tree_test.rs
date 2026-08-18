@@ -94,11 +94,18 @@ fn an_instance_is_the_root_with_config_routing_and_peers_beneath() {
     // The three groups sit one level in.
     let groups = labels_at_depth(&rows, 1);
     assert!(groups.iter().any(|l| l.starts_with("config")), "{groups:?}");
-    assert!(groups.iter().any(|l| l.starts_with("routing")), "{groups:?}");
+    assert!(
+        groups.iter().any(|l| l.starts_with("routing")),
+        "{groups:?}"
+    );
     assert!(groups.iter().any(|l| l.starts_with("peers")), "{groups:?}");
 
-    // Every group row is expandable.
-    for row in rows.iter().filter(|r| r.depth == 1) {
+    // Every group row is expandable. Action rows sit at this depth too and are
+    // leaves by design — `[ stop server ]` has nothing to expand.
+    for row in rows
+        .iter()
+        .filter(|r| r.depth == 1 && !matches!(r.node, NodeId::Action(..)))
+    {
         assert!(
             row.expanded.is_some(),
             "group {:?} should be expandable",
@@ -117,7 +124,7 @@ fn requests_nest_under_the_peer_that_carried_them() {
     let under_peers = subtree(&rows, "peers");
     let peers: Vec<String> = under_peers
         .iter()
-        .filter(|r| r.depth == 2)
+        .filter(|r| r.depth == 2 && !matches!(r.node, NodeId::Action(..)))
         .map(|r| r.label.clone())
         .collect();
     assert_eq!(peers.len(), 2, "two connections: {peers:?}");
@@ -294,7 +301,10 @@ fn a_client_tree_groups_its_peer_requests_and_attempts() {
 
     let groups = labels_at_depth(&rows, 1);
     assert!(groups.iter().any(|l| l.starts_with("config")), "{groups:?}");
-    assert!(groups.iter().any(|l| l.starts_with("routing")), "{groups:?}");
+    assert!(
+        groups.iter().any(|l| l.starts_with("routing")),
+        "{groups:?}"
+    );
     assert!(groups.iter().any(|l| l.starts_with("peer")), "{groups:?}");
     // Attempts are a sibling of peer, not one of its children.
     assert!(
@@ -302,12 +312,113 @@ fn a_client_tree_groups_its_peer_requests_and_attempts() {
         "attempts should be their own group: {groups:?}"
     );
 
-    // The root carries the send affordance.
+    // Sending lives with the peer it sends to, not on the root row.
+    let under_peer = subtree(&rows, "peer");
     assert!(
-        rows[0]
-            .button
-            .as_ref()
-            .is_some_and(|(label, _)| label.contains("send")),
-        "the client root should offer [ send ]"
+        under_peer.iter().any(|r| {
+            r.node == NodeId::Action(UiKey::Client(row.id), tree::RowAction::Send)
+                && r.label.contains("send")
+        }),
+        "[ send a request ] should be a row under `peer`: {:?}",
+        under_peer.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+}
+
+/// Every verb is a row, under the noun it acts on.
+///
+/// They used to be right-aligned buttons on the group rows, which put them
+/// outside the up/down order entirely: the only way to reach one was to know
+/// its shortcut, and nothing on screen said what the shortcuts were.
+#[test]
+fn actions_are_rows_beneath_the_thing_they_act_on() {
+    use tree::RowAction;
+    let key = UiKey::Server(ServerId::new(1));
+    let row = server(vec![conn(1)], vec![]);
+    let rows = tree::server_rows(&row, &TreeState::default());
+
+    let action_at = |group: &str, action: RowAction| {
+        subtree(&rows, group)
+            .iter()
+            .any(|r| r.node == NodeId::Action(key, action))
+    };
+
+    assert!(
+        action_at("config", RowAction::EditConfig),
+        "editing config belongs under `config`"
+    );
+    assert!(
+        action_at("routing", RowAction::AddRoute),
+        "adding a response belongs under `routing`"
+    );
+    assert!(
+        action_at("peers", RowAction::AddClient),
+        "connecting a client belongs under `peers` — it produces another peer"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.node == NodeId::Action(key, RowAction::Stop)),
+        "stopping the instance should be reachable as a row"
+    );
+}
+
+/// The `[ edit config ]` row must survive the child cap.
+///
+/// The cap exists so one busy group cannot bury what is below it. Charging the
+/// verb against it would mean a server with six startup parameters loses the
+/// only row that can change them — the exact opposite of what the cap is for.
+#[test]
+fn the_edit_row_is_not_charged_against_the_child_cap() {
+    let key = UiKey::Server(ServerId::new(1));
+    let mut params = serde_json::Map::new();
+    for i in 0..(CHILD_LIMIT * 3) {
+        params.insert(format!("param_{i}"), serde_json::json!(i));
+    }
+    let mut row = server(vec![], vec![]);
+    row.startup_params = Some(serde_json::Value::Object(params));
+
+    let rows = tree::server_rows(&row, &TreeState::default());
+    let under_config = subtree(&rows, "config");
+    assert!(
+        under_config.iter().any(|r| r.label.starts_with("… ")),
+        "the cap should have hidden something: {:?}",
+        under_config.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+    assert!(
+        under_config
+            .iter()
+            .any(|r| r.node == NodeId::Action(key, tree::RowAction::EditConfig)),
+        "[ edit config ] must survive the cap: {:?}",
+        under_config.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+}
+
+/// The LLM fallback is not a handler, and must not be reachable as one.
+///
+/// It was `NodeId::Route(key, usize::MAX)` — indistinguishable from a real
+/// handler to everything downstream, which is how it ended up looking editable
+/// and deletable when it is neither.
+#[test]
+fn the_llm_fallback_is_stated_but_not_a_route() {
+    let row = server(vec![], vec![]);
+    let rows = tree::server_rows(&row, &TreeState::default());
+    let under_routing = subtree(&rows, "routing");
+
+    assert!(
+        under_routing
+            .iter()
+            .any(|r| matches!(r.node, NodeId::RoutingFallback(_))),
+        "the fallback should still be visible: {:?}",
+        under_routing.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+    assert!(
+        !under_routing
+            .iter()
+            .any(|r| matches!(r.node, NodeId::Route(..))),
+        "with no handlers configured there are no routes, only the fallback note"
+    );
+    assert!(
+        rows.iter().any(|r| r.label.starts_with("routing (0)")),
+        "the fallback must not be counted as a configured handler: {:?}",
+        rows.iter().map(|r| &r.label).collect::<Vec<_>>()
     );
 }

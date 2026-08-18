@@ -75,16 +75,11 @@ pub fn row_line<'a>(app: &DashboardApp, row: &TreeRow, selected: bool) -> Line<'
         style_for(app, row.style)
     };
 
-    let mut spans = vec![
+    Line::from(vec![
         Span::styled(
             format!("{indent}{marker}"),
             if selected { base } else { app.styles.separator },
         ),
         Span::styled(row.label.clone(), base),
-    ];
-    if let Some((label, _)) = &row.button {
-        spans.push(Span::styled("  ", app.styles.dimmed));
-        spans.push(Span::styled(label.clone(), app.styles.button));
-    }
-    Line::from(spans)
+    ])
 }
