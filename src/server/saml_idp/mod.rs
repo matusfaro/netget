@@ -21,8 +21,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, trace, warn};
 
 use crate::llm::action_helper::call_llm;
-use crate::logging::emit::Log;
 use crate::llm::ollama_client::OllamaClient;
+use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::server::SamlIdpProtocol;
@@ -213,10 +213,7 @@ async fn handle_saml_idp_request(
     let path = req.uri().path().to_string();
     let query = req.uri().query().map(|q| q.to_string());
 
-    Log::new(Some(&status_tx)).debug(format!(
-        "SAML IDP {} {} from {}",
-        method, path, remote_addr
-    ));
+    Log::new(Some(&status_tx)).debug(format!("SAML IDP {} {} from {}", method, path, remote_addr));
 
     // Extract headers
     let headers: Vec<(String, String)> = req
@@ -345,15 +342,15 @@ async fn handle_saml_idp_request(
                 "LLM error for SAML IDP request (overload={}, status {}): {}",
                 overloaded, status, e
             ));
-            let reason =
-                crate::utils::truncate_for_log(&e.to_string(), 200).replace(['\r', '\n'], " ");
             build_safe_response(
                 status,
                 [(
                     "content-type".to_string(),
                     "text/plain; charset=utf-8".to_string(),
                 )],
-                format!("netget: {reason}"),
+                crate::utils::WireFailure::classify(&e)
+                    .prefixed_text()
+                    .to_string(),
             )
         }
     };

@@ -291,20 +291,17 @@ fn irc_command_token(line: &str) -> String {
 /// that is `ERROR` followed by closing the link - which is also what unblocks a client that is
 /// mid-registration instead of leaving it on a socket that will never speak again.
 fn irc_failure_reply(command: &str, err: &anyhow::Error) -> (String, bool) {
-    // A numeric is one CRLF-terminated line and its trailing parameter runs to end of line, so
-    // an embedded newline in the error would forge a second message.
-    let reason = crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
-    if crate::llm::is_overload_error(err) {
-        (
-            format!(
-                ":netget 400 * {command} :netget: backend at capacity, retry later ({reason})\r\n"
-            ),
-            false,
-        )
+    // The text is a category, never the error itself (`crate::utils::wire_failure`). A numeric
+    // is one CRLF-terminated line whose trailing parameter runs to end of line, so an embedded
+    // newline in an error would have forged a second message.
+    let failure = crate::utils::WireFailure::classify(err);
+    let text = failure.prefixed_text();
+    if failure.is_overloaded() {
+        (format!(":netget 400 * {command} :{text}\r\n"), false)
     } else {
         (
             format!(
-                ":netget 400 * {command} :netget: {reason}\r\nERROR :Closing link: netget backend unavailable\r\n"
+                ":netget 400 * {command} :{text}\r\nERROR :Closing link: netget backend unavailable\r\n"
             ),
             true,
         )

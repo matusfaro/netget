@@ -667,17 +667,12 @@ impl MssqlHandler {
                 } else {
                     MSSQL_ERROR_GENERIC
                 };
-                let reason = crate::utils::truncate_for_log(&e.to_string(), 200);
-                let message = if overloaded {
-                    format!("netget: backend at capacity, retry later: {reason}")
-                } else {
-                    format!("netget: {reason}")
-                };
+                let message = crate::utils::WireFailure::classify(&e).prefixed_text();
                 // Non-fatal: a wire fallback (TDS ERROR token) is still delivered and the
                 // connection stays open, so this is recovered rather than a hard failure.
                 Log::new(Some(&self.status_tx))
                     .warn(format!("MSSQL replying error {number}: {message}"));
-                self.send_error(stream, number, &message, 16).await?;
+                self.send_error(stream, number, message, 16).await?;
                 Ok(false)
             }
         }

@@ -354,10 +354,7 @@ async fn handle_couchdb_request_with_llm(
 
             let error_response = serde_json::json!({
                 "error": kind,
-                "reason": format!(
-                    "netget: {}",
-                    crate::utils::truncate_for_log(&e.to_string(), 200)
-                )
+                "reason": crate::utils::WireFailure::classify(&e).prefixed_text()
             })
             .to_string();
 

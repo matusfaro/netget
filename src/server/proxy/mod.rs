@@ -553,10 +553,9 @@ impl ProxyServer {
                     dest_host, dest_port, e
                 ));
                 HttpsConnectionAction::Block {
-                    reason: Some(format!(
-                        "netget proxy: no filtering decision could be obtained ({})",
-                        crate::utils::truncate_for_log(&e.to_string(), 200)
-                    )),
+                    reason: Some(
+                        "netget proxy: no filtering decision could be obtained".to_string(),
+                    ),
                 }
             });
 
@@ -812,10 +811,8 @@ impl ProxyServer {
                 ));
                 RequestAction::Block {
                     status,
-                    body: format!(
-                        "netget proxy: no filtering decision could be obtained, request refused ({})",
-                        crate::utils::truncate_for_log(&e.to_string(), 200)
-                    ),
+                    body: "netget proxy: no filtering decision could be obtained, request refused"
+                        .to_string(),
                 }
             });
 

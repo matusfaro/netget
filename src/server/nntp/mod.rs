@@ -327,26 +327,19 @@ impl NntpServer {
     }
 }
 
-/// Sanitise an error for use as the free text of a single NNTP response line.
-///
-/// A response is one CRLF-terminated line, so an embedded newline in the error would forge a
-/// second response and desynchronise the client for the rest of the session.
-fn nntp_reason(err: &anyhow::Error) -> String {
-    crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ")
-}
-
 /// The greeting to write when the LLM backend cannot produce one.
 ///
 /// RFC 3977 5.1 defines exactly two failure greetings: 400 (temporarily unavailable) and 502
 /// (permanently unavailable). Neither can be mistaken for the 200/201 that means "ready", so
 /// a client can never read this as a usable session.
 fn nntp_greeting_failure_line(err: &anyhow::Error) -> String {
-    let reason = nntp_reason(err);
-    if crate::llm::is_overload_error(err) {
-        format!("400 netget: backend at capacity, retry later ({reason})\r\n")
-    } else {
-        format!("400 netget: service temporarily unavailable ({reason})\r\n")
-    }
+    // The free text is a category, never the error itself (`crate::utils::wire_failure`),
+    // which also makes it impossible for a newline in an error to forge a second response
+    // line and desynchronise the session.
+    format!(
+        "400 {}\r\n",
+        crate::utils::WireFailure::classify(err).prefixed_text()
+    )
 }
 
 /// The response line for a command the LLM backend failed to answer, and whether to close.
@@ -357,13 +350,11 @@ fn nntp_greeting_failure_line(err: &anyhow::Error) -> String {
 /// closing the connection - because telling a client to come back later is more useful than
 /// letting it hammer a backend that is already saturated.
 fn nntp_command_failure_line(err: &anyhow::Error) -> (String, bool) {
-    let reason = nntp_reason(err);
-    if crate::llm::is_overload_error(err) {
-        (
-            format!("400 netget: backend at capacity, retry later ({reason})\r\n"),
-            true,
-        )
+    let failure = crate::utils::WireFailure::classify(err);
+    let text = failure.prefixed_text();
+    if failure.is_overloaded() {
+        (format!("400 {text}\r\n"), true)
     } else {
-        (format!("403 netget: {reason}\r\n"), false)
+        (format!("403 {text}\r\n"), false)
     }
 }

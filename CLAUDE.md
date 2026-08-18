@@ -717,6 +717,22 @@ Read before assuming a subsystem is sound:
   are fixed; copy one of those shapes when you touch a protocol. Re-derive the count with a
   grep for `LLM error` in `src/server/*/mod.rs` and check whether the following ~18 lines
   write anything.
+- **Answering the peer is not a licence to tell it anything.** Fixing the silence above
+  introduced the opposite defect across ~25 protocols at once: each interpolated the error into
+  the reply, so a plain `telnet` session printed `[netget] cannot answer right now: ✗  LLM
+  failed to generate valid response after retries.` — netget's own retry machinery, verbatim, on
+  a stranger's terminal. Backend URLs, model names, file paths, serde and prost messages and
+  `anyhow` context chains all reached the wire this way. It spread because each protocol was
+  written by copying its neighbour.
+
+  The rule is **the peer gets a category, the log gets the error**. `crate::utils::wire_failure`
+  (`WireFailure::{Overloaded, Unavailable}`) classifies an error and returns `&'static str`
+  — deliberately, because a helper returning `String` is one `format!` away from leaking again.
+  Keep the two categories distinct: protocols map them onto different codes (503 vs 500, RESP
+  `LOADING` vs `ERR`, MySQL 1205 vs 1105, gRPC `UNAVAILABLE` vs `INTERNAL`) so a client backs
+  off rather than recording a permanent fault. `smtp` was the one protocol that already had
+  this right — byte-literal replies, nothing interpolated. `tests/wire_failure_test.rs` fails
+  the build if any of the leaked idioms reappear under `src/server/`.
 - Related and now fixed, but worth knowing as the reference case: the rate limiter used to
   `try_acquire` for `RequestSource::Network` and bail on contention, so at the shipped default
   of `--llm-max-concurrent 1` any request overlapping an in-flight LLM call was **discarded** —

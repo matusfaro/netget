@@ -252,11 +252,8 @@ async fn handle_spark_request(
                 status,
                 e
             );
-            let reason = format!(
-                "netget: {}",
-                crate::utils::truncate_for_log(&e.to_string(), 200)
-            );
-            Ok(build_spark_error(status, &reason))
+            let reason = crate::utils::WireFailure::classify(&e).prefixed_text();
+            Ok(build_spark_error(status, reason))
         }
     }
 }

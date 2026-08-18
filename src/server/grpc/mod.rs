@@ -214,25 +214,29 @@ impl From<anyhow::Error> for GrpcFailure {
         // Classify here too, not only at the explicit call site: `?` on an anyhow error is
         // reachable from several places in this module and an overload must never be reported
         // as a non-retryable INTERNAL just because it took the implicit path.
+        //
+        // `grpc-message` is a client-visible header, so it carries the category and not the
+        // error - see `crate::utils::wire_failure`. The error itself is logged at the call
+        // sites that have a status channel.
         let status = grpc_status_for_llm_failure(&e);
-        Self::new(status, e.to_string())
+        Self::new(status, crate::utils::WireFailure::classify(&e).text())
     }
 }
 
 #[cfg(feature = "grpc")]
 impl From<serde_json::Error> for GrpcFailure {
     fn from(e: serde_json::Error) -> Self {
-        Self::new(GrpcStatus::Internal, e.to_string())
+        // Logged in full; the peer gets the category only.
+        debug!("gRPC JSON conversion failed: {e}");
+        Self::new(GrpcStatus::Internal, "request could not be processed")
     }
 }
 
 #[cfg(feature = "grpc")]
 impl From<prost::EncodeError> for GrpcFailure {
     fn from(e: prost::EncodeError) -> Self {
-        Self::new(
-            GrpcStatus::Internal,
-            format!("could not encode response: {}", e),
-        )
+        debug!("gRPC response encoding failed: {e}");
+        Self::new(GrpcStatus::Internal, "could not encode response")
     }
 }
 
@@ -629,7 +633,7 @@ impl DynamicGrpcService {
                 } else {
                     GrpcStatus::Internal
                 };
-                return Ok(Self::grpc_error_response(status, &e.to_string()));
+                return Ok(Self::grpc_error_response(status, "malformed gRPC frame"));
             }
         };
 
@@ -808,9 +812,10 @@ impl DynamicGrpcService {
         // client's malformed input, not a server fault.
         let request_msg = DynamicMessage::decode(input_desc.clone(), request_bytes.as_slice())
             .map_err(|e| {
+                debug!("gRPC request message did not decode: {e}");
                 GrpcFailure::new(
                     GrpcStatus::InvalidArgument,
-                    format!("could not decode request message: {}", e),
+                    "could not decode request message",
                 )
             })?;
 
@@ -863,7 +868,10 @@ impl DynamicGrpcService {
                 status as i32,
                 status
             );
-            GrpcFailure::new(status, format!("netget gRPC: handler unavailable: {}", e))
+            GrpcFailure::new(
+                status,
+                crate::utils::WireFailure::classify(&e).prefixed_text(),
+            )
         })?;
 
         // Process action results
@@ -878,9 +886,10 @@ impl DynamicGrpcService {
                     // Convert JSON to DynamicMessage
                     let response_msg = Self::json_to_dynamic_message(response_json, &output_desc)
                         .map_err(|e| {
+                        debug!("gRPC handler response did not fit the schema: {e}");
                         GrpcFailure::new(
                             GrpcStatus::Internal,
-                            format!("handler's response does not fit the schema: {}", e),
+                            "handler's response does not fit the schema",
                         )
                     })?;
 

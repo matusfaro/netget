@@ -252,8 +252,7 @@ async fn handle_npm_request(
         }),
     );
 
-    Log::new(Some(&status_tx))
-        .debug(format!("Calling LLM for NPM request: {} {}", method, path));
+    Log::new(Some(&status_tx)).debug(format!("Calling LLM for NPM request: {} {}", method, path));
 
     // Call LLM
     let llm_result = call_llm(
@@ -294,7 +293,7 @@ async fn handle_npm_request(
             // HTTP connection continues.
             Log::new(Some(&status_tx)).warn(format!("NPM LLM call failed: {}", e));
             let error_response = json!({
-                "error": format!("LLM error: {}", e)
+                "error": crate::utils::WireFailure::classify(&e).text()
             });
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -305,13 +304,16 @@ async fn handle_npm_request(
     }
 }
 
-/// A 500 naming what was wrong with the model's answer.
+/// A 500 for an answer the model gave that this server cannot turn into a response.
 ///
 /// Every branch below used to `.unwrap()` on the field it needed. A missing field is
 /// the model's mistake, and `.unwrap()` inside a per-connection tokio task is the
 /// worst possible response to it: the panic is swallowed, the server keeps reporting
 /// `Running`, and the client hangs until its own timeout with nothing in the log
 /// connecting the two. An explicit 500 tells the client *and* the operator.
+///
+/// `reason` names action fields and this server's own expectations of them, so it goes
+/// to the operator only — the peer gets a category. See `crate::utils::wire_failure`.
 fn npm_server_error(
     status_tx: &mpsc::UnboundedSender<String>,
     reason: &str,
@@ -321,7 +323,7 @@ fn npm_server_error(
         .status(StatusCode::INTERNAL_SERVER_ERROR)
         .header("Content-Type", "application/json")
         .body(Full::new(Bytes::from(
-            json!({ "error": format!("netget: {}", reason) }).to_string(),
+            json!({ "error": crate::utils::WireFailure::Unavailable.prefixed_text() }).to_string(),
         )))
         .unwrap()
 }
@@ -366,8 +368,7 @@ async fn process_npm_action_result(
                     )
                 }
                 "npm_package_tarball" => {
-                    let Some(tarball_data) =
-                        data.get("tarball_data").and_then(|v| v.as_str())
+                    let Some(tarball_data) = data.get("tarball_data").and_then(|v| v.as_str())
                     else {
                         return Some(npm_server_error(
                             status_tx,
@@ -382,23 +383,22 @@ async fn process_npm_action_result(
                     // an empty package was indistinguishable from a real one. The
                     // action's own example made it likely rather than theoretical: it
                     // showed an elided `"H4sIAAAAAAAAA..."`, which does not decode.
-                    let decoded = match base64::engine::general_purpose::STANDARD
-                        .decode(tarball_data)
-                    {
-                        Ok(bytes) => bytes,
-                        Err(e) => {
-                            return Some(npm_server_error(
-                                status_tx,
-                                &format!(
-                                    "tarball_data is not valid base64 ({}). A tarball is \
+                    let decoded =
+                        match base64::engine::general_purpose::STANDARD.decode(tarball_data) {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                return Some(npm_server_error(
+                                    status_tx,
+                                    &format!(
+                                        "tarball_data is not valid base64 ({}). A tarball is \
                                      binary, so base64 is the only faithful form; send \
                                      the whole encoded string, never an abbreviation \
                                      ending in \"...\"",
-                                    e
-                                ),
-                            ));
-                        }
-                    };
+                                        e
+                                    ),
+                                ));
+                            }
+                        };
 
                     if decoded.is_empty() {
                         return Some(npm_server_error(
@@ -410,8 +410,10 @@ async fn process_npm_action_result(
 
                     // FileOnly: the npm_package_tarball action's own log_template already
                     // reports "-> NPM tarball (...)" to the TUI at INFO.
-                    Log::new(Some(status_tx))
-                        .debug(format!("NPM package tarball response: {} bytes", decoded.len()));
+                    Log::new(Some(status_tx)).debug(format!(
+                        "NPM package tarball response: {} bytes",
+                        decoded.len()
+                    ));
                     Some(
                         Response::builder()
                             .status(StatusCode::OK)

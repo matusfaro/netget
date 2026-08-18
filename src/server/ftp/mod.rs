@@ -220,20 +220,18 @@ impl FtpSession {
                 // a command until it has read one. RFC 959 defines 421 as the greeting a
                 // server sends when it is declining the session, and it closes afterwards -
                 // which is the same shape SMTP uses, for the same reason.
-                let reason =
-                    crate::utils::truncate_for_log(&e.to_string(), 200).replace(['\r', '\n'], " ");
+                let notice = crate::utils::WireFailure::classify(&e).prefixed_text();
                 Log::new(Some(status_tx)).warn(format!(
-                    "FTP greeting handler failed on connection {connection_id}, refused with 421: {reason}"
+                    "FTP greeting handler failed on connection {connection_id}, refused with 421 ({notice}): {e}"
                 ));
-                let reply = format!(
-                    "421 Service not available, closing control connection (netget: {reason})\r\n"
-                );
+                let reply =
+                    format!("421 Service not available, closing control connection ({notice})\r\n");
                 let _ = stream.write_all(reply.as_bytes()).await;
                 let _ = stream.flush().await;
                 // 421 means the control connection is closing, so the session must not
                 // continue into the command loop. The caller propagates this with `?`, which
                 // ends the connection task and drops the socket.
-                return Err(anyhow::anyhow!("FTP greeting refused with 421: {reason}"));
+                return Err(anyhow::anyhow!("FTP greeting refused with 421: {e}"));
             }
         }
 

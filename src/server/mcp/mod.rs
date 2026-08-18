@@ -137,18 +137,20 @@ fn llm_failure_error(state: &McpServerState, e: anyhow::Error) -> JsonRpcError {
     error!("MCP LLM call failed (overload={}): {}", overloaded, e);
     Log::new(Some(&state.status_tx)).error(format!("MCP LLM call failed: {}", e));
 
+    // `data` reaches the client, so it carries the retry hint and nothing else - the error
+    // itself was logged on both channels above. See `crate::utils::wire_failure`.
     if overloaded {
         return JsonRpcError {
             code: MCP_SERVER_BUSY_CODE,
             message: "Server busy: request capacity exhausted, retry later".to_string(),
-            data: Some(serde_json::json!({"error": e.to_string(), "retryable": true})),
+            data: Some(serde_json::json!({"retryable": true})),
         };
     }
 
     JsonRpcError {
         code: ErrorCode::InternalError as i32,
         message: "Internal server error".to_string(),
-        data: Some(serde_json::json!({"error": e.to_string(), "retryable": false})),
+        data: Some(serde_json::json!({"retryable": false})),
     }
 }
 

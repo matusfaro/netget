@@ -247,15 +247,8 @@ impl MemcachedServer {
                                 // the text would end the reply early and the rest would be
                                 // parsed as the next one.
                                 let overloaded = crate::llm::is_overload_error(&e);
-                                let reason = crate::utils::truncate_for_log(&e.to_string(), 200)
-                                    .replace(['\r', '\n'], " ");
-                                let reply = if overloaded {
-                                    format!(
-                                        "SERVER_ERROR netget: backend at capacity, retry later: {reason}\r\n"
-                                    )
-                                } else {
-                                    format!("SERVER_ERROR netget: {reason}\r\n")
-                                };
+                                let text = crate::utils::WireFailure::classify(&e).prefixed_text();
+                                let reply = format!("SERVER_ERROR {text}\r\n");
                                 log.warn(format!(
                                     "Memcached LLM call failed for {} (overload={}); replying {}: {}",
                                     peer_addr,
