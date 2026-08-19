@@ -123,6 +123,95 @@ pub async fn try_execute_event_handler(
             )
             .await
         }
+
+        EventHandlerType::Manual { timeout_secs } => {
+            let actions = await_manual_answer(
+                state,
+                crate::state::intercepts::InterceptOwner::Server(server_id),
+                connection_id.map(|c| c.as_u32()),
+                event_type_id,
+                event_description,
+                event_data.clone(),
+                *timeout_secs,
+            )
+            .await?;
+            // The operator's actions run exactly as a static handler's would —
+            // same interpolation, same executor — so "manual" is a static
+            // response composed at answer time rather than configured up front.
+            execute_static_handler(
+                state,
+                server_id,
+                event_type_id,
+                event_description,
+                &actions,
+                event_data.as_ref(),
+                protocol,
+            )
+            .await
+        }
+    }
+}
+
+/// Park an event for the operator and wait for their actions.
+///
+/// Shared by the server and client dispatchers. On timeout, dismissal, or a
+/// dead channel this returns `Err`, which the caller propagates — landing on
+/// the same fail-closed path as an LLM failure, so the peer gets a category
+/// error (`crate::utils::wire_failure`), never silence and never an invented
+/// success.
+async fn await_manual_answer(
+    state: &AppState,
+    owner: crate::state::intercepts::InterceptOwner,
+    connection_id: Option<u32>,
+    event_type_id: &str,
+    event_description: &str,
+    event_data: Option<serde_json::Value>,
+    timeout_secs: u64,
+) -> Result<Vec<serde_json::Value>> {
+    let (id, reply_rx) = state
+        .park_intercept(
+            owner,
+            connection_id,
+            event_type_id,
+            event_description,
+            event_data,
+        )
+        .await;
+    tracing::info!(
+        "manual handler: event '{}' parked as intercept #{} — waiting up to {}s for an \
+         operator answer at the dashboard",
+        event_type_id,
+        id,
+        timeout_secs
+    );
+
+    match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), reply_rx).await {
+        Ok(Ok(actions)) => {
+            debug!(
+                "manual handler: intercept #{} answered with {} action(s)",
+                id,
+                actions.len()
+            );
+            Ok(actions)
+        }
+        Ok(Err(_)) => {
+            // Sender dropped: the operator dismissed it (fail closed, now).
+            anyhow::bail!(
+                "manual handler: the operator dismissed request #{id} for event '{event_type_id}'"
+            )
+        }
+        Err(_) => {
+            state.remove_intercept(id).await;
+            warn!(
+                "manual handler: intercept #{} for event '{}' got no operator answer within \
+                 {}s — failing closed",
+                id, event_type_id, timeout_secs
+            );
+            anyhow::bail!(
+                "manual handler: no operator answer within {timeout_secs}s for event \
+                 '{event_type_id}'"
+            )
+        }
     }
 }
 
@@ -186,16 +275,14 @@ pub async fn try_execute_client_event_handler(
                 event_type_id,
                 actions.len()
             );
-            let actions = crate::scripting::event_handler::interpolate_actions(
-                actions,
-                event_data.as_ref(),
-            )
-            .with_context(|| {
-                format!(
-                    "Static handler for client event '{}' could not be rendered",
-                    event_type_id
-                )
-            })?;
+            let actions =
+                crate::scripting::event_handler::interpolate_actions(actions, event_data.as_ref())
+                    .with_context(|| {
+                        format!(
+                            "Static handler for client event '{}' could not be rendered",
+                            event_type_id
+                        )
+                    })?;
             Ok(ClientEventHandlerResult::Handled { actions })
         }
 
@@ -217,6 +304,30 @@ pub async fn try_execute_client_event_handler(
                 scope.as_deref(),
             )
             .await
+        }
+
+        EventHandlerType::Manual { timeout_secs } => {
+            let actions = await_manual_answer(
+                state,
+                crate::state::intercepts::InterceptOwner::Client(client_id),
+                None,
+                event_type_id,
+                event_description,
+                event_data.clone(),
+                *timeout_secs,
+            )
+            .await?;
+            // Interpolate exactly as a static handler would, then hand the
+            // actions to the client's own loop — only it owns the socket.
+            let actions =
+                crate::scripting::event_handler::interpolate_actions(&actions, event_data.as_ref())
+                    .with_context(|| {
+                        format!(
+                            "Manual answer for client event '{}' could not be rendered",
+                            event_type_id
+                        )
+                    })?;
+            Ok(ClientEventHandlerResult::Handled { actions })
         }
     }
 }
@@ -323,10 +434,7 @@ async fn execute_client_script_handler(
             })
         }
         Err(e) => {
-            warn!(
-                "Client script execution failed: {}, falling back to LLM",
-                e
-            );
+            warn!("Client script execution failed: {}, falling back to LLM", e);
             Ok(ClientEventHandlerResult::FallbackToLlm { instruction: None })
         }
     }

@@ -95,6 +95,16 @@ impl TelnetClient {
         // Clone for connected event
         let write_half_for_connected = write_half_arc.clone();
 
+        // Command channel: lets the dashboard (and any programmatic caller)
+        // inject actions into this loop via AppState::send_to_client.
+        //
+        // Registered BEFORE the connected event is handled: a `manual` routing
+        // rule can park that event at the dashboard for minutes, and until
+        // registration the UI reports "no command channel" — reading as a
+        // protocol limitation when it is only a queue.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
         // Call LLM with telnet_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -181,11 +191,6 @@ impl TelnetClient {
         // Clone for telnet negotiation handler
         let write_half_for_negotiation = write_half_arc.clone();
         let status_tx_for_negotiation = status_tx.clone();
-
-        // Command channel: lets the dashboard (and any programmatic caller)
-        // inject actions into this loop via AppState::send_to_client.
-        let mut command_rx =
-            crate::client::command_support::register_command_channel(&app_state, client_id).await;
 
         // Spawn read loop
         // Registered with AppState so stop_client can abort this task —

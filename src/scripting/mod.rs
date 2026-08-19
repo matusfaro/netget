@@ -13,7 +13,9 @@ pub mod types;
 
 // Re-export commonly used types
 pub use environment::ScriptingEnvironment;
-pub use event_handler::{EventHandler, EventHandlerConfig, EventHandlerType, EventPattern};
+pub use event_handler::{
+    EventHandler, EventHandlerConfig, EventHandlerType, EventPattern, DEFAULT_MANUAL_TIMEOUT_SECS,
+};
 pub use executor::{
     execute_script, execute_script_async, execute_script_with_timeout_async,
     DEFAULT_SCRIPT_TIMEOUT, SCRIPT_TIMEOUT_SECS,

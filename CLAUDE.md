@@ -206,13 +206,24 @@ Copy the TCP implementation (`src/server/tcp/mod.rs`) as the reference.
 async actions (user-triggered) and sync actions (network-event-triggered), in
 `src/server/<protocol>/actions.rs`. Clients implement `Client` (`llm/actions/client_trait.rs`).
 
-**Handling modes**, in priority order — a request takes the first that matches:
+**Handling modes** — a matched `event_handlers` rule decides who answers:
 1. **Script handler** — inline Python/JS, runs in-process, no LLM call
 2. **Static handler** — fixed actions, no LLM call
-3. **LLM** — one model round-trip per event
+3. **Manual handler** — the event parks (`src/state/intercepts.rs`) and a **human** composes
+   the answer at the dashboard; no answer within `timeout_secs` (default 300) **fails closed**
+   through the same path as an LLM failure. The dashboard shows parked events as
+   "⚠ waiting for YOUR answer" rows. Instances created interactively through the dashboard
+   default to a `*` → manual rule — the human is there, driving; instances the model creates
+   through its own tools get no such default.
+4. **LLM** — one model round-trip per event (the fallback when no rule matches)
 
 Scripts and static handlers are the right default for deterministic behavior (echo, canned
 responses, routing). Reserve the LLM for responses that genuinely require reasoning.
+
+A caveat manual handlers exposed: several clients handle their `*_connected` event inline in
+`connect()` before returning, so a parked connect event delays creation until answered — the
+command channel must therefore register **before** that call (`tcp` and `telnet` do), or
+`[ send ]` reads "no command channel" for the whole park.
 
 ### Action & event design rules (CRITICAL)
 

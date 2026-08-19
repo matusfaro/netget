@@ -79,6 +79,17 @@ impl TcpClient {
             memory: String::new(),
         }));
 
+        // Command channel: lets the dashboard (and any programmatic caller)
+        // inject actions into this loop via AppState::send_to_client.
+        //
+        // Registered BEFORE the connected event is handled: a `manual` routing
+        // rule can park that event at the dashboard for minutes, and until
+        // registration the UI reports "no command channel" — reading as a
+        // protocol limitation when it is only a queue. Registered here, a send
+        // during the park waits in the channel instead of being refused.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
         // Call LLM with tcp_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -150,11 +161,6 @@ impl TcpClient {
                 }
             }
         }
-
-        // Command channel: lets the dashboard (and any programmatic caller)
-        // inject actions into this loop via AppState::send_to_client.
-        let mut command_rx =
-            crate::client::command_support::register_command_channel(&app_state, client_id).await;
 
         // Spawn read loop. The handle is registered with AppState so that
         // stop_client / remove_client can abort it — dropping a JoinHandle only

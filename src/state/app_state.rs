@@ -438,6 +438,11 @@ struct AppStateInner {
     /// \[send\] button and any future programmatic client control). See
     /// `crate::state::client_handles` for the design.
     client_handles: HashMap<ClientId, crate::state::client_handles::ClientHandle>,
+    /// Events parked by a `manual` handler, waiting for a human to compose the
+    /// answer at the dashboard. See `crate::state::intercepts`.
+    pub(crate) pending_intercepts: Vec<crate::state::intercepts::PendingIntercept>,
+    /// Monotonic id source for [`Self::pending_intercepts`].
+    pub(crate) next_intercept_id: u64,
 }
 
 impl AppStateInner {
@@ -593,6 +598,8 @@ impl AppState {
                 server_tasks: HashMap::new(),
                 server_handles: HashMap::new(),
                 client_handles: HashMap::new(),
+                pending_intercepts: Vec::new(),
+                next_intercept_id: 1,
             })),
         }
     }
@@ -832,6 +839,92 @@ impl AppState {
     /// Whether a server has registered a live-instance handle
     pub async fn has_server_handle(&self, id: ServerId) -> bool {
         self.inner.read().await.server_handles.contains_key(&id)
+    }
+
+    // ===== Manual-handler intercepts (see crate::state::intercepts) =====
+
+    /// Park an event for a human to answer. Returns the intercept id and the
+    /// receiver the dispatcher must await (under its own timeout).
+    pub async fn park_intercept(
+        &self,
+        owner: crate::state::intercepts::InterceptOwner,
+        connection_id: Option<u32>,
+        event_type: &str,
+        description: &str,
+        event_data: Option<serde_json::Value>,
+    ) -> (u64, tokio::sync::oneshot::Receiver<Vec<serde_json::Value>>) {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let mut inner = self.inner.write().await;
+        let id = inner.next_intercept_id;
+        inner.next_intercept_id += 1;
+        inner.pending_intercepts.retain(|entry| !entry.is_dead());
+        inner
+            .pending_intercepts
+            .push(crate::state::intercepts::PendingIntercept {
+                id,
+                owner,
+                connection_id,
+                event_type: event_type.to_string(),
+                description: description.to_string(),
+                event_data,
+                created_unix_ms: crate::state::intercepts::now_unix_ms(),
+                reply_tx: Some(reply_tx),
+            });
+        (id, reply_rx)
+    }
+
+    /// Pending intercepts, oldest first, with dead entries pruned.
+    pub async fn list_intercepts(&self) -> Vec<crate::state::intercepts::InterceptView> {
+        let mut inner = self.inner.write().await;
+        inner.pending_intercepts.retain(|entry| !entry.is_dead());
+        inner.pending_intercepts.iter().map(|e| e.view()).collect()
+    }
+
+    /// Answer a parked event with the operator's actions.
+    ///
+    /// Errors if the intercept is gone — already answered, dismissed, or the
+    /// waiting dispatcher gave up (timeout / connection closed). The answer is
+    /// then NOT delivered anywhere; the peer has already received the
+    /// fail-closed reply.
+    pub async fn resolve_intercept(
+        &self,
+        id: u64,
+        actions: Vec<serde_json::Value>,
+    ) -> std::result::Result<(), String> {
+        let entry = {
+            let mut inner = self.inner.write().await;
+            let Some(index) = inner.pending_intercepts.iter().position(|e| e.id == id) else {
+                return Err(format!("request #{id} is no longer waiting"));
+            };
+            inner.pending_intercepts.remove(index)
+        };
+        let Some(tx) = entry.reply_tx else {
+            return Err(format!("request #{id} was already answered"));
+        };
+        tx.send(actions).map_err(|_| {
+            format!(
+                "request #{id} timed out before this answer — the peer already got the \
+                 fail-closed reply"
+            )
+        })
+    }
+
+    /// Refuse a parked event: the dispatcher sees "no answer" immediately and
+    /// takes the fail-closed path instead of waiting out its timeout.
+    pub async fn dismiss_intercept(&self, id: u64) -> bool {
+        let mut inner = self.inner.write().await;
+        let before = inner.pending_intercepts.len();
+        // Dropping the entry drops its sender, which wakes the dispatcher's
+        // `await` with RecvError.
+        inner.pending_intercepts.retain(|e| e.id != id);
+        inner.pending_intercepts.len() != before
+    }
+
+    /// Drop a parked entry without answering (the dispatcher cleans up after
+    /// its own timeout so the list never shows a question nobody is waiting on).
+    pub async fn remove_intercept(&self, id: u64) {
+        let mut inner = self.inner.write().await;
+        inner.pending_intercepts.retain(|e| e.id != id);
     }
 
     // ===== Client command handles (see crate::state::client_handles) =====

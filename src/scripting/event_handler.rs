@@ -138,6 +138,31 @@ pub enum EventHandlerType {
         /// Actions to execute (actual JSON values, not strings)
         actions: Vec<serde_json::Value>,
     },
+
+    /// Handled by a human at the dashboard.
+    ///
+    /// The event parks as a pending question (`AppState::park_intercept`) and the
+    /// connection waits, exactly as it would for a slow model. Whatever actions the
+    /// operator composes are executed as the answer; `{{event.field}}` references work
+    /// the same as in a static handler. If nobody answers within `timeout_secs`, the
+    /// handler **fails closed** — the dispatch errors and the protocol's LLM-failure
+    /// branch answers the peer with a category, never with an invented success.
+    Manual {
+        /// Seconds to wait for the operator before failing closed.
+        #[serde(default = "default_manual_timeout_secs")]
+        timeout_secs: u64,
+    },
+}
+
+/// How long a manual handler waits for the operator by default.
+///
+/// Generous on purpose: the whole point is that a human reads the event and composes an
+/// answer, and most protocol peers apply their own (shorter) timeout anyway. It exists so
+/// an unattended dashboard eventually fails closed instead of parking connections forever.
+pub const DEFAULT_MANUAL_TIMEOUT_SECS: u64 = 300;
+
+fn default_manual_timeout_secs() -> u64 {
+    DEFAULT_MANUAL_TIMEOUT_SECS
 }
 
 impl EventHandlerType {
@@ -176,6 +201,11 @@ impl EventHandlerType {
         EventHandlerType::Llm {
             instruction: instruction.into(),
         }
+    }
+
+    /// Create a manual (human-answered) handler.
+    pub fn manual(timeout_secs: u64) -> Self {
+        EventHandlerType::Manual { timeout_secs }
     }
 
     /// Validate the handler's `{{event.…}}` references *without* an event.
