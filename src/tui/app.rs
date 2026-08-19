@@ -227,7 +227,7 @@ impl DashboardApp {
         let row = sel.row?;
         crate::tui::render::band::rail_rows(self)
             .get(row)
-            .map(|r| r.key)
+            .and_then(|r| r.key)
     }
 
     pub fn push_system(&mut self, text: impl Into<String>) {

@@ -31,18 +31,40 @@ pub fn help_lines() -> Vec<(Option<&'static str>, &'static str)> {
             None,
             "Instances — every action is also a row you can Enter or click",
         ),
+        (
+            Some("[ + new server ]"),
+            "last rows of the rail — the protocol picker",
+        ),
         (Some("[ edit config ]"), "under config — same as e"),
         (Some("[ + add response ]"), "under routing — same as r"),
-        (Some("a route row"), "Enter edits that handler directly"),
+        (Some("a route row"), "Enter edits that rule directly"),
         (
             Some("[ + connect a … ]"),
             "under a server's peers — same as c",
         ),
         (
             Some("[ send a request ]"),
-            "under a client's peer — same as n",
+            "first row under a client — same as n",
         ),
         (Some("[ stop … ]"), "last row of an instance — same as x"),
+        (
+            Some("⚠ waiting for YOU"),
+            "a MANUAL rule parked a request — Enter answers it",
+        ),
+        (None, "Ways a rule can answer (routing / auto-reply)"),
+        (Some("STATIC"), "fixed actions, no model call — cheapest"),
+        (
+            Some("SCRIPT"),
+            "your code runs per event (python/js/perl/go)",
+        ),
+        (
+            Some("LLM"),
+            "the model decides, with a per-event instruction",
+        ),
+        (
+            Some("MANUAL"),
+            "you answer each request yourself at the dashboard",
+        ),
         (None, "Instance shortcuts"),
         (Some("a"), "add: new server / client (protocol picker)"),
         (Some("e"), "edit the selected instance's config"),

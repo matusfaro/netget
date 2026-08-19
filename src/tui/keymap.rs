@@ -233,7 +233,7 @@ async fn handle_rail_key(
     state: &AppState,
 ) -> Outcome {
     let rows = crate::tui::render::band::rail_rows(app);
-    let owner = sel.row.and_then(|row| rows.get(row)).map(|r| r.key);
+    let owner = sel.row.and_then(|row| rows.get(row)).and_then(|r| r.key);
 
     match key.code {
         KeyCode::Down => {
@@ -294,8 +294,8 @@ async fn handle_rail_key(
             }
         }
         KeyCode::Enter | KeyCode::Char(' ') => {
-            if let (Some(key_owner), Some(row)) = (owner, sel.row) {
-                activate_row(app, key_owner, &rows, row, state).await;
+            if let Some(row) = sel.row {
+                activate_row(app, owner, &rows, row, state).await;
             } else if !rows.is_empty() {
                 sel.row = Some(0);
             }
@@ -331,7 +331,7 @@ async fn handle_rail_key(
 /// editor that owns the row.
 async fn activate_row(
     app: &mut DashboardApp,
-    key: UiKey,
+    key: Option<UiKey>,
     rows: &[crate::tui::render::band::RailRow],
     row: usize,
     state: &AppState,
@@ -343,6 +343,16 @@ async fn activate_row(
     };
     let tree_row = &rail_row.row;
     let node = tree_row.node.clone();
+
+    // The rail's own rows own no instance, so they are handled before anything
+    // that needs one.
+    if let NodeId::NewInstance(section) = node {
+        open_protocol_picker(app, section, None, state).await;
+        return;
+    }
+    let Some(key) = key else {
+        return;
+    };
 
     // A group toggles; that includes a request, whose detail is its children.
     if tree_row.expanded.is_some() {
@@ -374,9 +384,61 @@ async fn activate_row(
             }
             RowAction::Stop => push_stop_confirm(app, k),
         },
+        NodeId::Intercept(k, intercept_id) => open_intercept(app, k, intercept_id, state),
         NodeId::RoutingFallback(_) | NodeId::RequestDetail(..) => {}
         _ => {}
     }
+}
+
+/// Open the answer modal for a pending intercept.
+fn open_intercept(app: &mut DashboardApp, key: UiKey, intercept_id: u64, state: &AppState) {
+    use crate::tui::modal::intercept::InterceptModel;
+
+    let (protocol, view) = match key {
+        UiKey::Server(id) => {
+            let Some(row) = app.snapshot.servers.iter().find(|s| s.id == id) else {
+                return;
+            };
+            (
+                row.protocol.clone(),
+                row.intercepts
+                    .iter()
+                    .find(|v| v.id == intercept_id)
+                    .cloned(),
+            )
+        }
+        UiKey::Client(id) => {
+            let Some(row) = app.snapshot.clients.iter().find(|c| c.id == id) else {
+                return;
+            };
+            (
+                row.protocol.clone(),
+                row.intercepts
+                    .iter()
+                    .find(|v| v.id == intercept_id)
+                    .cloned(),
+            )
+        }
+    };
+    let Some(view) = view else {
+        app.push_system(format!(
+            "request #{intercept_id} is no longer waiting (answered or timed out)"
+        ));
+        return;
+    };
+    let (_events, vocabulary) = crate::tui::modal::routing::vocabulary(key, &protocol, state);
+    app.modals.push(Modal::Intercept(Box::new(InterceptModel {
+        id: view.id,
+        owner: key,
+        protocol,
+        event_type: view.event_type,
+        description: view.description,
+        event_data: view.event_data,
+        actions: Vec::new(),
+        vocabulary,
+        error: None,
+        focused: 0,
+    })));
 }
 
 /// Which handler the routing editor should open on.
@@ -691,6 +753,7 @@ async fn handle_modal_key(app: &mut DashboardApp, key: KeyEvent, state: &AppStat
         Some(Modal::TextEditor { .. }) => return handle_text_editor_key(app, key),
         Some(Modal::Composer(_)) => return handle_composer_key(app, key, state).await,
         Some(Modal::Routing(_)) => return handle_routing_key(app, key, state).await,
+        Some(Modal::Intercept(_)) => return handle_intercept_key(app, key, state).await,
         _ => {}
     }
 
@@ -915,7 +978,7 @@ async fn run_form_action(
 
 fn handle_text_editor_key(app: &mut DashboardApp, key: KeyEvent) -> Outcome {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-    let Some(Modal::TextEditor { editor, target }) = app.modals.last_mut() else {
+    let Some(Modal::TextEditor { editor, .. }) = app.modals.last_mut() else {
         return Outcome::Continue;
     };
 
@@ -923,44 +986,62 @@ fn handle_text_editor_key(app: &mut DashboardApp, key: KeyEvent) -> Outcome {
         KeyCode::Esc => {
             app.modals.pop();
         }
-        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
-            if let Some(text) = editor.accept() {
-                let target = target.clone();
-                app.modals.pop();
-                match app.modals.last_mut() {
-                    Some(Modal::Form(form)) => form.set_field_value(&target, text),
-                    // Opened from a routing draft: the target says which half
-                    // of the handler body was being edited.
-                    Some(Modal::Routing(model)) => {
-                        if let Some(draft) = model.draft.as_mut() {
-                            use crate::tui::modal::form::FieldTarget;
-                            match target {
-                                FieldTarget::EventHandlersJson => {
-                                    match serde_json::from_str::<serde_json::Value>(&text) {
-                                        Ok(serde_json::Value::Array(actions)) => {
-                                            draft.actions = actions;
-                                            draft.error = None;
-                                        }
-                                        Ok(_) => {
-                                            draft.error =
-                                                Some("static actions must be a JSON array".into())
-                                        }
-                                        Err(e) => draft.error = Some(format!("invalid JSON: {e}")),
-                                    }
-                                }
-                                _ => draft.code = text,
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
+        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => text_editor_accept(app),
         _ => {
             editor.textarea.input(tui_textarea::Input::from(key));
         }
     }
     Outcome::Continue
+}
+
+/// Accept the text editor's content into whatever opened it. Shared by Ctrl-S
+/// and the clickable `[ Accept ]` button so the two cannot diverge.
+fn text_editor_accept(app: &mut DashboardApp) {
+    use crate::tui::modal::form::FieldTarget;
+
+    let Some(Modal::TextEditor { editor, target }) = app.modals.last_mut() else {
+        return;
+    };
+    let Some(text) = editor.accept() else {
+        return; // Validation failed; the editor shows why.
+    };
+    let target = target.clone();
+    app.modals.pop();
+    match app.modals.last_mut() {
+        Some(Modal::Form(form)) => form.set_field_value(&target, text),
+        // Opened from a routing draft: the target says which half of the
+        // handler body was being edited.
+        Some(Modal::Routing(model)) => {
+            if let Some(draft) = model.draft.as_mut() {
+                match target {
+                    FieldTarget::DraftActions | FieldTarget::EventHandlersJson => {
+                        match serde_json::from_str::<serde_json::Value>(&text) {
+                            Ok(serde_json::Value::Array(actions)) => {
+                                draft.actions = actions;
+                                draft.error = None;
+                            }
+                            Ok(_) => {
+                                draft.error = Some("response actions must be a JSON array".into())
+                            }
+                            Err(e) => draft.error = Some(format!("invalid JSON: {e}")),
+                        }
+                    }
+                    FieldTarget::DraftInstruction => draft.instruction = text,
+                    _ => draft.code = text,
+                }
+            }
+        }
+        // Opened from the intercept modal: the composed answer.
+        Some(Modal::Intercept(model)) => match serde_json::from_str::<serde_json::Value>(&text) {
+            Ok(serde_json::Value::Array(actions)) => {
+                model.actions = actions;
+                model.error = None;
+            }
+            Ok(_) => model.error = Some("the answer must be a JSON array of actions".into()),
+            Err(e) => model.error = Some(format!("invalid JSON: {e}")),
+        },
+        _ => {}
+    }
 }
 
 async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {
@@ -990,8 +1071,20 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
                 app.modals.pop();
             }
         }
-        KeyCode::Up => composer.move_selection(-1),
-        KeyCode::Down => composer.move_selection(1),
+        KeyCode::Tab => composer.cycle_focus(false),
+        KeyCode::BackTab => composer.cycle_focus(true),
+        KeyCode::Up => {
+            composer.focused_button = None;
+            composer.move_selection(-1);
+        }
+        KeyCode::Down => {
+            composer.focused_button = None;
+            composer.move_selection(1);
+        }
+        KeyCode::Enter if composer.focused_action().is_some() => {
+            let action = composer.focused_action().unwrap();
+            return run_composer_action(app, action, state).await;
+        }
         KeyCode::Enter => {
             if composer.chosen.is_some() {
                 composer.begin_edit();
@@ -1001,6 +1094,30 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
         }
         KeyCode::Char('j') | KeyCode::Char('J') if ctrl => composer.toggle_raw_json(),
         KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
+            return run_composer_action(app, crate::tui::hit::ModalAction::ComposerSend, state)
+                .await;
+        }
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+/// Run one composer button. Sending is spawned (network I/O must not block
+/// the event loop); the toggles act in place.
+async fn run_composer_action(
+    app: &mut DashboardApp,
+    action: crate::tui::hit::ModalAction,
+    state: &AppState,
+) -> Outcome {
+    use crate::tui::hit::ModalAction;
+
+    let Some(Modal::Composer(composer)) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+    match action {
+        ModalAction::ComposerBack => composer.back_to_actions(),
+        ModalAction::ComposerRaw => composer.toggle_raw_json(),
+        ModalAction::ComposerSend => {
             if composer.busy {
                 return Outcome::Continue;
             }
@@ -1026,6 +1143,87 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
                     result,
                 });
             });
+        }
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+/// The intercept modal: three buttons, Tab between them, Enter acts.
+async fn handle_intercept_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {
+    let Some(Modal::Intercept(model)) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+    match key.code {
+        // Esc keeps the request waiting — closing the window must not be the
+        // thing that silently refuses a peer.
+        KeyCode::Esc => {
+            app.modals.pop();
+        }
+        KeyCode::Tab | KeyCode::Right | KeyCode::Down => model.cycle_focus(false),
+        KeyCode::BackTab | KeyCode::Left | KeyCode::Up => model.cycle_focus(true),
+        KeyCode::Enter | KeyCode::Char(' ') => {
+            if let Some(action) = model.focused_action() {
+                return run_intercept_action(app, action, state).await;
+            }
+        }
+        _ => {}
+    }
+    Outcome::Continue
+}
+
+/// Run one intercept button: compose, send, or fail closed.
+async fn run_intercept_action(
+    app: &mut DashboardApp,
+    action: crate::tui::hit::ModalAction,
+    state: &AppState,
+) -> Outcome {
+    use crate::tui::hit::ModalAction;
+    use crate::tui::modal::text_editor::TextEditorModel;
+
+    let Some(Modal::Intercept(model)) = app.modals.last_mut() else {
+        return Outcome::Continue;
+    };
+    match action {
+        ModalAction::InterceptCompose => {
+            let editor = TextEditorModel::new(
+                "response actions",
+                "A JSON array of actions to answer with. {{event.field}} echoes the event.",
+                &model.editor_seed(),
+                true,
+            );
+            app.modals.push(Modal::TextEditor {
+                editor: Box::new(editor),
+                target: crate::tui::modal::form::FieldTarget::InterceptActions,
+            });
+        }
+        ModalAction::InterceptSend => {
+            // Zero actions is a real answer — "acknowledge, say nothing" — the
+            // same semantics as an empty static handler, and exactly what a
+            // lifecycle event like connection-opened usually deserves. It is
+            // delivered (Ok) and therefore distinct from a timeout (Err).
+            let id = model.id;
+            let count = model.actions.len();
+            // Resolving is a channel send under a short lock — no network I/O,
+            // safe to do inline (the waiting dispatcher does the wire work).
+            match state.resolve_intercept(id, model.actions.clone()).await {
+                Ok(()) => {
+                    app.modals.pop();
+                    app.push_system(format!("answered request #{id} with {count} action(s)"));
+                }
+                Err(e) => model.error = Some(e),
+            }
+        }
+        ModalAction::InterceptDismiss => {
+            let id = model.id;
+            if state.dismiss_intercept(id).await {
+                app.modals.pop();
+                app.push_system(format!(
+                    "refused request #{id} — the peer got the fail-closed reply"
+                ));
+            } else {
+                model.error = Some(format!("request #{id} is no longer waiting"));
+            }
         }
         _ => {}
     }
@@ -1096,9 +1294,6 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
         HitTarget::ChatHistory => app.focus = Focus::ChatHistory,
         HitTarget::ChatInput => app.focus = Focus::ChatInput,
         HitTarget::SectionHeader(_) => app.focus = Focus::Rail(RailSel::new()),
-        HitTarget::AddButton(section) => {
-            open_protocol_picker(app, section, None, state).await;
-        }
         HitTarget::Band { .. } => app.focus = Focus::Rail(RailSel::new()),
         HitTarget::TreeRow { key, index } => {
             app.focus = Focus::Rail(RailSel { row: Some(index) });
@@ -1145,7 +1340,7 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
 }
 
 async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {
-    use crate::tui::modal::routing::HandlerEditFocus;
+    use crate::tui::modal::routing::DraftFocus;
     use crate::tui::modal::text_editor::TextEditorModel;
 
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -1153,7 +1348,8 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
         return Outcome::Continue;
     };
 
-    // Handler draft open: edit pattern / kind / body.
+    // Handler draft open. Tab walks kind → pattern → the kind's fields →
+    // buttons; ←/→ changes whatever choice has focus; Enter acts on it.
     if let Some(draft) = model.draft.as_mut() {
         if let Some(buffer) = draft.editing.as_mut() {
             match key.code {
@@ -1161,9 +1357,9 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
                     let text = buffer.clone();
                     draft.editing = None;
                     match draft.focus {
-                        HandlerEditFocus::Pattern => draft.pattern = text,
-                        HandlerEditFocus::Body => draft.instruction = text,
-                        HandlerEditFocus::Kind => {}
+                        DraftFocus::Pattern => draft.pattern = text,
+                        DraftFocus::Timeout => draft.timeout_secs = text,
+                        _ => {}
                     }
                 }
                 KeyCode::Esc => draft.editing = None,
@@ -1176,50 +1372,80 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
             return Outcome::Continue;
         }
 
+        let backward_left = key.code == KeyCode::Left;
         match key.code {
             KeyCode::Esc => model.draft = None,
             KeyCode::Tab => draft.cycle_focus(false),
             KeyCode::BackTab => draft.cycle_focus(true),
-            KeyCode::Enter if draft.focused_action().is_some() => match draft.focused_action() {
-                Some(crate::tui::hit::ModalAction::DraftSave) => match model.commit_draft() {
-                    Ok(()) => model.error = None,
-                    Err(e) => {
-                        if let Some(draft) = model.draft.as_mut() {
-                            draft.error = Some(e.to_string());
-                        }
+            KeyCode::Left | KeyCode::Right => match draft.focus {
+                DraftFocus::Kind => {
+                    let kind = if backward_left {
+                        draft.kind.previous()
+                    } else {
+                        draft.kind.next()
+                    };
+                    draft.set_kind(kind);
+                }
+                DraftFocus::Pattern => {
+                    let event_ids = model.event_ids.clone();
+                    if let Some(draft) = model.draft.as_mut() {
+                        draft.cycle_pattern(&event_ids, backward_left);
                     }
-                },
-                Some(crate::tui::hit::ModalAction::DraftCancel) => model.draft = None,
+                }
+                DraftFocus::Language => draft.cycle_language(backward_left),
+                DraftFocus::Resident => draft.resident = !draft.resident,
+                DraftFocus::Button(_) => draft.cycle_focus(backward_left),
                 _ => {}
             },
-            KeyCode::Left | KeyCode::Right if draft.focus == HandlerEditFocus::Kind => {
-                draft.kind = draft.kind.next();
-            }
-            KeyCode::Up if draft.focus == HandlerEditFocus::Body => {
+            KeyCode::Up if draft.focus == DraftFocus::Actions => {
                 draft.selected_action = draft.selected_action.saturating_sub(1);
             }
-            KeyCode::Down if draft.focus == HandlerEditFocus::Body => {
+            KeyCode::Down if draft.focus == DraftFocus::Actions => {
                 if draft.selected_action + 1 < draft.actions.len() {
                     draft.selected_action += 1;
                 }
             }
-            KeyCode::Char('d') if draft.focus == HandlerEditFocus::Body => {
+            KeyCode::Char('d') if draft.focus == DraftFocus::Actions => {
                 if draft.selected_action < draft.actions.len() {
                     draft.actions.remove(draft.selected_action);
                     draft.selected_action = draft.selected_action.saturating_sub(1);
                 }
             }
-            KeyCode::Enter => {
-                use crate::tui::modal::routing::HandlerKind;
-                match (draft.focus, draft.kind) {
-                    (HandlerEditFocus::Pattern, _) => {
-                        draft.editing = Some(draft.pattern.clone());
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                use crate::tui::modal::form::FieldTarget;
+                match draft.focus {
+                    DraftFocus::Button(_) => match draft.focused_action() {
+                        Some(crate::tui::hit::ModalAction::DraftSave) => {
+                            match model.commit_draft() {
+                                Ok(()) => model.error = None,
+                                Err(e) => {
+                                    if let Some(draft) = model.draft.as_mut() {
+                                        draft.error = Some(e.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        Some(crate::tui::hit::ModalAction::DraftCancel) => model.draft = None,
+                        _ => {}
+                    },
+                    DraftFocus::Kind => draft.set_kind(draft.kind.next()),
+                    DraftFocus::Pattern => draft.editing = Some(draft.pattern.clone()),
+                    DraftFocus::Language => draft.cycle_language(false),
+                    DraftFocus::Resident => draft.resident = !draft.resident,
+                    DraftFocus::Timeout => draft.editing = Some(draft.timeout_secs.clone()),
+                    DraftFocus::Instruction => {
+                        let editor = TextEditorModel::new(
+                            "per-event instruction",
+                            "What the model should do when this event arrives.",
+                            &draft.instruction,
+                            false,
+                        );
+                        app.modals.push(Modal::TextEditor {
+                            editor: Box::new(editor),
+                            target: FieldTarget::DraftInstruction,
+                        });
                     }
-                    (HandlerEditFocus::Kind, _) => draft.kind = draft.kind.next(),
-                    (HandlerEditFocus::Body, HandlerKind::Llm) => {
-                        draft.editing = Some(draft.instruction.clone());
-                    }
-                    (HandlerEditFocus::Body, HandlerKind::Script) => {
+                    DraftFocus::Code => {
                         let editor = TextEditorModel::new(
                             "script code",
                             "The script receives the event on stdin and writes {\"actions\": [...]}.",
@@ -1228,24 +1454,24 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
                         );
                         app.modals.push(Modal::TextEditor {
                             editor: Box::new(editor),
-                            target: crate::tui::modal::form::FieldTarget::Instruction,
+                            target: FieldTarget::DraftCode,
                         });
                     }
-                    (HandlerEditFocus::Body, HandlerKind::Static) => {
+                    DraftFocus::Actions => {
                         let initial = if draft.actions.is_empty() {
                             example_actions(model_actions(model))
                         } else {
                             serde_json::to_string_pretty(&draft.actions).unwrap_or_default()
                         };
                         let editor = TextEditorModel::new(
-                            "static actions",
+                            "response actions",
                             "A JSON array of actions. {{event.field}} interpolates from the event.",
                             &initial,
                             true,
                         );
                         app.modals.push(Modal::TextEditor {
                             editor: Box::new(editor),
-                            target: crate::tui::modal::form::FieldTarget::EventHandlersJson,
+                            target: FieldTarget::DraftActions,
                         });
                     }
                 }
@@ -1397,6 +1623,47 @@ pub async fn run_modal_action(
         ModalAction::DraftCancel => {
             if let Some(Modal::Routing(model)) = app.modals.last_mut() {
                 model.draft = None;
+            }
+            Outcome::Continue
+        }
+        ModalAction::DraftKind(kind) => {
+            if let Some(Modal::Routing(model)) = app.modals.last_mut() {
+                if let Some(draft) = model.draft.as_mut() {
+                    draft.set_kind(kind);
+                    draft.focus = crate::tui::modal::routing::DraftFocus::Kind;
+                }
+            }
+            Outcome::Continue
+        }
+        ModalAction::InterceptCompose
+        | ModalAction::InterceptSend
+        | ModalAction::InterceptDismiss => run_intercept_action(app, action, state).await,
+        ModalAction::ComposerSend | ModalAction::ComposerRaw | ModalAction::ComposerBack => {
+            run_composer_action(app, action, state).await
+        }
+        ModalAction::EditorAccept => {
+            text_editor_accept(app);
+            Outcome::Continue
+        }
+        ModalAction::EditorCancel => {
+            if matches!(app.modals.last(), Some(Modal::TextEditor { .. })) {
+                app.modals.pop();
+            }
+            Outcome::Continue
+        }
+        ModalAction::ConfirmYes => {
+            if let Some(Modal::Confirm { action, .. }) = app.modals.pop() {
+                if action == PendingAction::Quit {
+                    return Outcome::Quit;
+                }
+                let line = confirm::execute(&action, state).await;
+                app.push_system(line);
+            }
+            Outcome::Continue
+        }
+        ModalAction::ConfirmNo => {
+            if matches!(app.modals.last(), Some(Modal::Confirm { .. })) {
+                app.modals.pop();
             }
             Outcome::Continue
         }

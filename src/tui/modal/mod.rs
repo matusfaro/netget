@@ -8,6 +8,7 @@ pub mod composer;
 pub mod confirm;
 pub mod form;
 pub mod help;
+pub mod intercept;
 pub mod protocol_picker;
 pub mod request_detail;
 pub mod routing;
@@ -70,8 +71,10 @@ pub enum Modal {
     },
     /// Compose and send an action through a running client.
     Composer(Box<ComposerModel>),
-    /// Edit the instance's handler table (LLM / script / static routing).
+    /// Edit the instance's handler table (static / script / LLM / manual).
     Routing(Box<routing::RoutingModel>),
+    /// Answer a request a `manual` rule parked for you.
+    Intercept(Box<intercept::InterceptModel>),
 }
 
 impl Modal {
@@ -110,7 +113,15 @@ impl Modal {
             }
             Modal::Routing(model) => match model.key {
                 UiKey::Server(id) => format!("Routing — server #{}", id.as_u32()),
-                UiKey::Client(id) => format!("Routing — client #{}", id.as_u32()),
+                UiKey::Client(id) => format!("Auto-reply rules — client #{}", id.as_u32()),
+            },
+            Modal::Intercept(model) => match model.owner {
+                UiKey::Server(id) => {
+                    format!("Answer this request — server #{}", id.as_u32())
+                }
+                UiKey::Client(id) => {
+                    format!("Answer this reply — client #{}", id.as_u32())
+                }
             },
         }
     }
@@ -122,7 +133,9 @@ impl Modal {
             Modal::RequestDetail { .. } | Modal::BandDetail { .. } => "↑/↓ scroll · Esc close",
             Modal::Confirm { .. } => "y confirm · n/Esc cancel",
             Modal::WebApproval { .. } => "y allow once · a always · n/Esc deny",
-            Modal::ProtocolPicker { .. } => "type to filter · ↑/↓ select · Enter choose · Esc cancel",
+            Modal::ProtocolPicker { .. } => {
+                "type to filter · ↑/↓ select · Enter choose · Esc cancel"
+            }
             Modal::Form(form) => {
                 if form.busy {
                     "working… (network call in flight)"
@@ -148,10 +161,13 @@ impl Modal {
                 if model.busy {
                     "applying…"
                 } else if model.draft.is_some() {
-                    "Tab section · ←/→ change · Enter edit · Ctrl-S accept handler · Esc back"
+                    "Tab moves through everything · ←/→ change a choice · Enter act · Esc back"
                 } else {
-                    "a add · Enter edit · d delete · J/K reorder · Ctrl-S apply · Esc close"
+                    "Tab moves through everything · Enter act · Esc close"
                 }
+            }
+            Modal::Intercept(_) => {
+                "Tab moves between the buttons · Enter act · Esc keeps it waiting"
             }
         }
     }

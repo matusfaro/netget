@@ -39,6 +39,9 @@ pub struct ComposerModel {
     pub result: Option<String>,
     /// A send is in flight (spawned; see `crate::tui::uimsg`).
     pub busy: bool,
+    /// `Some(i)` when focus sits on the i-th button rather than in the list
+    /// or the fields.
+    pub focused_button: Option<usize>,
 }
 
 impl ComposerModel {
@@ -55,6 +58,51 @@ impl ComposerModel {
             error: None,
             result: None,
             busy: false,
+            focused_button: None,
+        }
+    }
+
+    /// The buttons for the current phase, in Tab order.
+    pub fn buttons(&self) -> Vec<crate::tui::hit::ModalAction> {
+        use crate::tui::hit::ModalAction::*;
+        if self.chosen.is_some() {
+            vec![ComposerSend, ComposerRaw, ComposerBack]
+        } else {
+            Vec::new()
+        }
+    }
+
+    pub fn focused_action(&self) -> Option<crate::tui::hit::ModalAction> {
+        self.focused_button
+            .and_then(|index| self.buttons().get(index).copied())
+    }
+
+    /// Tab through the fields (or the action list) and then the buttons.
+    pub fn cycle_focus(&mut self, backward: bool) {
+        let rows = if self.chosen.is_some() {
+            self.fields.len()
+        } else {
+            self.actions.len()
+        };
+        let buttons = self.buttons().len();
+        let total = rows + buttons;
+        if total == 0 {
+            return;
+        }
+        let current = match self.focused_button {
+            None => self.selected.min(rows.saturating_sub(1)),
+            Some(index) => rows + index,
+        };
+        let next = if backward {
+            (current + total - 1) % total
+        } else {
+            (current + 1) % total
+        };
+        if next < rows {
+            self.focused_button = None;
+            self.selected = next;
+        } else {
+            self.focused_button = Some(next - rows);
         }
     }
 
@@ -119,6 +167,7 @@ impl ComposerModel {
         self.chosen = Some(self.selected);
         self.selected = 0;
         self.error = None;
+        self.focused_button = None;
     }
 
     pub fn back_to_actions(&mut self) {
@@ -126,6 +175,7 @@ impl ComposerModel {
         self.fields.clear();
         self.raw_json = None;
         self.selected = 0;
+        self.focused_button = None;
     }
 
     pub fn toggle_raw_json(&mut self) {

@@ -39,6 +39,8 @@ pub struct ServerRow {
     /// Canonical client protocol name when this server's protocol has a
     /// compiled client counterpart (drives the [+client] button).
     pub client_counterpart: Option<String>,
+    /// Requests a `manual` rule parked, waiting for the operator's answer.
+    pub intercepts: Vec<crate::state::intercepts::InterceptView>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +61,8 @@ pub struct ClientRow {
     /// protocol has no command channel yet" are different problems and must
     /// not be shown as the same one.
     pub send_state: SendState,
+    /// Replies a `manual` rule parked, waiting for the operator's answer.
+    pub intercepts: Vec<crate::state::intercepts::InterceptView>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,6 +97,22 @@ pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
     let conversations = state.get_active_conversations().await;
     let (total_input_tokens, total_output_tokens, total_llm_calls) = state.get_llm_stats().await;
     let pipe_count = state.list_pipes().await.len();
+
+    // Pending manual-handler intercepts, bucketed per owner.
+    let mut server_intercepts: HashMap<u32, Vec<crate::state::intercepts::InterceptView>> =
+        HashMap::new();
+    let mut client_intercepts: HashMap<u32, Vec<crate::state::intercepts::InterceptView>> =
+        HashMap::new();
+    for view in state.list_intercepts().await {
+        match view.owner {
+            crate::state::intercepts::InterceptOwner::Server(id) => {
+                server_intercepts.entry(id.as_u32()).or_default().push(view)
+            }
+            crate::state::intercepts::InterceptOwner::Client(id) => {
+                client_intercepts.entry(id.as_u32()).or_default().push(view)
+            }
+        }
+    }
 
     // One pass over the (global, capped) access log, bucketed per owner.
     let mut server_requests: HashMap<u32, Vec<AccessLogEntry>> = HashMap::new();
@@ -158,6 +178,9 @@ pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
             client_counterpart: crate::protocol::compiled_client_protocol_for_server(
                 &server.protocol_name,
             ),
+            intercepts: server_intercepts
+                .remove(&server.id.as_u32())
+                .unwrap_or_default(),
         });
     }
     server_rows.sort_by_key(|s| s.id.as_u32());
@@ -196,6 +219,9 @@ pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
                 .unwrap_or_default(),
             task_count,
             send_state,
+            intercepts: client_intercepts
+                .remove(&client.id.as_u32())
+                .unwrap_or_default(),
         });
     }
     client_rows.sort_by_key(|c| c.id.as_u32());

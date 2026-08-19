@@ -56,9 +56,19 @@ async fn build_a_static_handler_and_hot_apply_it() {
     let server_id = state.get_all_server_ids().await[0];
     let port = wait_for_port(&state, server_id).await;
 
+    // An interactively created server defaults to MANUAL routing — you are at
+    // the dashboard, so requests wait for you until you decide otherwise.
     let snapshot = projection::build_snapshot(&state).await;
     let row = &snapshot.servers[0];
-    assert!(row.routing.is_none(), "server starts with no handlers");
+    let default_routing = row.routing.as_ref().expect("interactive default routing");
+    assert_eq!(default_routing.handlers.len(), 1);
+    assert!(
+        matches!(
+            default_routing.handlers[0].handler,
+            netget::scripting::EventHandlerType::Manual { .. }
+        ),
+        "the interactive default is a manual (human-answered) rule"
+    );
 
     // Build a static handler through the editor's own model.
     let mut model = RoutingModel::new(UiKey::Server(server_id), "TCP", None, &state);
@@ -130,7 +140,9 @@ async fn build_a_static_handler_and_hot_apply_it() {
 
     // And it really answers on the wire, with no model call.
     let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-    stream.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
     stream.write_all(b"ping").expect("write");
     let mut buf = [0u8; 128];
     let read = stream.read(&mut buf).expect("read response");
@@ -184,17 +196,28 @@ fn every_action_is_a_focusable_button() {
     assert!(buttons.contains(&ModalAction::RoutingDelete));
 }
 
-/// The handler editor's own Save/Cancel must be tab-reachable too, after its
-/// three sections.
+/// Tab must visit every focus stop the current kind offers — the kind control,
+/// the pattern, the kind's own fields, then Save and Cancel — and wrap.
 #[test]
 fn the_handler_editor_has_tab_reachable_buttons() {
     use netget::tui::hit::ModalAction;
-    use netget::tui::modal::routing::HandlerDraft;
+    use netget::tui::modal::routing::{DraftFocus, HandlerDraft};
 
     let mut draft = HandlerDraft::new();
-    assert!(draft.focused_action().is_none(), "starts on a section");
+    assert_eq!(draft.focus, DraftFocus::Kind, "starts on the kind control");
 
-    // Three sections, then the two buttons.
+    // Static: kind → pattern → actions → Save → Cancel → back to kind.
+    let stops = draft.focus_stops();
+    assert_eq!(
+        stops,
+        vec![
+            DraftFocus::Kind,
+            DraftFocus::Pattern,
+            DraftFocus::Actions,
+            DraftFocus::Button(0),
+            DraftFocus::Button(1),
+        ]
+    );
     for _ in 0..3 {
         draft.cycle_focus(false);
     }
@@ -202,10 +225,68 @@ fn the_handler_editor_has_tab_reachable_buttons() {
     draft.cycle_focus(false);
     assert_eq!(draft.focused_action(), Some(ModalAction::DraftCancel));
     draft.cycle_focus(false);
-    assert!(
-        draft.focused_action().is_none(),
-        "wraps back to the sections"
-    );
+    assert_eq!(draft.focus, DraftFocus::Kind, "wraps back to the start");
+
+    // Switching kinds re-plans the tour: script gets language/code/resident,
+    // manual gets the timeout — and a focus that no longer exists resets
+    // rather than stranding Tab on a field of the previous kind.
+    draft.set_kind(HandlerKind::Script);
+    assert!(draft.focus_stops().contains(&DraftFocus::Language));
+    assert!(draft.focus_stops().contains(&DraftFocus::Resident));
+    draft.focus = DraftFocus::Code;
+    draft.set_kind(HandlerKind::Manual);
+    assert_eq!(draft.focus, DraftFocus::Kind, "stale focus resets");
+    assert!(draft.focus_stops().contains(&DraftFocus::Timeout));
+}
+
+/// The manual kind: a positive timeout round-trips; junk is rejected at save.
+#[test]
+fn a_manual_handler_needs_a_positive_timeout() {
+    use netget::scripting::EventHandlerType;
+    use netget::tui::modal::routing::HandlerDraft;
+
+    let mut draft = HandlerDraft::new();
+    draft.kind = HandlerKind::Manual;
+    draft.timeout_secs = "120".to_string();
+    let handler = draft.to_handler().expect("valid manual handler");
+    assert!(matches!(
+        handler.handler,
+        EventHandlerType::Manual { timeout_secs: 120 }
+    ));
+
+    // And it survives an edit round-trip.
+    let reopened = HandlerDraft::from_handler(&handler);
+    assert_eq!(reopened.kind, HandlerKind::Manual);
+    assert_eq!(reopened.timeout_secs, "120");
+
+    for junk in ["0", "-5", "soon", ""] {
+        let mut draft = HandlerDraft::new();
+        draft.kind = HandlerKind::Manual;
+        draft.timeout_secs = junk.to_string();
+        let err = draft.to_handler().expect_err("junk timeout rejected");
+        assert!(err.to_string().contains("timeout"), "{err}");
+    }
+}
+
+/// ←/→ on the pattern walks `*` plus the protocol's own events, wrapping.
+#[test]
+fn the_pattern_chooser_walks_the_protocols_events() {
+    use netget::tui::modal::routing::HandlerDraft;
+
+    let event_ids = vec![
+        ("tcp_connection_opened".to_string(), "opened".to_string()),
+        ("tcp_data_received".to_string(), "data".to_string()),
+    ];
+    let mut draft = HandlerDraft::new();
+    assert_eq!(draft.pattern, "*");
+    draft.cycle_pattern(&event_ids, false);
+    assert_eq!(draft.pattern, "tcp_connection_opened");
+    draft.cycle_pattern(&event_ids, false);
+    assert_eq!(draft.pattern, "tcp_data_received");
+    draft.cycle_pattern(&event_ids, false);
+    assert_eq!(draft.pattern, "*", "wraps");
+    draft.cycle_pattern(&event_ids, true);
+    assert_eq!(draft.pattern, "tcp_data_received", "and walks backward");
 }
 
 #[test]

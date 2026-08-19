@@ -51,6 +51,7 @@ fn server(conns: Vec<ConnRow>, requests: Vec<AccessLogEntry>) -> ServerRow {
         requests,
         task_count: 0,
         client_counterpart: Some("TCP".into()),
+        intercepts: Vec::new(),
     }
 }
 
@@ -296,13 +297,16 @@ fn a_client_tree_groups_its_peer_requests_and_attempts() {
         requests: vec![entry(5, None)],
         task_count: 0,
         send_state: SendState::Ready,
+        intercepts: Vec::new(),
     };
     let rows = tree::client_rows(&row, &TreeState::default());
 
     let groups = labels_at_depth(&rows, 1);
     assert!(groups.iter().any(|l| l.starts_with("config")), "{groups:?}");
+    // A client's rules react to what the server sends back; calling that
+    // "routing" next to a send button read as the way to send.
     assert!(
-        groups.iter().any(|l| l.starts_with("routing")),
+        groups.iter().any(|l| l.starts_with("auto-reply rules")),
         "{groups:?}"
     );
     assert!(groups.iter().any(|l| l.starts_with("peer")), "{groups:?}");
@@ -312,16 +316,16 @@ fn a_client_tree_groups_its_peer_requests_and_attempts() {
         "attempts should be their own group: {groups:?}"
     );
 
-    // Sending lives with the peer it sends to, not on the root row.
-    let under_peer = subtree(&rows, "peer");
-    assert!(
-        under_peer.iter().any(|r| {
-            r.node == NodeId::Action(UiKey::Client(row.id), tree::RowAction::Send)
-                && r.label.contains("send")
-        }),
-        "[ send a request ] should be a row under `peer`: {:?}",
-        under_peer.iter().map(|r| &r.label).collect::<Vec<_>>()
+    // Sending is what a client is for, so it is the FIRST row under the root —
+    // before config, before rules — not something discovered under a peer.
+    let send = NodeId::Action(UiKey::Client(row.id), tree::RowAction::Send);
+    assert_eq!(
+        rows[1].node,
+        send,
+        "[ send a request ] should be the first child of the client root: {:?}",
+        rows.iter().map(|r| &r.label).collect::<Vec<_>>()
     );
+    assert!(rows[1].label.contains("send"), "{}", rows[1].label);
 }
 
 /// Every verb is a row, under the noun it acts on.
@@ -390,6 +394,47 @@ fn the_edit_row_is_not_charged_against_the_child_cap() {
         "[ edit config ] must survive the cap: {:?}",
         under_config.iter().map(|r| &r.label).collect::<Vec<_>>()
     );
+}
+
+/// A parked manual-handler request is the loudest thing in the tree: a row of
+/// its own right under the instance, plus a chip on the root so a collapsed
+/// instance still shows it.
+#[test]
+fn a_pending_intercept_is_visible_and_activatable() {
+    use netget::state::intercepts::{InterceptOwner, InterceptView};
+
+    let mut row = server(vec![conn(1)], vec![]);
+    row.intercepts = vec![InterceptView {
+        id: 7,
+        owner: InterceptOwner::Server(ServerId::new(1)),
+        connection_id: Some(1),
+        event_type: "tcp_data_received".into(),
+        description: "Data received".into(),
+        event_data: Some(serde_json::json!({"data": "hello"})),
+        created_unix_ms: 1_700_000_000_000,
+    }];
+
+    let key = UiKey::Server(ServerId::new(1));
+    let rows = tree::server_rows(&row, &TreeState::default());
+    assert!(
+        rows[0].label.contains("⚠ 1 waiting"),
+        "the root should carry the waiting chip: {}",
+        rows[0].label
+    );
+    assert_eq!(
+        rows[1].node,
+        NodeId::Intercept(key, 7),
+        "the intercept row comes first under the root: {:?}",
+        rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+    assert!(rows[1].label.contains("tcp_data_received"));
+
+    // Collapsed, the chip is still there even though the row is not.
+    let mut state = TreeState::default();
+    state.collapse(&NodeId::Instance(key));
+    let rows = tree::server_rows(&row, &state);
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].label.contains("waiting"));
 }
 
 /// The LLM fallback is not a handler, and must not be reachable as one.

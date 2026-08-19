@@ -12,7 +12,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
-use crate::tui::app::{DashboardApp, Focus, Section};
+use crate::tui::app::{DashboardApp, Focus};
 use crate::tui::hit::HitTarget;
 
 use super::band;
@@ -54,28 +54,10 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
     ]);
     frame.render_widget(Paragraph::new(header), header_area);
 
-    let mut x = header_area.x + header_area.width;
-    for (label, section) in [
-        ("[ + client ]", Section::Clients),
-        ("[ + server ]", Section::Servers),
-    ] {
-        let width = label.chars().count() as u16 + 1;
-        if x < header_area.x + width {
-            break;
-        }
-        x -= width;
-        let button = Rect {
-            x,
-            y: header_area.y,
-            width: width - 1,
-            height: 1,
-        };
-        frame.render_widget(
-            Paragraph::new(Span::styled(label, app.styles.button)),
-            button,
-        );
-        app.hits.push(button, HitTarget::AddButton(section));
-    }
+    // `[ + server ]` and `[ + client ]` used to sit here, right-aligned in the
+    // header. They are rows at the foot of the tree now, like every other
+    // action — reachable by walking the list rather than only by clicking a
+    // corner or knowing that `a` exists.
 
     let body = Rect {
         x: area.x,
@@ -87,17 +69,9 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
         return;
     }
 
+    // Never empty: the two "new instance" rows are always there, so an idle
+    // rail shows what to do rather than a sentence explaining it.
     let rows = band::rail_rows(app);
-    if rows.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
-                "  nothing running — press a for a server, or click [ + server ]",
-                app.styles.dimmed,
-            )),
-            body,
-        );
-        return;
-    }
 
     // Scroll so the selection stays visible.
     let viewport = body.height as usize;

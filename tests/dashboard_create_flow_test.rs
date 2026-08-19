@@ -91,7 +91,11 @@ fn create_form_offers_each_field_once() {
     let count = labels.len();
     labels.sort_unstable();
     labels.dedup();
-    assert_eq!(labels.len(), count, "form fields must be unique: {labels:?}");
+    assert_eq!(
+        labels.len(),
+        count,
+        "form fields must be unique: {labels:?}"
+    );
 
     // A protocol that declares no default port still gets a usable one: port 0
     // asks the OS for a free port, so picking a protocol can start it without
@@ -163,13 +167,40 @@ async fn create_server_then_client_then_send_without_an_llm() {
         "TCP has a client counterpart, so [+ client] must be offered"
     );
 
-    // 3. Create the client aimed at our own server.
+    // 3. Create the client aimed at our own server. Spawned, exactly as the
+    //    dashboard spawns it (see `crate::tui::uimsg`): the client was created
+    //    interactively, so it defaults to MANUAL routing, and its
+    //    tcp_connected event parks for the human — `create` does not return
+    //    until that question is answered.
     let mut client_form = FormModel::for_create(Section::Clients, "TCP", None);
     client_form.set_field_value(&FieldTarget::RemoteAddr, format!("127.0.0.1:{port}"));
-    let summary = client_form
-        .apply(&state, llm(), &tx)
-        .await
-        .expect("create client");
+    let apply = {
+        let state = state.clone();
+        let tx = tx.clone();
+        tokio::spawn(async move { client_form.apply(&state, llm(), &tx).await })
+    };
+
+    // The parked connect event appears as a pending intercept; answer it with
+    // nothing ("acknowledge, say nothing") — the exact flow the dashboard's
+    // ⚠ row + [ Send response ] performs.
+    let mut answered = false;
+    for _ in 0..200 {
+        if let Some(view) = state.list_intercepts().await.first() {
+            state
+                .resolve_intercept(view.id, Vec::new())
+                .await
+                .expect("answer the parked connect event");
+            answered = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert!(
+        answered,
+        "an interactively created client should park its connect event for the human"
+    );
+
+    let summary = apply.await.expect("task").expect("create client");
     assert!(summary.contains("Connected client"), "{summary}");
 
     let client_id = state.get_all_client_ids().await[0];
@@ -179,6 +210,10 @@ async fn create_server_then_client_then_send_without_an_llm() {
         }
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
+    assert!(
+        state.has_client_handle(client_id).await,
+        "the command channel must register even while the connect event is parked"
+    );
 
     // 4. Compose a send from the protocol's own vocabulary and deliver it.
     let actions = ComposerModel::vocabulary("TCP", &state);
@@ -224,23 +259,29 @@ async fn create_server_then_client_then_send_without_an_llm() {
         let entries = state
             .list_access_logs_for(Some(AccessLogOwner::Server(server_id.as_u32())), None)
             .await;
-        if entries
-            .iter()
-            .any(|e| serde_json::to_string(e).unwrap_or_default().contains("ping-from-dashboard"))
-        {
+        if entries.iter().any(|e| {
+            serde_json::to_string(e)
+                .unwrap_or_default()
+                .contains("ping-from-dashboard")
+        }) {
             seen = true;
             break;
         }
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
-    assert!(seen, "the server's request log should show the injected send");
+    assert!(
+        seen,
+        "the server's request log should show the injected send"
+    );
 
     // And the client's own request pane shows the injection.
     let client_entries = state
         .list_access_logs_for(Some(AccessLogOwner::Client(client_id.as_u32())), None)
         .await;
     assert!(
-        client_entries.iter().any(|e| e.event_type == "injected_action"),
+        client_entries
+            .iter()
+            .any(|e| e.event_type == "injected_action"),
         "the client's request log should record the injected action"
     );
 }

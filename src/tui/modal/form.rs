@@ -35,6 +35,14 @@ pub enum FieldTarget {
     /// Raw JSON of the whole event-handler list (the routing editor is the
     /// friendlier path; this is the escape hatch).
     EventHandlersJson,
+    /// The routing draft's script code (text-editor return path).
+    DraftCode,
+    /// The routing draft's LLM instruction (text-editor return path).
+    DraftInstruction,
+    /// The routing draft's static action list, as a JSON array.
+    DraftActions,
+    /// A pending intercept's response actions, as a JSON array.
+    InterceptActions,
 }
 
 #[derive(Debug, Clone)]
@@ -114,7 +122,9 @@ impl FormModel {
                 // port 0 asks the OS for a free port. That keeps "pick a
                 // protocol and go" working for TCP and friends, and the port
                 // remains editable afterwards like everything else.
-                port.value = default_port.map(|p| p.to_string()).unwrap_or_else(|| "0".to_string());
+                port.value = default_port
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "0".to_string());
                 port.placeholder = if default_port.is_none() {
                     "0 = let the OS choose a free port".to_string()
                 } else {
@@ -155,12 +165,27 @@ impl FormModel {
                 fields.push(remote);
             }
         }
-        Self::finish(
+        let mut model = Self::finish(
             FormMode::Create(section),
             protocol,
             fields,
             declared_params(section, protocol),
-        )
+        );
+        // An instance created interactively defaults to MANUAL routing: every
+        // event parks at the dashboard for YOU to answer. That is the whole
+        // point of creating one by hand — you are here, driving. The rule is
+        // an ordinary `*` handler, so the routing editor can retarget it to
+        // static/script/LLM or delete it outright; instances the model creates
+        // through its own tools get no such default and keep LLM behavior.
+        model.set_field_value(
+            &FieldTarget::EventHandlersJson,
+            serde_json::json!([{
+                "event_pattern": "*",
+                "handler": {"type": "manual"}
+            }])
+            .to_string(),
+        );
+        model
     }
 
     /// Build an edit-form pre-filled from a live instance.
@@ -473,9 +498,14 @@ impl FormModel {
             }
             FormMode::Edit(UiKey::Client(client_id)) => {
                 let form = self.to_client_form()?;
-                let outcome =
-                    management::update_client(state, *client_id, form, llm_client, status_tx.clone())
-                        .await?;
+                let outcome = management::update_client(
+                    state,
+                    *client_id,
+                    form,
+                    llm_client,
+                    status_tx.clone(),
+                )
+                .await?;
                 Ok(outcome.summary)
             }
         }

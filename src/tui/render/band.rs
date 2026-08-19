@@ -14,12 +14,17 @@ use crate::tui::tree::{self, RowStyle, TreeRow, TreeState};
 const INDENT: usize = 2;
 
 /// A row of the rail: a tree row plus the instance that owns it.
+///
+/// `key` is `None` for the rail's own rows — the two that start a new instance
+/// belong to no instance, which is exactly why they cannot be per-instance
+/// actions.
 pub struct RailRow {
-    pub key: UiKey,
+    pub key: Option<UiKey>,
     pub row: TreeRow,
 }
 
-/// Every instance's tree, concatenated: servers first, then clients.
+/// Every instance's tree, concatenated: servers first, then clients, then the
+/// two rows that add another.
 pub fn rail_rows(app: &DashboardApp) -> Vec<RailRow> {
     let empty = TreeState::default();
     let mut rows = Vec::new();
@@ -30,7 +35,10 @@ pub fn rail_rows(app: &DashboardApp) -> Vec<RailRow> {
         rows.extend(
             tree::server_rows(server, state)
                 .into_iter()
-                .map(|row| RailRow { key, row }),
+                .map(|row| RailRow {
+                    key: Some(key),
+                    row,
+                }),
         );
     }
     for client in &app.snapshot.clients {
@@ -39,9 +47,18 @@ pub fn rail_rows(app: &DashboardApp) -> Vec<RailRow> {
         rows.extend(
             tree::client_rows(client, state)
                 .into_iter()
-                .map(|row| RailRow { key, row }),
+                .map(|row| RailRow {
+                    key: Some(key),
+                    row,
+                }),
         );
     }
+    // Last, where the instance they create will appear.
+    rows.extend(
+        tree::new_instance_rows()
+            .into_iter()
+            .map(|row| RailRow { key: None, row }),
+    );
     rows
 }
 

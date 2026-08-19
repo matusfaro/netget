@@ -15,40 +15,89 @@ use crate::scripting::{EventHandlerConfig, EventHandlerType};
 use crate::state::app_state::AppState;
 use crate::tui::app::UiKey;
 
-/// Which part of the handler editor has focus.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HandlerEditFocus {
-    Pattern,
-    Kind,
-    /// The type-specific body: instruction text, script code, or the action list.
-    Body,
-}
-
-/// Handler kinds, in the order the editor cycles them.
+/// Handler kinds, in the order the segmented control shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HandlerKind {
-    Llm,
-    Script,
     Static,
+    Script,
+    Llm,
+    Manual,
 }
 
 impl HandlerKind {
+    /// Segmented-control order.
+    pub const ALL: [HandlerKind; 4] = [
+        HandlerKind::Static,
+        HandlerKind::Script,
+        HandlerKind::Llm,
+        HandlerKind::Manual,
+    ];
+
+    /// The segment label.
     pub fn label(&self) -> &'static str {
         match self {
-            HandlerKind::Llm => "LLM (ask the model each time)",
-            HandlerKind::Script => "SCRIPT (deterministic, runs an interpreter)",
-            HandlerKind::Static => "STATIC (fixed actions, cheapest)",
+            HandlerKind::Static => "STATIC",
+            HandlerKind::Script => "SCRIPT",
+            HandlerKind::Llm => "LLM",
+            HandlerKind::Manual => "MANUAL",
+        }
+    }
+
+    /// One line under the control explaining the selected kind.
+    pub fn blurb(&self) -> &'static str {
+        match self {
+            HandlerKind::Static => {
+                "Fixed actions, sent as-is. Cheapest and fully deterministic; \
+                 {{event.field}} echoes values from the event."
+            }
+            HandlerKind::Script => {
+                "Your code decides. Runs an interpreter per event (or resident), no model call."
+            }
+            HandlerKind::Llm => "The model decides, using an instruction written for this event.",
+            HandlerKind::Manual => {
+                "YOU decide. Each matched event waits at the dashboard for you to compose \
+                 the answer; no answer within the timeout fails closed."
+            }
         }
     }
 
     pub fn next(&self) -> Self {
-        match self {
-            HandlerKind::Llm => HandlerKind::Script,
-            HandlerKind::Script => HandlerKind::Static,
-            HandlerKind::Static => HandlerKind::Llm,
-        }
+        let index = Self::ALL.iter().position(|k| k == self).unwrap_or(0);
+        Self::ALL[(index + 1) % Self::ALL.len()]
+    }
+
+    pub fn previous(&self) -> Self {
+        let index = Self::ALL.iter().position(|k| k == self).unwrap_or(0);
+        Self::ALL[(index + Self::ALL.len() - 1) % Self::ALL.len()]
     }
 }
+
+/// One focus stop inside the handler editor. Tab visits every stop in order,
+/// so nothing in the editor is reachable only by shortcut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DraftFocus {
+    /// The segmented kind control (←/→ changes it).
+    Kind,
+    /// The event pattern (←/→ walks the protocol's events; Enter types one).
+    Pattern,
+    /// Script: the language (←/→ cycles).
+    Language,
+    /// Script: the code (Enter opens the editor).
+    Code,
+    /// Script: the resident toggle (Enter/Space flips).
+    Resident,
+    /// LLM: the per-event instruction (Enter opens the editor).
+    Instruction,
+    /// Static: the action list (Enter opens the JSON editor).
+    Actions,
+    /// Manual: seconds to wait for the operator (Enter edits).
+    Timeout,
+    /// One of the buttons at the bottom, by index into [`HandlerDraft::buttons`].
+    Button(usize),
+}
+
+/// Script languages the editor offers, in cycle order.
+pub const SCRIPT_LANGUAGES: [&str; 4] = ["python", "javascript", "perl", "go"];
 
 /// One handler being edited.
 #[derive(Debug, Clone)]
@@ -62,55 +111,106 @@ pub struct HandlerDraft {
     pub resident: bool,
     /// Static actions as JSON values.
     pub actions: Vec<serde_json::Value>,
-    pub focus: HandlerEditFocus,
+    /// Manual handler: seconds to wait for the operator, as typed.
+    pub timeout_secs: String,
+    pub focus: DraftFocus,
     pub selected_action: usize,
     pub editing: Option<String>,
     pub error: Option<String>,
-    /// `Some(i)` when focus is on the i-th button rather than a section.
-    pub focused_button: Option<usize>,
 }
 
 impl HandlerDraft {
-    /// Buttons, in Tab order after the three sections.
+    /// Buttons, in Tab order after the fields.
     pub fn buttons(&self) -> Vec<crate::tui::hit::ModalAction> {
         use crate::tui::hit::ModalAction::*;
         vec![DraftSave, DraftCancel]
     }
 
     pub fn focused_action(&self) -> Option<crate::tui::hit::ModalAction> {
-        self.focused_button
-            .and_then(|index| self.buttons().get(index).copied())
+        match self.focus {
+            DraftFocus::Button(index) => self.buttons().get(index).copied(),
+            _ => None,
+        }
     }
 
-    /// Tab through pattern → kind → body → Save → Cancel → pattern.
+    /// Every focus stop the current kind offers, in Tab order. The body stops
+    /// change with the kind, so switching kinds re-plans the tour rather than
+    /// leaving Tab landing on fields that no longer exist.
+    pub fn focus_stops(&self) -> Vec<DraftFocus> {
+        let mut stops = vec![DraftFocus::Kind, DraftFocus::Pattern];
+        match self.kind {
+            HandlerKind::Static => stops.push(DraftFocus::Actions),
+            HandlerKind::Script => {
+                stops.push(DraftFocus::Language);
+                stops.push(DraftFocus::Code);
+                stops.push(DraftFocus::Resident);
+            }
+            HandlerKind::Llm => stops.push(DraftFocus::Instruction),
+            HandlerKind::Manual => stops.push(DraftFocus::Timeout),
+        }
+        for index in 0..self.buttons().len() {
+            stops.push(DraftFocus::Button(index));
+        }
+        stops
+    }
+
+    /// Tab through kind → pattern → the kind's own fields → Save → Cancel.
     pub fn cycle_focus(&mut self, backward: bool) {
-        let sections = 3usize;
-        let buttons = self.buttons().len();
-        let total = sections + buttons;
-        let current = match self.focused_button {
-            None => match self.focus {
-                HandlerEditFocus::Pattern => 0,
-                HandlerEditFocus::Kind => 1,
-                HandlerEditFocus::Body => 2,
-            },
-            Some(index) => sections + index,
-        };
+        let stops = self.focus_stops();
+        let current = stops.iter().position(|s| *s == self.focus).unwrap_or(0);
+        let total = stops.len();
         let next = if backward {
             (current + total - 1) % total
         } else {
             (current + 1) % total
         };
-        if next < sections {
-            self.focused_button = None;
-            self.focus = match next {
-                0 => HandlerEditFocus::Pattern,
-                1 => HandlerEditFocus::Kind,
-                _ => HandlerEditFocus::Body,
-            };
-        } else {
-            self.focused_button = Some(next - sections);
+        self.focus = stops[next];
+    }
+
+    /// Change the kind, keeping focus valid for the new kind's fields.
+    pub fn set_kind(&mut self, kind: HandlerKind) {
+        self.kind = kind;
+        if !self.focus_stops().contains(&self.focus) {
+            self.focus = DraftFocus::Kind;
         }
     }
+
+    /// The pattern choices ←/→ walks: `*` first, then the protocol's events.
+    pub fn pattern_choices(event_ids: &[(String, String)]) -> Vec<String> {
+        let mut choices = vec!["*".to_string()];
+        choices.extend(event_ids.iter().map(|(id, _)| id.clone()));
+        choices
+    }
+
+    /// Step the pattern through the choices (wrapping); free text that matches
+    /// no choice starts from `*`.
+    pub fn cycle_pattern(&mut self, event_ids: &[(String, String)], backward: bool) {
+        let choices = Self::pattern_choices(event_ids);
+        let current = choices.iter().position(|c| *c == self.pattern).unwrap_or(0);
+        let total = choices.len();
+        let next = if backward {
+            (current + total - 1) % total
+        } else {
+            (current + 1) % total
+        };
+        self.pattern = choices[next].clone();
+    }
+
+    /// Step the script language through [`SCRIPT_LANGUAGES`].
+    pub fn cycle_language(&mut self, backward: bool) {
+        let current = SCRIPT_LANGUAGES
+            .iter()
+            .position(|l| *l == self.language)
+            .unwrap_or(0);
+        let total = SCRIPT_LANGUAGES.len();
+        let next = if backward {
+            (current + total - 1) % total
+        } else {
+            (current + 1) % total
+        };
+        self.language = SCRIPT_LANGUAGES[next].to_string();
+    }
+
     pub fn new() -> Self {
         Self {
             pattern: "*".to_string(),
@@ -120,11 +220,11 @@ impl HandlerDraft {
             code: String::new(),
             resident: false,
             actions: Vec::new(),
-            focus: HandlerEditFocus::Pattern,
+            timeout_secs: crate::scripting::DEFAULT_MANUAL_TIMEOUT_SECS.to_string(),
+            focus: DraftFocus::Kind,
             selected_action: 0,
             editing: None,
             error: None,
-            focused_button: None,
         }
     }
 
@@ -153,6 +253,10 @@ impl HandlerDraft {
             EventHandlerType::Static { actions } => {
                 draft.kind = HandlerKind::Static;
                 draft.actions = actions.clone();
+            }
+            EventHandlerType::Manual { timeout_secs } => {
+                draft.kind = HandlerKind::Manual;
+                draft.timeout_secs = timeout_secs.to_string();
             }
         }
         draft
@@ -190,6 +294,21 @@ impl HandlerDraft {
             HandlerKind::Static => EventHandlerType::Static {
                 actions: self.actions.clone(),
             },
+            HandlerKind::Manual => {
+                let timeout_secs = self
+                    .timeout_secs
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|t| *t > 0)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "the timeout must be a positive number of seconds (got '{}')",
+                            self.timeout_secs
+                        )
+                    })?;
+                EventHandlerType::Manual { timeout_secs }
+            }
         };
         // Catches malformed {{event.…}} references before anything is applied.
         handler.validate()?;
@@ -388,8 +507,7 @@ impl RoutingModel {
                     event_handlers: Some(handlers_json),
                     ..Default::default()
                 };
-                let outcome =
-                    management::update_server(state, id, form, status_tx.clone()).await?;
+                let outcome = management::update_server(state, id, form, status_tx.clone()).await?;
                 Ok(outcome.summary)
             }
             UiKey::Client(id) => {
@@ -413,8 +531,7 @@ impl RoutingModel {
     /// delete — and listing it alongside real ones invited exactly that.
     /// `fallback_note` states it instead.
     pub fn rows(&self) -> Vec<String> {
-        self
-            .handlers
+        self.handlers
             .iter()
             .map(|h| {
                 let pattern = match &h.event_pattern {
@@ -422,10 +539,9 @@ impl RoutingModel {
                     EventPattern::Wildcard => "*".to_string(),
                 };
                 let body = match &h.handler {
-                    EventHandlerType::Llm { instruction } => format!(
-                        "LLM — {}",
-                        crate::utils::truncate_for_log(instruction, 50)
-                    ),
+                    EventHandlerType::Llm { instruction } => {
+                        format!("LLM — {}", crate::utils::truncate_for_log(instruction, 50))
+                    }
                     EventHandlerType::Script {
                         language, resident, ..
                     } => format!(
@@ -438,6 +554,9 @@ impl RoutingModel {
                             .filter_map(|a| a.get("type").and_then(|t| t.as_str()))
                             .collect();
                         format!("STATIC — {}", names.join(", "))
+                    }
+                    EventHandlerType::Manual { timeout_secs } => {
+                        format!("MANUAL — you answer each one at the dashboard ({timeout_secs}s)")
                     }
                 };
                 format!("{pattern:<26} {body}")
@@ -452,7 +571,7 @@ impl RoutingModel {
 }
 
 /// The event ids and action definitions of an instance's protocol.
-fn vocabulary(
+pub(crate) fn vocabulary(
     key: UiKey,
     protocol: &str,
     state: &AppState,

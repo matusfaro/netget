@@ -27,10 +27,7 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
                     Span::styled(format!("  {key:<22}"), app.styles.accent),
                     Span::styled(text.to_string(), app.styles.normal),
                 ]),
-                None => Line::from(Span::styled(
-                    format!("\n{text}"),
-                    app.styles.title,
-                )),
+                None => Line::from(Span::styled(format!("\n{text}"), app.styles.title)),
             })
             .collect(),
         Modal::RequestDetail { entry, .. } => request_detail::detail_lines(entry)
@@ -40,10 +37,7 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
         Modal::Confirm { message, .. } => vec![
             Line::from(Span::styled(message.clone(), app.styles.warning)),
             Line::from(""),
-            Line::from(Span::styled(
-                "This cannot be undone.",
-                app.styles.dimmed,
-            )),
+            Line::from(Span::styled("This cannot be undone.", app.styles.dimmed)),
         ],
         Modal::WebApproval { url, .. } => vec![
             Line::from(Span::styled(
@@ -62,8 +56,8 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
             let _ = editor;
             Vec::new()
         }
-        Modal::Composer(composer) => composer_lines(app, composer),
-        Modal::Routing(model) => routing_lines(app, model),
+        // Rendered separately below (their own panes and button rows).
+        Modal::Composer(_) | Modal::Routing(_) | Modal::Intercept(_) => Vec::new(),
     };
 
     let scroll = match modal {
@@ -95,127 +89,130 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
         let lines = form_lines(app, form);
         let buttons = form.buttons();
         let focused = form.focused_action();
-        frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
-            rows[0],
-        );
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[0]);
         draw_button_row(frame, app, rows[1], &buttons, focused);
         return;
     }
 
-    // The routing editor: list, then a row of real buttons, then the note
-    // about the implicit fallback.
+    // The routing editor: either the handler table, or the draft editor with
+    // its kind control, its panes and its buttons.
     if let Some(Modal::Routing(model)) = app.modals.last() {
         if let Some(draft) = &model.draft {
-            let rows = ratatui::layout::Layout::default()
-                .direction(ratatui::layout::Direction::Vertical)
-                .constraints([
-                    ratatui::layout::Constraint::Min(3),
-                    ratatui::layout::Constraint::Length(1),
-                ])
-                .split(inner);
-            let lines = routing_lines(app, model);
+            use crate::tui::modal::routing::DraftFocus;
+            let kind = draft.kind;
+            let kind_focused = draft.focus == DraftFocus::Kind;
             let buttons = draft.buttons();
             let focused = draft.focused_action();
-            frame.render_widget(
-                Paragraph::new(lines).wrap(Wrap { trim: false }),
-                rows[0],
-            );
-            draw_button_row(frame, app, rows[1], &buttons, focused);
-            return;
-        }
-        if model.draft.is_none() {
-            use crate::tui::modal::routing::RoutingFocus;
+            let body = draft_body_lines(app, model, draft);
 
             let rows = ratatui::layout::Layout::default()
                 .direction(ratatui::layout::Direction::Vertical)
                 .constraints([
-                    ratatui::layout::Constraint::Min(3),
                     ratatui::layout::Constraint::Length(1),
                     ratatui::layout::Constraint::Length(2),
+                    ratatui::layout::Constraint::Min(3),
+                    ratatui::layout::Constraint::Length(1),
                 ])
                 .split(inner);
-
-            // --- handler list ---
-            let mut lines: Vec<Line> = vec![Line::from(Span::styled(
-                "Handlers are matched in order; the first match wins.",
-                app.styles.dimmed,
-            ))];
-            let handler_rows = model.rows();
-            if handler_rows.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    "  (none yet — Add one to answer an event without the model)",
-                    app.styles.dimmed,
-                )));
-            }
-            for (index, row) in handler_rows.iter().enumerate() {
-                let selected = model.focus == RoutingFocus::List && index == model.selected;
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        if selected { "▸ " } else { "  " },
-                        app.styles.accent,
-                    ),
-                    Span::styled(
-                        row.clone(),
-                        if selected {
-                            app.styles.selected
-                        } else {
-                            app.styles.normal
-                        },
-                    ),
-                ]));
-            }
-            if let Some(error) = &model.error {
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    format!("✗ {error}"),
-                    app.styles.error,
-                )));
-            }
-            frame.render_widget(Paragraph::new(lines), rows[0]);
-
-            // --- buttons ---
-            let buttons = model.buttons();
-            let focused = model.focused_button();
-            let mut spans: Vec<Span> = Vec::new();
-            let mut x = rows[1].x;
-            for action in &buttons {
-                let label = action.label();
-                let width = label.chars().count() as u16;
-                if x + width > rows[1].x + rows[1].width {
-                    break;
-                }
-                let is_focused = focused == Some(*action);
-                spans.push(Span::styled(
-                    label,
-                    if is_focused {
-                        app.styles.selected
-                    } else {
-                        app.styles.button
-                    },
-                ));
-                spans.push(Span::raw(" "));
-                app.hits.push(
-                    ratatui::layout::Rect {
-                        x,
-                        y: rows[1].y,
-                        width,
-                        height: 1,
-                    },
-                    HitTarget::ModalActionButton(*action),
-                );
-                x += width + 1;
-            }
-            frame.render_widget(Paragraph::new(Line::from(spans)), rows[1]);
-
-            // --- the implicit fallback, stated rather than faked as a row ---
+            draw_kind_segments(frame, app, rows[0], kind, kind_focused);
             frame.render_widget(
-                Paragraph::new(Span::styled(model.fallback_note(), app.styles.dimmed))
+                Paragraph::new(Span::styled(kind.blurb(), app.styles.dimmed))
                     .wrap(Wrap { trim: false }),
-                rows[2],
+                rows[1],
             );
+            frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), rows[2]);
+            draw_button_row(frame, app, rows[3], &buttons, focused);
             return;
         }
+
+        use crate::tui::modal::routing::RoutingFocus;
+
+        let rows = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Min(3),
+                ratatui::layout::Constraint::Length(1),
+                ratatui::layout::Constraint::Length(2),
+            ])
+            .split(inner);
+
+        // --- handler list ---
+        let mut lines: Vec<Line> = vec![Line::from(Span::styled(
+            "Rules are matched in order; the first match wins.",
+            app.styles.dimmed,
+        ))];
+        let handler_rows = model.rows();
+        if handler_rows.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (none yet — Add one to answer an event without the model)",
+                app.styles.dimmed,
+            )));
+        }
+        for (index, row) in handler_rows.iter().enumerate() {
+            let selected = model.focus == RoutingFocus::List && index == model.selected;
+            lines.push(Line::from(vec![
+                Span::styled(if selected { "▸ " } else { "  " }, app.styles.accent),
+                Span::styled(
+                    row.clone(),
+                    if selected {
+                        app.styles.selected
+                    } else {
+                        app.styles.normal
+                    },
+                ),
+            ]));
+        }
+        if let Some(error) = &model.error {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                format!("✗ {error}"),
+                app.styles.error,
+            )));
+        }
+        let buttons = model.buttons();
+        let focused = model.focused_button();
+        let note = model.fallback_note();
+        frame.render_widget(Paragraph::new(lines), rows[0]);
+        draw_button_row(frame, app, rows[1], &buttons, focused);
+        frame.render_widget(
+            Paragraph::new(Span::styled(note, app.styles.dimmed)).wrap(Wrap { trim: false }),
+            rows[2],
+        );
+        return;
+    }
+
+    // A pending intercept: what arrived, the answer being composed, buttons.
+    if let Some(Modal::Intercept(model)) = app.modals.last() {
+        let buttons = model.buttons();
+        let focused = model.focused_action();
+        let lines = intercept_lines(app, model);
+        let rows = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Min(3),
+                ratatui::layout::Constraint::Length(1),
+            ])
+            .split(inner);
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[0]);
+        draw_button_row(frame, app, rows[1], &buttons, focused);
+        return;
+    }
+
+    // The composer: list/fields above, buttons below.
+    if let Some(Modal::Composer(composer)) = app.modals.last() {
+        let buttons = composer.buttons();
+        let focused = composer.focused_action();
+        let lines = composer_lines(app, composer);
+        let rows = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Min(3),
+                ratatui::layout::Constraint::Length(1),
+            ])
+            .split(inner);
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[0]);
+        draw_button_row(frame, app, rows[1], &buttons, focused);
+        return;
     }
 
     // The picker is a list with a fixed detail pane beneath it.
@@ -309,6 +306,7 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
                 ratatui::layout::Constraint::Length(1),
                 ratatui::layout::Constraint::Min(1),
                 ratatui::layout::Constraint::Length(1),
+                ratatui::layout::Constraint::Length(1),
             ])
             .split(inner);
         frame.render_widget(
@@ -316,12 +314,53 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
             rows[0],
         );
         frame.render_widget(&editor.textarea, rows[1]);
-        if let Some(error) = &editor.error {
+        let error = editor.error.clone();
+        if let Some(error) = error {
             frame.render_widget(
-                Paragraph::new(Span::styled(error.clone(), app.styles.error)),
+                Paragraph::new(Span::styled(error, app.styles.error)),
                 rows[2],
             );
         }
+        // Clickable equivalents of Ctrl-S / Esc, so accepting an edit is not
+        // knowledge-gated on a chord. (Tab cannot reach them: it types a tab
+        // character in here, which a code editor needs more.)
+        draw_button_row(
+            frame,
+            app,
+            rows[3],
+            &[
+                crate::tui::hit::ModalAction::EditorAccept,
+                crate::tui::hit::ModalAction::EditorCancel,
+            ],
+            None,
+        );
+        return;
+    }
+
+    // The confirm dialog gets real Yes/No buttons (clickable; y/n/Enter/Esc
+    // still work and stay the fast path).
+    if let Some(Modal::Confirm { .. }) = app.modals.last() {
+        let rows = ratatui::layout::Layout::default()
+            .direction(ratatui::layout::Direction::Vertical)
+            .constraints([
+                ratatui::layout::Constraint::Min(2),
+                ratatui::layout::Constraint::Length(1),
+            ])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(body_lines).wrap(Wrap { trim: false }),
+            rows[0],
+        );
+        draw_button_row(
+            frame,
+            app,
+            rows[1],
+            &[
+                crate::tui::hit::ModalAction::ConfirmYes,
+                crate::tui::hit::ModalAction::ConfirmNo,
+            ],
+            None,
+        );
         return;
     }
 
@@ -417,10 +456,7 @@ fn picker_detail_lines<'a>(
     lines
 }
 
-fn form_lines<'a>(
-    app: &DashboardApp,
-    form: &crate::tui::modal::form::FormModel,
-) -> Vec<Line<'a>> {
+fn form_lines<'a>(app: &DashboardApp, form: &crate::tui::modal::form::FormModel) -> Vec<Line<'a>> {
     let mut lines = Vec::new();
     for (index, field) in form.fields.iter().enumerate() {
         let is_selected = index == form.selected;
@@ -453,7 +489,10 @@ fn form_lines<'a>(
         lines.push(Line::from(vec![
             Span::styled(marker, app.styles.accent),
             Span::styled(
-                format!("{:<22}", format!("{}{}", field.label, if field.required { " *" } else { "" })),
+                format!(
+                    "{:<22}",
+                    format!("{}{}", field.label, if field.required { " *" } else { "" })
+                ),
                 label_style,
             ),
             Span::styled(value_display, value_style),
@@ -475,199 +514,308 @@ fn form_lines<'a>(
     lines
 }
 
-fn routing_lines<'a>(
+/// The handler editor's kind control: one segment per way of answering, the
+/// selected one inverted, every segment clickable.
+fn draw_kind_segments(
+    frame: &mut ratatui::Frame,
+    app: &mut DashboardApp,
+    area: ratatui::layout::Rect,
+    kind: crate::tui::modal::routing::HandlerKind,
+    control_focused: bool,
+) {
+    use crate::tui::modal::routing::HandlerKind;
+
+    let label = "respond with  ";
+    let mut spans: Vec<Span> = vec![Span::styled(
+        label,
+        if control_focused {
+            app.styles.accent
+        } else {
+            app.styles.normal
+        },
+    )];
+    let mut x = area.x + label.chars().count() as u16;
+    for candidate in HandlerKind::ALL {
+        let text = format!(" {} ", candidate.label());
+        let width = text.chars().count() as u16;
+        if x + width > area.x + area.width {
+            break;
+        }
+        let style = if candidate == kind {
+            app.styles.selected
+        } else {
+            app.styles.button
+        };
+        spans.push(Span::styled(text, style));
+        spans.push(Span::raw(" "));
+        app.hits.push(
+            ratatui::layout::Rect {
+                x,
+                y: area.y,
+                width,
+                height: 1,
+            },
+            HitTarget::ModalActionButton(crate::tui::hit::ModalAction::DraftKind(candidate)),
+        );
+        x += width + 1;
+    }
+    frame.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+/// The draft editor's body: the pattern chooser, then the selected kind's own
+/// fields. Every row here is a Tab stop; the `▸` marker tracks focus.
+fn draft_body_lines<'a>(
     app: &DashboardApp,
     model: &crate::tui::modal::routing::RoutingModel,
+    draft: &crate::tui::modal::routing::HandlerDraft,
 ) -> Vec<Line<'a>> {
-    use crate::tui::modal::routing::{HandlerEditFocus, HandlerKind};
+    use crate::tui::modal::routing::{DraftFocus, HandlerDraft, HandlerKind};
 
     let mut lines = Vec::new();
-
-    if let Some(draft) = &model.draft {
-        let field = |focused: bool| {
+    let marker = |focused: bool| Span::styled(if focused { "▸ " } else { "  " }, app.styles.accent);
+    let label = |text: &str, focused: bool| {
+        Span::styled(
+            format!("{text:<18}"),
             if focused {
                 app.styles.accent
             } else {
                 app.styles.normal
-            }
-        };
-        lines.push(Line::from(Span::styled(
-            "Tab moves between pattern, kind and body.",
-            app.styles.dimmed,
-        )));
-        lines.push(Line::from(""));
+            },
+        )
+    };
 
-        let pattern_display = if draft.editing.is_some() && draft.focus == HandlerEditFocus::Pattern
-        {
-            format!("{}_", draft.editing.as_deref().unwrap_or(""))
-        } else {
-            draft.pattern.clone()
-        };
-        lines.push(Line::from(vec![
-            Span::styled(
-                if draft.focus == HandlerEditFocus::Pattern { "▸ " } else { "  " },
-                app.styles.accent,
-            ),
-            Span::styled("event pattern    ", field(draft.focus == HandlerEditFocus::Pattern)),
-            Span::styled(pattern_display, app.styles.info),
-        ]));
-        if draft.focus == HandlerEditFocus::Pattern {
-            lines.push(Line::from(Span::styled(
-                "    '*' matches every event. This protocol raises:",
-                app.styles.dimmed,
-            )));
-            for (id, description) in model.event_ids.iter().take(12) {
-                lines.push(Line::from(Span::styled(
-                    format!(
-                        "      {:<28} {}",
-                        id,
-                        crate::utils::truncate_for_log(description, 60)
-                    ),
-                    app.styles.dimmed,
-                )));
-            }
+    // --- when ---
+    let pattern_focused = draft.focus == DraftFocus::Pattern;
+    let pattern_display = if draft.editing.is_some() && pattern_focused {
+        format!("{}_", draft.editing.as_deref().unwrap_or(""))
+    } else if draft.pattern == "*" {
+        "* (every event)".to_string()
+    } else {
+        draft.pattern.clone()
+    };
+    lines.push(Line::from(vec![
+        marker(pattern_focused),
+        label("when event", pattern_focused),
+        Span::styled(pattern_display, app.styles.info),
+    ]));
+    if pattern_focused && draft.editing.is_none() {
+        // The chooser: ←/→ walks these; Enter types a pattern by hand.
+        let choices = HandlerDraft::pattern_choices(&model.event_ids);
+        for choice in choices.iter().take(12) {
+            let selected = *choice == draft.pattern;
+            let description = if choice == "*" {
+                "matches every event".to_string()
+            } else {
+                model
+                    .event_ids
+                    .iter()
+                    .find(|(id, _)| id == choice)
+                    .map(|(_, d)| crate::utils::truncate_for_log(d, 56))
+                    .unwrap_or_default()
+            };
+            lines.push(Line::from(vec![
+                Span::raw("      "),
+                Span::styled(
+                    format!("{choice:<28}"),
+                    if selected {
+                        app.styles.selected
+                    } else {
+                        app.styles.dimmed
+                    },
+                ),
+                Span::styled(format!(" {description}"), app.styles.dimmed),
+            ]));
         }
+    }
+    lines.push(Line::from(""));
 
-        lines.push(Line::from(vec![
-            Span::styled(
-                if draft.focus == HandlerEditFocus::Kind { "▸ " } else { "  " },
-                app.styles.accent,
-            ),
-            Span::styled("handled by       ", field(draft.focus == HandlerEditFocus::Kind)),
-            Span::styled(draft.kind.label().to_string(), app.styles.info),
-        ]));
-        if draft.focus == HandlerEditFocus::Kind {
-            lines.push(Line::from(Span::styled(
-                "    ←/→ or Enter cycles. Static and script answer without a model call.",
-                app.styles.dimmed,
-            )));
-        }
-
-        let body_label = match draft.kind {
-            HandlerKind::Llm => "instruction",
-            HandlerKind::Script => "script code",
-            HandlerKind::Static => "actions",
-        };
-        lines.push(Line::from(vec![
-            Span::styled(
-                if draft.focus == HandlerEditFocus::Body { "▸ " } else { "  " },
-                app.styles.accent,
-            ),
-            Span::styled(
-                format!("{body_label:<17}"),
-                field(draft.focus == HandlerEditFocus::Body),
-            ),
-        ]));
-        match draft.kind {
-            HandlerKind::Llm => {
-                let text = if draft.editing.is_some() && draft.focus == HandlerEditFocus::Body {
-                    format!("{}_", draft.editing.as_deref().unwrap_or(""))
-                } else if draft.instruction.is_empty() {
-                    "(press Enter to write the per-event instruction)".to_string()
+    // --- the kind's own fields ---
+    match draft.kind {
+        HandlerKind::Static => {
+            let focused = draft.focus == DraftFocus::Actions;
+            lines.push(Line::from(vec![
+                marker(focused),
+                label("response actions", focused),
+                Span::styled(
+                    if draft.actions.is_empty() {
+                        "(Enter opens the JSON editor, prefilled with a working example)"
+                            .to_string()
+                    } else {
+                        format!("{} action(s) — Enter edits, d deletes", draft.actions.len())
+                    },
+                    if draft.actions.is_empty() {
+                        app.styles.dimmed
+                    } else {
+                        app.styles.info
+                    },
+                ),
+            ]));
+            for (index, action) in draft.actions.iter().enumerate() {
+                let name = action
+                    .get("type")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("(no type)");
+                let style = if focused && index == draft.selected_action {
+                    app.styles.selected
                 } else {
-                    draft.instruction.clone()
+                    app.styles.info
                 };
                 lines.push(Line::from(Span::styled(
-                    format!("      {text}"),
-                    app.styles.info,
+                    format!(
+                        "      {name}  {}",
+                        crate::utils::truncate_for_log(&action.to_string(), 70)
+                    ),
+                    style,
                 )));
             }
-            HandlerKind::Script => {
+        }
+        HandlerKind::Script => {
+            let language_focused = draft.focus == DraftFocus::Language;
+            lines.push(Line::from(vec![
+                marker(language_focused),
+                label("language", language_focused),
+                Span::styled(format!("◂ {} ▸", draft.language), app.styles.info),
+            ]));
+            let code_focused = draft.focus == DraftFocus::Code;
+            lines.push(Line::from(vec![
+                marker(code_focused),
+                label("script code", code_focused),
+                Span::styled(
+                    if draft.code.is_empty() {
+                        "(Enter opens the editor)".to_string()
+                    } else {
+                        format!("{} line(s) — Enter edits", draft.code.lines().count())
+                    },
+                    if draft.code.is_empty() {
+                        app.styles.dimmed
+                    } else {
+                        app.styles.info
+                    },
+                ),
+            ]));
+            for line in draft.code.lines().take(6) {
                 lines.push(Line::from(Span::styled(
-                    format!("      language: {}", draft.language),
+                    format!("      {line}"),
                     app.styles.dimmed,
                 )));
-                if draft.code.is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        "      (press Enter to write the script)",
-                        app.styles.dimmed,
-                    )));
-                } else {
-                    for line in draft.code.lines().take(8) {
-                        lines.push(Line::from(Span::styled(
-                            format!("      {line}"),
-                            app.styles.info,
-                        )));
-                    }
-                }
             }
-            HandlerKind::Static => {
-                if draft.actions.is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        "      (press Enter to build the response actions)",
-                        app.styles.dimmed,
-                    )));
-                } else {
-                    for (index, action) in draft.actions.iter().enumerate() {
-                        let name = action
-                            .get("type")
-                            .and_then(|t| t.as_str())
-                            .unwrap_or("(no type)");
-                        let style = if draft.focus == HandlerEditFocus::Body
-                            && index == draft.selected_action
-                        {
-                            app.styles.selected
-                        } else {
-                            app.styles.info
-                        };
-                        lines.push(Line::from(Span::styled(
-                            format!("      {name}  {}", crate::utils::truncate_for_log(&action.to_string(), 70)),
-                            style,
-                        )));
-                    }
-                }
-            }
+            let resident_focused = draft.focus == DraftFocus::Resident;
+            lines.push(Line::from(vec![
+                marker(resident_focused),
+                label("resident", resident_focused),
+                Span::styled(
+                    if draft.resident {
+                        "[x] one process stays alive and keeps state between events"
+                    } else {
+                        "[ ] a fresh interpreter per event (stateless)"
+                    },
+                    app.styles.info,
+                ),
+            ]));
         }
-        if let Some(error) = &draft.error {
-            lines.push(Line::from(""));
+        HandlerKind::Llm => {
+            let focused = draft.focus == DraftFocus::Instruction;
+            lines.push(Line::from(vec![
+                marker(focused),
+                label("instruction", focused),
+                Span::styled(
+                    if draft.instruction.is_empty() {
+                        "(Enter opens the editor)".to_string()
+                    } else {
+                        crate::utils::truncate_for_log(&draft.instruction, 70)
+                    },
+                    if draft.instruction.is_empty() {
+                        app.styles.dimmed
+                    } else {
+                        app.styles.info
+                    },
+                ),
+            ]));
+        }
+        HandlerKind::Manual => {
+            let focused = draft.focus == DraftFocus::Timeout;
+            let timeout_display = if draft.editing.is_some() && focused {
+                format!("{}_", draft.editing.as_deref().unwrap_or(""))
+            } else {
+                format!("{} seconds", draft.timeout_secs)
+            };
+            lines.push(Line::from(vec![
+                marker(focused),
+                label("wait for me", focused),
+                Span::styled(timeout_display, app.styles.info),
+            ]));
             lines.push(Line::from(Span::styled(
-                format!("✗ {error}"),
-                app.styles.error,
+                "      Each matched event appears under the instance as “⚠ waiting for YOUR \
+                 answer”. No answer in time fails closed — the peer gets an error, never an \
+                 invented success.",
+                app.styles.dimmed,
             )));
         }
-        return lines;
     }
-
-    lines.push(Line::from(Span::styled(
-        "Handlers match in order, first wins:",
-        app.styles.dimmed,
-    )));
-    lines.push(Line::from(""));
-    let rows = model.rows();
-    let last = rows.len().saturating_sub(1);
-    for (index, row) in rows.iter().enumerate() {
-        let is_fallback = index == last;
-        let style = if is_fallback {
-            app.styles.dimmed
-        } else if index == model.selected {
-            app.styles.selected
-        } else {
-            app.styles.normal
-        };
-        let marker = if !is_fallback && index == model.selected {
-            "▸ "
-        } else {
-            "  "
-        };
-        lines.push(Line::from(vec![
-            Span::styled(marker, app.styles.accent),
-            Span::styled(row.clone(), style),
-        ]));
-    }
-    if model.handlers.is_empty() {
+    if let Some(error) = &draft.error {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  No handlers: every event goes to the LLM. Press a to add a deterministic one.",
+            format!("✗ {error}"),
+            app.styles.error,
+        )));
+    }
+    lines
+}
+
+/// A pending intercept: what arrived and the answer composed so far.
+fn intercept_lines<'a>(
+    app: &DashboardApp,
+    model: &crate::tui::modal::intercept::InterceptModel,
+) -> Vec<Line<'a>> {
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("event      ", app.styles.dimmed),
+            Span::styled(model.event_type.clone(), app.styles.accent),
+        ]),
+        Line::from(vec![
+            Span::styled("what       ", app.styles.dimmed),
+            Span::styled(model.description.clone(), app.styles.normal),
+        ]),
+    ];
+    if let Some(data) = &model.event_data {
+        lines.push(Line::from(Span::styled("payload", app.styles.dimmed)));
+        let pretty = serde_json::to_string_pretty(data).unwrap_or_else(|_| data.to_string());
+        for line in pretty.lines().take(20) {
+            lines.push(Line::from(Span::styled(
+                format!("  {line}"),
+                app.styles.info,
+            )));
+        }
+        let hidden = pretty.lines().count().saturating_sub(20);
+        if hidden > 0 {
+            lines.push(Line::from(Span::styled(
+                format!("  … {hidden} more line(s)"),
+                app.styles.dimmed,
+            )));
+        }
+    }
+    lines.push(Line::from(""));
+    if model.actions.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "your answer   (empty — Send response proceeds without saying anything; \
+             Compose actions… opens the editor with a working example)",
             app.styles.dimmed,
         )));
-    }
-    if model.dirty {
-        lines.push(Line::from(""));
+    } else {
         lines.push(Line::from(Span::styled(
-            "  unsaved — Ctrl-S applies (hot: no restart, connections kept)",
-            app.styles.warning,
+            format!(
+                "your answer   {} action(s): {}",
+                model.actions.len(),
+                model.action_names().join(", ")
+            ),
+            app.styles.success,
         )));
     }
+    lines.push(Line::from(Span::styled(
+        "The connection is waiting on you. Fail closed refuses it cleanly; Esc keeps it \
+         waiting.",
+        app.styles.dimmed,
+    )));
     if let Some(error) = &model.error {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
@@ -718,10 +866,7 @@ fn composer_lines<'a>(
                     app.styles.dimmed,
                 )));
                 for line in raw.lines() {
-                    lines.push(Line::from(Span::styled(
-                        line.to_string(),
-                        app.styles.info,
-                    )));
+                    lines.push(Line::from(Span::styled(line.to_string(), app.styles.info)));
                 }
             } else {
                 for (i, field) in composer.fields.iter().enumerate() {
@@ -782,10 +927,7 @@ fn composer_lines<'a>(
     lines
 }
 
-fn band_detail_lines<'a>(
-    app: &DashboardApp,
-    key: crate::tui::app::UiKey,
-) -> Vec<Line<'a>> {
+fn band_detail_lines<'a>(app: &DashboardApp, key: crate::tui::app::UiKey) -> Vec<Line<'a>> {
     use crate::tui::app::UiKey;
     let mut lines = Vec::new();
     let mut push = |text: String, style| lines.push(Line::from(Span::styled(text, style)));
@@ -796,7 +938,9 @@ fn band_detail_lines<'a>(
                 push(
                     format!(
                         "address    {}",
-                        row.local_addr.clone().unwrap_or_else(|| format!(":{}", row.port))
+                        row.local_addr
+                            .clone()
+                            .unwrap_or_else(|| format!(":{}", row.port))
                     ),
                     app.styles.normal,
                 );

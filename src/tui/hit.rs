@@ -15,7 +15,6 @@ pub enum HitTarget {
     ChatHistory,
     ChatInput,
     SectionHeader(Section),
-    AddButton(Section),
     Band {
         key: UiKey,
     },
@@ -26,7 +25,9 @@ pub enum HitTarget {
     /// go through exactly the same path, which is what stopped the two from
     /// drifting apart.
     TreeRow {
-        key: UiKey,
+        /// `None` for the rail's own rows (`[ + new server ]` / `[ + new
+        /// client ]`), which belong to no instance.
+        key: Option<UiKey>,
         index: usize,
     },
     /// A clickable segment of the bottom status bar.
@@ -71,8 +72,29 @@ pub enum ModalAction {
     RoutingCancel,
     DraftSave,
     DraftCancel,
+    /// One segment of the handler editor's kind control.
+    DraftKind(crate::tui::modal::routing::HandlerKind),
     FormApply,
     FormCancel,
+    /// Compose the response actions for a pending intercept.
+    InterceptCompose,
+    /// Deliver the composed answer to the waiting connection.
+    InterceptSend,
+    /// Refuse the request: the peer gets the fail-closed reply now.
+    InterceptDismiss,
+    /// Send the composed action through the client (the composer's button).
+    ComposerSend,
+    /// Toggle the composer between fields and raw JSON.
+    ComposerRaw,
+    /// Back out of the composer's field form to the action list.
+    ComposerBack,
+    /// Accept the text editor's content (same as Ctrl-S).
+    EditorAccept,
+    /// Discard the text editor's content (same as Esc).
+    EditorCancel,
+    /// The confirm dialog's two answers.
+    ConfirmYes,
+    ConfirmNo,
 }
 
 impl ModalAction {
@@ -87,8 +109,19 @@ impl ModalAction {
             ModalAction::RoutingCancel => "[ Cancel ]",
             ModalAction::DraftSave => "[ Save response ]",
             ModalAction::DraftCancel => "[ Cancel ]",
+            ModalAction::DraftKind(kind) => kind.label(),
             ModalAction::FormApply => "[ Apply ]",
             ModalAction::FormCancel => "[ Cancel ]",
+            ModalAction::InterceptCompose => "[ Compose actions… ]",
+            ModalAction::InterceptSend => "[ Send response ]",
+            ModalAction::InterceptDismiss => "[ Fail closed ]",
+            ModalAction::ComposerSend => "[ Send ]",
+            ModalAction::ComposerRaw => "[ Raw JSON ]",
+            ModalAction::ComposerBack => "[ Back ]",
+            ModalAction::EditorAccept => "[ Accept ]",
+            ModalAction::EditorCancel => "[ Cancel ]",
+            ModalAction::ConfirmYes => "[ Yes ]",
+            ModalAction::ConfirmNo => "[ No ]",
         }
     }
 }

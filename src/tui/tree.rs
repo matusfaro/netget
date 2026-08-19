@@ -56,6 +56,12 @@ pub enum NodeId {
     RoutingFallback(UiKey),
     /// A verb the user can run, placed under whatever it acts on.
     Action(UiKey, RowAction),
+    /// A request a `manual` rule parked, waiting for the operator to answer.
+    /// Activating it opens the answer modal.
+    Intercept(UiKey, u64),
+    /// Start a new instance. Owned by the rail rather than by any instance,
+    /// so it carries no `UiKey`.
+    NewInstance(crate::tui::app::Section),
     Peers(UiKey),
     /// A connection, by its id. `None` is the bucket for connectionless
     /// protocols, whose events carry no connection.
@@ -118,6 +124,30 @@ impl TreeRow {
 /// A runnable row. Styled as a button so it reads as a verb among the nouns.
 fn action_row(key: UiKey, action: RowAction, depth: u16, label: impl Into<String>) -> TreeRow {
     TreeRow::leaf(NodeId::Action(key, action), depth, label, RowStyle::Button)
+}
+
+/// The two rows that start something new, at the foot of the rail.
+///
+/// They sit where the thing they create will appear, and they are the whole
+/// content of an empty rail — so "how do I start a server" is answered by a row
+/// you can walk onto, not by a button in a header or a shortcut you have to be
+/// told about.
+pub fn new_instance_rows() -> Vec<TreeRow> {
+    use crate::tui::app::Section;
+    vec![
+        TreeRow::leaf(
+            NodeId::NewInstance(Section::Servers),
+            0,
+            "[ + new server ]",
+            RowStyle::Button,
+        ),
+        TreeRow::leaf(
+            NodeId::NewInstance(Section::Clients),
+            0,
+            "[ + new client ]",
+            RowStyle::Button,
+        ),
+    ]
 }
 
 /// A row for an action that cannot run right now, with the reason in place of
@@ -290,6 +320,35 @@ fn push_capped(
     }
 }
 
+/// `"  ⚠ N waiting"` on the instance row while intercepts are pending, so a
+/// collapsed instance still shows that something is blocked on the human.
+fn waiting_chip(count: usize) -> String {
+    if count == 0 {
+        String::new()
+    } else {
+        format!("  ⚠ {count} waiting for you")
+    }
+}
+
+/// One high-visibility row per pending intercept, right under the instance.
+fn push_intercepts(
+    rows: &mut Vec<TreeRow>,
+    key: UiKey,
+    intercepts: &[crate::state::intercepts::InterceptView],
+) {
+    for view in intercepts {
+        rows.push(TreeRow::leaf(
+            NodeId::Intercept(key, view.id),
+            1,
+            format!(
+                "⚠ {} waiting for YOUR answer — Enter to respond",
+                view.event_type
+            ),
+            RowStyle::Bad,
+        ));
+    }
+}
+
 /// Flatten one server into display rows.
 pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
     let key = UiKey::Server(row.id);
@@ -305,17 +364,22 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
         instance.clone(),
         0,
         format!(
-            "#{} {} {}  {}",
+            "#{} {} {}  {}{}",
             row.id.as_u32(),
             row.protocol,
             addr,
-            row.status
+            row.status,
+            waiting_chip(row.intercepts.len()),
         ),
         instance_expanded,
     ));
     if !instance_expanded {
         return rows;
     }
+
+    // Requests waiting for YOUR answer come first — they are the only rows in
+    // the whole tree where something is blocked on the human.
+    push_intercepts(&mut rows, key, &row.intercepts);
 
     // ---- config ----
     let config = NodeId::Config(key);
@@ -610,6 +674,10 @@ fn route_rows(
                         RowStyle::Good,
                     )
                 }
+                EventHandlerType::Manual { .. } => (
+                    "MANUAL — you answer each one here".to_string(),
+                    RowStyle::Warn,
+                ),
             };
             rows.push(TreeRow::leaf(
                 NodeId::Route(key, index),
@@ -633,16 +701,37 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         instance.clone(),
         0,
         format!(
-            "#{} {} → {}  {}",
+            "#{} {} → {}  {}{}",
             row.id.as_u32(),
             row.protocol,
             row.remote_addr,
-            row.status
+            row.status,
+            waiting_chip(row.intercepts.len()),
         ),
         instance_expanded,
     ));
     if !instance_expanded {
         return rows;
+    }
+
+    push_intercepts(&mut rows, key, &row.intercepts);
+
+    // Sending is what a client is FOR, so it is the first thing under the
+    // root — not something to discover three levels down under a peer.
+    match row.send_state {
+        SendState::Ready => rows.push(action_row(key, RowAction::Send, 1, "[ send a request ]")),
+        SendState::NotConnected => rows.push(disabled_row(
+            key,
+            RowAction::Send,
+            1,
+            "(cannot send — not connected)",
+        )),
+        SendState::ProtocolUnsupported => rows.push(disabled_row(
+            key,
+            RowAction::Send,
+            1,
+            "(cannot send — this client has no command channel yet)",
+        )),
     }
 
     // ---- config ----
@@ -688,13 +777,17 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         rows.push(action_row(key, RowAction::EditConfig, 2, "[ edit config ]"));
     }
 
-    // ---- routing ----
+    // ---- auto-reply rules ----
+    //
+    // A client's routing decides how to REACT to what the server sends back.
+    // Calling it "routing (0)" next to a send button read as the way to send —
+    // it is not, so the label says what it actually is.
     let routing = NodeId::Routing(key);
     let routing_expanded = state.is_expanded(&routing);
     rows.push(TreeRow::group(
         routing.clone(),
         1,
-        format!("routing ({})", handler_count(row.routing.as_ref())),
+        format!("auto-reply rules ({})", handler_count(row.routing.as_ref())),
         routing_expanded,
     ));
     if routing_expanded {
@@ -704,12 +797,12 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
             key,
             RowAction::AddRoute,
             2,
-            "[ + add response ]",
+            "[ + auto-reply rule ]",
         ));
         rows.push(TreeRow::leaf(
             NodeId::RoutingFallback(key),
             2,
-            "otherwise → LLM (the instance instruction)",
+            "otherwise → the LLM decides how to react (instance instruction)",
             RowStyle::Dim,
         ));
     }
@@ -773,26 +866,6 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
                 "(nothing yet)",
                 RowStyle::Dim,
             ));
-        }
-
-        // Sending is a thing you do to the peer, so it lives with the peer and
-        // the requests it will produce.
-        match row.send_state {
-            SendState::Ready => {
-                rows.push(action_row(key, RowAction::Send, 2, "[ send a request ]"))
-            }
-            SendState::NotConnected => rows.push(disabled_row(
-                key,
-                RowAction::Send,
-                2,
-                "(cannot send — not connected)",
-            )),
-            SendState::ProtocolUnsupported => rows.push(disabled_row(
-                key,
-                RowAction::Send,
-                2,
-                "(cannot send — this client has no command channel yet)",
-            )),
         }
     }
 
