@@ -79,6 +79,7 @@ impl Protocol for BootpProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(67))
             .implementation("dhcproto v0.12 for parsing (BOOTP format)")

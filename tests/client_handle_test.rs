@@ -91,7 +91,10 @@ async fn injected_tcp_action_reaches_our_own_server() {
         })]),
         ..Default::default()
     };
-    let server_id = server_form.create(&state, tx.clone()).await.expect("create tcp server");
+    let server_id = server_form
+        .create(&state, tx.clone())
+        .await
+        .expect("create tcp server");
     let port = wait_for_port(&state, server_id).await;
 
     // TCP client (dual protocol!) connected to our own server.
@@ -188,7 +191,8 @@ async fn injected_tcp_action_reaches_our_own_server() {
         .await
         .expect_err("send after disconnect must error");
     assert!(
-        err.to_string().contains("does not accept injected commands")
+        err.to_string()
+            .contains("does not accept injected commands")
             || err.to_string().contains("not running"),
         "unexpected error: {err}"
     );
@@ -207,7 +211,9 @@ async fn send_to_unknown_client_errors_cleanly() {
         )
         .await
         .expect_err("must error");
-    assert!(err.to_string().contains("does not accept injected commands"));
+    assert!(err
+        .to_string()
+        .contains("does not accept injected commands"));
 }
 
 /// Every client that registers a command handle must actually accept an
@@ -353,4 +359,136 @@ async fn injected_telnet_command_reaches_our_own_server() {
         "hello-dashboard",
     )
     .await;
+}
+
+/// The dashboard flow: BOTH instances carry the interactive default (`*` →
+/// manual), the human answers the client's parked `telnet_connected` with a
+/// `send_command`, and the server must (a) still list the connection as live
+/// and (b) park the resulting `telnet_message_received` for the human.
+#[cfg(feature = "telnet")]
+#[tokio::test]
+async fn manual_telnet_client_answer_reaches_manual_telnet_server() {
+    use netget::state::intercepts::InterceptOwner;
+    use netget::state::server::ConnectionStatus;
+
+    let state = new_state().await;
+    let (tx, _rx) = mpsc::unbounded_channel();
+    let manual = || {
+        Some(vec![serde_json::json!({
+            "event_pattern": "*",
+            "handler": { "type": "manual" }
+        })])
+    };
+
+    let server_id = ServerForm {
+        protocol: "telnet".to_string(),
+        port: Some(0),
+        event_handlers: manual(),
+        ..Default::default()
+    }
+    .create(&state, tx.clone())
+    .await
+    .expect("create telnet server");
+    let port = wait_for_port(&state, server_id).await;
+
+    // The client's connect event parks inside `connect()`, so create it in
+    // the background exactly as the dashboard does.
+    let client_form = ClientForm {
+        protocol: "telnet".to_string(),
+        remote_addr: Some(format!("127.0.0.1:{port}")),
+        instruction: Some("dashboard client".to_string()),
+        event_handlers: manual(),
+        ..Default::default()
+    };
+    let state_bg = state.clone();
+    let tx_bg = tx.clone();
+    let create = tokio::spawn(async move {
+        client_form
+            .create(
+                &state_bg,
+                netget::llm::OllamaClient::new("http://127.0.0.1:1".to_string()),
+                tx_bg,
+            )
+            .await
+    });
+
+    // Answer the client's parked telnet_connected with a command.
+    let client_intercept = wait_for_intercept(&state, |v| {
+        matches!(v.owner, InterceptOwner::Client(_)) && v.event_type == "telnet_connected"
+    })
+    .await;
+    state
+        .resolve_intercept(
+            client_intercept.id,
+            vec![serde_json::json!({"type": "send_command", "command": "hello-manual"})],
+        )
+        .await
+        .expect("resolve client intercept");
+    let client_id = create.await.unwrap().expect("create telnet client");
+    wait_for_client_handle(&state, client_id).await;
+
+    // The server parks the line for the human…
+    let server_intercept = wait_for_intercept(&state, |v| {
+        v.owner == InterceptOwner::Server(server_id) && v.event_type == "telnet_message_received"
+    })
+    .await;
+    assert!(
+        serde_json::to_string(&server_intercept.event_data)
+            .unwrap()
+            .contains("hello-manual"),
+        "server intercept should carry the command: {server_intercept:?}"
+    );
+
+    // …and its connection is still live while the question waits — including
+    // across the dashboard's idle sweep. That sweep is for connectionless
+    // protocols whose per-address entries nothing closes; it used to run over
+    // every server, and a telnet peer parked >10s for a human's answer was
+    // evicted and shown as `(closed)` while its socket was alive.
+    state.cleanup_old_connections(0).await;
+    let server = state.get_server(server_id).await.expect("server row");
+    let conn = server
+        .connections
+        .values()
+        .next()
+        .expect("server should list the client's connection");
+    assert_eq!(
+        conn.status,
+        ConnectionStatus::Active,
+        "connection must not read as closed while a manual answer is pending"
+    );
+
+    // Answer it; the client must receive the line.
+    state
+        .resolve_intercept(
+            server_intercept.id,
+            vec![serde_json::json!({"type": "send_telnet_line", "line": "hi-from-server"})],
+        )
+        .await
+        .expect("resolve server intercept");
+    wait_for_intercept(&state, |v| {
+        v.owner == InterceptOwner::Client(client_id) && v.event_type == "telnet_data_received"
+    })
+    .await;
+    let server = state.get_server(server_id).await.expect("server row");
+    assert!(
+        server
+            .connections
+            .values()
+            .all(|c| c.status == ConnectionStatus::Active),
+        "connection must still be live after the server answered"
+    );
+}
+
+#[cfg(feature = "telnet")]
+async fn wait_for_intercept(
+    state: &AppState,
+    pred: impl Fn(&netget::state::intercepts::InterceptView) -> bool,
+) -> netget::state::intercepts::InterceptView {
+    for _ in 0..200 {
+        if let Some(v) = state.list_intercepts().await.into_iter().find(|v| pred(v)) {
+            return v;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    panic!("no matching intercept appeared");
 }

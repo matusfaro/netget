@@ -36,13 +36,23 @@ edit to `Cargo.toml`, which this module does not own.
 
 1. Accept TCP (`create_reusable_tcp_listener`).
 2. Register the connection in `ServerInstance` (with `ProtocolConnectionInfo::empty()` — there
-   is no Telnet-specific connection info variant, and byte/packet counters stay at zero because
-   nothing updates them).
-3. If started with `send_first: true`, raise `telnet_connection_opened` and write the result —
+   is no Telnet-specific connection info variant). Byte/packet counters and `last_activity` are
+   updated on every read and write via `update_connection_stats`; they used to stay at zero,
+   so the dashboard drew every telnet peer as `↓0 ↑0`.
+3. Register a peer command channel (`server::peer_support`), so the dashboard's
+   `[ message this peer ]` / `[ disconnect this peer ]` — and `AppState::send_to_peer` generally
+   — can inject `send_telnet_*` / `close_connection` into this connection through the same
+   executor the handlers use. The handle is removed on the close path.
+4. If started with `send_first: true`, raise `telnet_connection_opened` and write the result —
    this is the only way to greet before the client types.
-4. `read_line` in a loop; per line, raise `telnet_message_received`, write the result.
-5. `close_connection` sets a flag that breaks the read loop and shuts the socket down.
-6. Mark the connection closed in `ServerInstance`.
+5. `read_line` in a loop; per line, raise `telnet_message_received`, write the result.
+6. `close_connection` sets a flag that breaks the read loop and shuts the socket down.
+7. Mark the connection closed in `ServerInstance`.
+
+An idle telnet connection is **not** reaped: `AppState::cleanup_old_connections` only touches
+protocols whose metadata declares `connectionless`, and Telnet does not. Before that scoping, a
+peer whose line was parked more than 10s for a `manual` answer was evicted from state and shown
+as closed while its socket was fine.
 
 The accept-loop `JoinHandle` is registered with `AppState::register_server_task()`, so
 `stop_server` aborts it and releases port 23. `spawn_with_llm_actions` propagates bind failure
@@ -107,8 +117,12 @@ the handler's own memory.
 
 ## Testing
 
-**There is no E2E test for Telnet** (`tests/server/telnet/` does not exist). Verify by hand
-with a raw client, which avoids the IAC problem:
+**There is no E2E test under `tests/server/telnet/`** (the directory does not exist).
+`tests/client_handle_test.rs` covers the dashboard flow end to end without a model: a telnet
+server and a telnet client both on the `*` → manual rule, the human's answer to the client's
+parked `telnet_connected` arriving as `telnet_message_received` on the server, the connection
+surviving the idle sweep while that question waits, and the server's answer reaching the client.
+Verify anything else by hand with a raw client, which avoids the IAC problem:
 
 ```
 nc localhost 2323

@@ -1598,11 +1598,28 @@ impl AppState {
             .map(|s| s.protocol_name.clone())
     }
 
-    /// Cleanup old connections across all servers (connectionless protocols like UDP)
+    /// Reap idle bookkeeping entries on **connectionless** servers (UDP, raw
+    /// IP, link-level): their "connections" are per-remote-address records
+    /// that nothing ever closes, so staleness is the only signal.
+    ///
+    /// Connection-oriented servers are skipped on purpose. This used to run
+    /// over every server, and an idle TCP-style connection — a telnet peer
+    /// whose line was parked ten seconds for a human's manual answer, a BGP
+    /// session between keepalives — was evicted from the state map and shown
+    /// as `(closed)` while its socket was alive; every later stat update and
+    /// the real close then targeted an entry that was already gone. Which
+    /// servers qualify comes from `ProtocolMetadataV2::connectionless`, so a
+    /// protocol the registry does not know is left alone.
     pub async fn cleanup_old_connections(&self, max_age_secs: u64) {
         let mut inner = self.inner.write().await;
         for server in inner.servers.values_mut() {
-            server.cleanup_old_connections(max_age_secs);
+            let connectionless = crate::protocol::server_registry::registry()
+                .resolve(&server.protocol_name)
+                .map(|p| p.metadata().connectionless)
+                .unwrap_or(false);
+            if connectionless {
+                server.cleanup_old_connections(max_age_secs);
+            }
         }
     }
 

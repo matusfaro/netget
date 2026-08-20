@@ -89,6 +89,7 @@ impl Protocol for MdnsProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             // Announces on 224.0.0.251:5353 - an unprivileged port, and joining
             // a multicast group needs no elevated privileges.

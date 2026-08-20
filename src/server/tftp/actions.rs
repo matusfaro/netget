@@ -196,6 +196,7 @@ impl Protocol for TftpProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(69))
             .implementation("Custom TFTP packet parsing and state machine")

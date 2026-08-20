@@ -49,6 +49,7 @@ impl Protocol for RipProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(520))
             .implementation("Manual RIPv2 packet construction (RFC 2453)")

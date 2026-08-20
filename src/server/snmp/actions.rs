@@ -51,6 +51,7 @@ impl Protocol for SnmpProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(161))
             .implementation("rasn-snmp v0.18 for parsing + manual BER encoding")

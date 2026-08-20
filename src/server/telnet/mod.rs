@@ -96,6 +96,26 @@ impl TelnetServer {
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
                             let log = Log::new(Some(&status_clone));
 
+                            // Peer messaging: the dashboard's "message this peer" and
+                            // "disconnect" inject actions into THIS connection through
+                            // the same executor the handlers use. The handle is removed
+                            // on every exit path below; the command task ends with it.
+                            let peer_rx = crate::server::peer_support::register_peer_channel(
+                                &state_clone,
+                                server_id,
+                                connection_id.as_u32(),
+                            )
+                            .await;
+                            crate::server::peer_support::spawn_peer_command_task(
+                                peer_rx,
+                                protocol_clone.clone(),
+                                state_clone.clone(),
+                                server_id,
+                                connection_id.as_u32(),
+                                write_half_arc.clone(),
+                                status_clone.clone(),
+                            );
+
                             // If the server was started with send_first, give the handler a
                             // chance to greet before the client says anything. Without this
                             // Telnet has no connect-time event at all and cannot show a
@@ -122,6 +142,17 @@ impl TelnetServer {
                                                 let mut write = write_half_arc.lock().await;
                                                 let _ = write.write_all(&data).await;
                                                 let _ = write.flush().await;
+                                                drop(write);
+                                                state_clone
+                                                    .update_connection_stats(
+                                                        server_id,
+                                                        connection_id,
+                                                        None,
+                                                        Some(data.len() as u64),
+                                                        None,
+                                                        Some(1),
+                                                    )
+                                                    .await;
                                                 log.debug(format!(
                                                     "Telnet sent greeting ({} bytes) on connection {}",
                                                     data.len(),
@@ -173,6 +204,19 @@ impl TelnetServer {
                                 if n == 0 {
                                     break;
                                 }
+
+                                // Counters and last_activity: the rail shows ↓/↑ per peer,
+                                // and until this was added every telnet peer read 0/0.
+                                state_clone
+                                    .update_connection_stats(
+                                        server_id,
+                                        connection_id,
+                                        Some(n as u64),
+                                        None,
+                                        Some(1),
+                                        None,
+                                    )
+                                    .await;
 
                                 // Summary + full payload are FileOnly: the
                                 // telnet_message_received event template renders the
@@ -232,6 +276,16 @@ impl TelnetServer {
                                                     let _ = write.write_all(&data).await;
                                                     let _ = write.flush().await;
                                                     drop(write);
+                                                    state_clone
+                                                        .update_connection_stats(
+                                                            server_id,
+                                                            connection_id,
+                                                            None,
+                                                            Some(data.len() as u64),
+                                                            None,
+                                                            Some(1),
+                                                        )
+                                                        .await;
 
                                                     let response = String::from_utf8_lossy(&data);
 
@@ -294,6 +348,9 @@ impl TelnetServer {
                             }
 
                             // Connection closed - mark as closed
+                            state_clone
+                                .remove_peer_handle(server_id, connection_id.as_u32())
+                                .await;
                             state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;

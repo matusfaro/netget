@@ -56,6 +56,7 @@ impl Protocol for TorrentDhtProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::None)
             .implementation("UDP KRPC protocol with bencode encoding")

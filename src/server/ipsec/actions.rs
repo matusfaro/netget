@@ -109,6 +109,7 @@ impl Protocol for IpsecProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(500))
             .implementation(

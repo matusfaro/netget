@@ -269,6 +269,17 @@ pub struct ProtocolMetadataV2 {
 
     /// Optional notes about limitations or special features
     pub notes: Option<&'static str>,
+
+    /// The protocol has no connection lifecycle of its own: its "connections"
+    /// are per-remote-address bookkeeping entries (UDP, raw IP, link-level)
+    /// that nothing ever closes, so the runtime reaps them after
+    /// `last_activity` goes stale.
+    ///
+    /// Leave `false` for anything connection-oriented. The reaper used to run
+    /// over every server, and an idle TCP-style connection — a telnet peer
+    /// waiting ten seconds for a human's manual answer — was evicted and shown
+    /// as closed while its socket was perfectly alive.
+    pub connectionless: bool,
 }
 
 impl ProtocolMetadataV2 {
@@ -301,6 +312,7 @@ pub struct ProtocolMetadataV2Builder {
     llm_control: &'static str,
     e2e_testing: &'static str,
     notes: Option<&'static str>,
+    connectionless: bool,
 }
 
 impl Default for ProtocolMetadataV2Builder {
@@ -318,6 +330,7 @@ impl ProtocolMetadataV2Builder {
             llm_control: "",
             e2e_testing: "",
             notes: None,
+            connectionless: false,
         }
     }
 
@@ -351,6 +364,12 @@ impl ProtocolMetadataV2Builder {
         self
     }
 
+    /// Mark the protocol connectionless — see [`ProtocolMetadataV2::connectionless`].
+    pub const fn connectionless(mut self) -> Self {
+        self.connectionless = true;
+        self
+    }
+
     pub const fn build(self) -> ProtocolMetadataV2 {
         ProtocolMetadataV2 {
             state: self.state,
@@ -359,6 +378,7 @@ impl ProtocolMetadataV2Builder {
             llm_control: self.llm_control,
             e2e_testing: self.e2e_testing,
             notes: self.notes,
+            connectionless: self.connectionless,
         }
     }
 }

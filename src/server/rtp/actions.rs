@@ -57,6 +57,7 @@ impl Protocol for RtpProtocol {
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .implementation(
                 "Manual RFC 3550 packetizer with a G.711 (PCMU/PCMA) synthesis engine; the model \

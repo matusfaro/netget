@@ -78,6 +78,7 @@ impl Protocol for DhcpProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(67))
             .implementation("dhcproto v0.12 for parsing and encoding")

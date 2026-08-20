@@ -662,6 +662,7 @@ impl Protocol for RadiusProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             // 1812/1813 are above 1023, so PrivilegedPort would be dead code here.
             .privilege_requirement(PrivilegeRequirement::None)

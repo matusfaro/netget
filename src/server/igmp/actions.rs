@@ -53,6 +53,7 @@ impl Protocol for IgmpProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::RawSockets)
             .implementation("Raw AF_INET/SOCK_RAW/IPPROTO_IGMP socket (libc + socket2)")

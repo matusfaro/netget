@@ -79,6 +79,7 @@ impl Protocol for CoapProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             // 5683 is above 1023; declaring PrivilegedPort here could never fire.
             .privilege_requirement(PrivilegeRequirement::None)

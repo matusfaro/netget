@@ -52,6 +52,7 @@ impl crate::llm::actions::protocol_trait::Protocol for StunProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .implementation("Manual STUN protocol (RFC 8489)")
             .llm_control("Optional: Binding responses are static by default (mechanical), LLM only on opt-in")

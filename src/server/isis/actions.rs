@@ -117,6 +117,7 @@ impl Protocol for IsisProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PacketCapture)
             .implementation("Layer 2 IS-IS with pcap (ISO/IEC 10589, RFC 1195)")

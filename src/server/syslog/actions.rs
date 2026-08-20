@@ -50,6 +50,7 @@ impl Protocol for SyslogProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(514))
             .implementation("syslog_loose v0.22 for parsing RFC 3164/5424 messages")

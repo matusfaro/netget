@@ -122,13 +122,29 @@ async fn handle_peer_command<W>(
         )
         .await;
 
-    if let Err(e) = &outcome {
-        warn!(
+    match &outcome {
+        Err(e) => warn!(
             "injected action on server #{} connection #{} failed: {}",
             server_id.as_u32(),
             connection_id,
             e
-        );
+        ),
+        // The server has hung up (FIN sent): say so now rather than when the
+        // peer gets around to closing its side. A peer that never reads —
+        // our own client parked on a manual question, say — would otherwise
+        // leave the row reading "live" after the operator disconnected it.
+        // The reader's own close path runs again on EOF; both calls are
+        // idempotent.
+        Ok(ClientSendOutcome::Disconnected) => {
+            state.remove_peer_handle(server_id, connection_id).await;
+            state
+                .close_connection_on_server(
+                    server_id,
+                    crate::server::connection::ConnectionId::new(connection_id),
+                )
+                .await;
+        }
+        Ok(_) => {}
     }
     let _ = status_tx.send("__UPDATE_UI__".to_string());
     let _ = command.reply_tx.send(outcome);
@@ -155,6 +171,7 @@ where
     .await?;
 
     let mut bytes_sent = 0usize;
+    let mut closed = false;
     let mut details: Vec<String> = Vec::new();
     let mut stack: Vec<ActionResult> = result.protocol_results;
     stack.reverse();
@@ -171,13 +188,23 @@ where
                     stack.push(inner);
                 }
             }
-            ActionResult::CloseConnection => details.push("close requested".to_string()),
+            // Half-close the write side. The reader task owns the read half and
+            // the close bookkeeping, so this is the one generic way to end a
+            // connection from outside it: the peer reads EOF, closes, and the
+            // reader's `read() == 0` path runs the protocol's own teardown.
+            ActionResult::CloseConnection => {
+                let mut write = write_half.lock().await;
+                write.shutdown().await?;
+                closed = true;
+            }
             ActionResult::WaitForMore | ActionResult::NoAction => {}
             other => details.push(format!("{other:?}")),
         }
     }
 
-    if bytes_sent > 0 {
+    if closed {
+        Ok(ClientSendOutcome::Disconnected)
+    } else if bytes_sent > 0 {
         Ok(ClientSendOutcome::Sent { bytes_sent })
     } else if details.is_empty() {
         Ok(ClientSendOutcome::Executed {

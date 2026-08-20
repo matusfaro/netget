@@ -73,6 +73,7 @@ impl Protocol for TurnProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .implementation("Manual TURN protocol (RFC 8656) with a real UDP relay: every granted allocation binds its own socket and forwards traffic both ways")
             .llm_control("Whether to grant Allocate/Refresh/CreatePermission/ChannelBind, the lifetime, and which peers are permitted (policy, LLM). With no policy configured the server grants nothing with no LLM call. The data plane never calls the LLM")

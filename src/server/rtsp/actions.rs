@@ -70,6 +70,7 @@ impl Protocol for RtspProtocol {
     fn metadata(&self) -> crate::protocol::metadata::ProtocolMetadataV2 {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .implementation(
                 "Manual RFC 2326 control server over TCP; SETUP allocates a real RTP UDP socket and \

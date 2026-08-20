@@ -116,6 +116,7 @@ impl Protocol for OpenvpnProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             // Experimental, not Incomplete: what it claims to do is implemented
             // and was checked against a real client. It is not Beta because it
             // implements only the front of the protocol - no client can use it

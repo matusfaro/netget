@@ -63,6 +63,7 @@ impl Protocol for SipProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Experimental)
             .implementation("rsipstack v0.2.52 - RFC 3261 compliant SIP stack")
             .llm_control("Registration decisions + call routing + SDP generation")

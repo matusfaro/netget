@@ -62,6 +62,7 @@ impl Protocol for UdpProtocol {
         use crate::protocol::metadata::{DevelopmentState, ProtocolMetadataV2};
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Beta)
             .implementation("Manual UDP socket handling with tokio")
             .llm_control("Full datagram control - all sent/received data")

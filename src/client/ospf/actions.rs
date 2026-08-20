@@ -401,6 +401,7 @@ impl Protocol for OspfClientProtocol {
                 "LLM controls Hello packet sending, Database Description requests, LSR queries",
             e2e_testing: "E2E tests verify OSPF packet exchange with server (requires root)",
             notes: Some("Query mode only - topology discovery, not full OSPF router"),
+            connectionless: false,
         }
     }
     fn description(&self) -> &'static str {

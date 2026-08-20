@@ -80,6 +80,7 @@ impl Protocol for NtpProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(123))
             .implementation("Manual 48-byte NTP packet construction")

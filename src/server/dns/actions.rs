@@ -65,6 +65,7 @@ impl Protocol for DnsProtocol {
         };
 
         ProtocolMetadataV2::builder()
+            .connectionless()
             .state(DevelopmentState::Beta)
             .privilege_requirement(PrivilegeRequirement::PrivilegedPort(53))
             .implementation("hickory-proto for parsing and construction; UDP only, no TCP fallback")
