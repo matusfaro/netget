@@ -76,6 +76,9 @@ pub enum ModalAction {
     DraftKind(crate::tui::modal::routing::HandlerKind),
     FormApply,
     FormCancel,
+    /// Show the Wireshark command for the instance the form describes — before
+    /// it exists, so the capture can be running when it starts.
+    FormWireshark,
     /// Compose the response actions for a pending intercept.
     InterceptCompose,
     /// Deliver the composed answer to the waiting connection.
@@ -112,6 +115,7 @@ impl ModalAction {
             ModalAction::DraftKind(kind) => kind.label(),
             ModalAction::FormApply => "[ Apply ]",
             ModalAction::FormCancel => "[ Cancel ]",
+            ModalAction::FormWireshark => "[ View in Wireshark ]",
             ModalAction::InterceptCompose => "[ Compose actions… ]",
             ModalAction::InterceptSend => "[ Send response ]",
             ModalAction::InterceptDismiss => "[ Fail closed ]",

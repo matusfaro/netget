@@ -59,6 +59,10 @@ pub fn help_lines() -> Vec<(Option<&'static str>, &'static str)> {
             "hang up a client but keep it; [ connect ] redials",
         ),
         (
+            Some("[ view in wireshark ]"),
+            "capture command + filters for this instance — same as w",
+        ),
+        (
             Some("[ stop / remove ]"),
             "last row of an instance — immediate, same as x",
         ),
@@ -93,6 +97,10 @@ pub fn help_lines() -> Vec<(Option<&'static str>, &'static str)> {
             "on a server: connect a client of the same protocol",
         ),
         (Some("n"), "on a client: compose and send a request"),
+        (
+            Some("w"),
+            "Wireshark/tshark command for the selected instance (also a button on the create form)",
+        ),
         (Some("d"), "protocol docs for the selected instance"),
         (None, "Global toggles"),
         (

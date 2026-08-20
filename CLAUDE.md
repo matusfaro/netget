@@ -34,6 +34,17 @@ The keyboard shortcuts still work (`a` add, `e` config, `r` handlers, `c` connec
 
 Stopping is immediate: only the bulk actions (stop all, quit) still confirm.
 
+**`[ view in wireshark ]`** (`w`, and a `[ View in Wireshark ]` button on the create/edit form so
+the capture can be running *before* the instance starts) opens a modal with a paste-ready
+`wireshark -k …` / `tshark -l …` line, plus the pieces separately: interface, BPF capture filter,
+display filter and a `-d` decode-as clause. NetGet writes no pcap; `src/tui/wireshark.rs` is a
+pure table of NetGet protocol → transport + Wireshark dissector name, and every name in it was
+checked against `tshark -d` / `-Y`. Three traps it encodes: `isis` is an Ethernet-only BPF keyword
+and is rejected on loopback; `drda` (db2) is heuristic-only and not in the `tcp.port` decode-as
+table; `ipp` is reached through `http`. A protocol missing from the table is treated as plain TCP
+(correct for everything in the registry that is not UDP, raw or off-network), and the off-network
+families (USB, BLE, NFC, pty/pipe/stdio) get an explanation of where to look instead of a command.
+
 ## Protocol inventory — always query, never trust a list
 
 Protocol lists in docs go stale within weeks. Get ground truth from the registry:

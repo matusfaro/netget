@@ -9,6 +9,7 @@ use ratatui::Frame;
 use crate::tui::app::DashboardApp;
 use crate::tui::hit::HitTarget;
 use crate::tui::modal::{help, request_detail, Modal};
+use crate::tui::wireshark::PlanLine;
 
 pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
     let Some(modal) = app.modals.last() else {
@@ -48,6 +49,16 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
             Line::from(Span::styled(url.clone(), app.styles.info)),
         ],
         Modal::BandDetail { key, .. } => band_detail_lines(app, *key),
+        Modal::Wireshark { plan, .. } => plan
+            .lines()
+            .into_iter()
+            .map(|line| match line {
+                PlanLine::Heading(text) => Line::from(Span::styled(text, app.styles.title)),
+                PlanLine::Value(text) => Line::from(Span::styled(text, app.styles.accent)),
+                PlanLine::Note(text) => Line::from(Span::styled(text, app.styles.normal)),
+                PlanLine::Blank => Line::from(""),
+            })
+            .collect(),
         // Rendered separately below (list + fixed detail pane).
         Modal::ProtocolPicker { .. } => Vec::new(),
         Modal::Form(form) => form_lines(app, form),
@@ -63,7 +74,8 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
     let scroll = match modal {
         Modal::Help { scroll }
         | Modal::RequestDetail { scroll, .. }
-        | Modal::BandDetail { scroll, .. } => *scroll,
+        | Modal::BandDetail { scroll, .. }
+        | Modal::Wireshark { scroll, .. } => *scroll,
         _ => 0,
     };
 

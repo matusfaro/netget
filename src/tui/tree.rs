@@ -54,6 +54,9 @@ pub enum RowAction {
     Disconnect,
     /// (Re)connect a disconnected client.
     Connect,
+    /// Show the Wireshark / tshark command and filters that capture this
+    /// instance's traffic (`tui::wireshark`).
+    Wireshark,
     /// Stop this instance (servers) / remove it (clients).
     Stop,
 }
@@ -575,6 +578,7 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
         }
     }
 
+    rows.push(action_row(key, RowAction::Wireshark, 1, "[ view in wireshark ]"));
     rows.push(action_row(key, RowAction::Stop, 1, "[ stop server ]"));
     rows
 }
@@ -979,6 +983,7 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         }
     }
 
+    rows.push(action_row(key, RowAction::Wireshark, 1, "[ view in wireshark ]"));
     // Hang up / reconnect keep the row; remove takes it away entirely.
     match row.send_state {
         SendState::NotConnected => rows.push(action_row(key, RowAction::Connect, 1, "[ connect ]")),
