@@ -64,6 +64,12 @@ pub struct ClientRow {
     /// protocol has no command channel yet" are different problems and must
     /// not be shown as the same one.
     pub send_state: SendState,
+    /// The client protocol's own action names, in vocabulary order — the
+    /// telnet client's `send_command` / `send_text`, TCP's `send_tcp_data`.
+    /// The rail renders one row per entry, and a row's index selects the
+    /// action in the composer, so the order must match
+    /// `ComposerModel::vocabulary` exactly (both come from it).
+    pub send_actions: Vec<String>,
     /// Replies a `manual` rule parked, waiting for the operator's answer.
     pub intercepts: Vec<crate::state::intercepts::InterceptView>,
 }
@@ -92,6 +98,25 @@ pub struct RailSnapshot {
 
 /// Requests kept per band (the full scoped log stays reachable via drill-in).
 const REQUESTS_PER_BAND: usize = 100;
+
+/// Whether an action is worth its own row under a client.
+///
+/// The vocabulary is async ∪ sync, so it also contains verbs that only make
+/// sense as *answers* to a received event, or that the tree already offers
+/// better. Those are filtered from the inline rows only — `n` still opens the
+/// composer on the complete list, so nothing is unreachable.
+fn is_initiable_action(name: &str) -> bool {
+    match name {
+        // A response-only verb: "I am not answering yet, send me more". Sent
+        // on demand it writes nothing and reports "executed".
+        "wait_for_more" => false,
+        // The client's own `[ disconnect ]` row does this and is strictly
+        // better — it keeps the instance so `[ connect ]` can redial, where
+        // the protocol action just ends the loop.
+        "disconnect" => false,
+        _ => true,
+    }
+}
 
 pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
     let servers = state.get_all_servers().await;
@@ -223,6 +248,14 @@ pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
                 .unwrap_or_default(),
             task_count,
             send_state,
+            send_actions: crate::tui::modal::composer::ComposerModel::vocabulary(
+                &client.protocol_name,
+                state,
+            )
+            .into_iter()
+            .map(|action| action.name)
+            .filter(|name| is_initiable_action(name))
+            .collect(),
             intercepts: client_intercepts
                 .remove(&client.id.as_u32())
                 .unwrap_or_default(),

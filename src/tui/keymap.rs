@@ -379,7 +379,12 @@ async fn activate_row(
             }
             RowAction::Send => {
                 if let UiKey::Client(id) = k {
-                    open_composer(app, id, state).await;
+                    open_composer(app, id, None, state).await;
+                }
+            }
+            RowAction::SendAction(index) => {
+                if let UiKey::Client(id) = k {
+                    open_composer(app, id, Some(index), state).await;
                 }
             }
             RowAction::MessagePeer(conn_id) => {
@@ -557,7 +562,7 @@ async fn handle_band_shortcut(
         }
         KeyCode::Char('n') => {
             if let Some(UiKey::Client(id)) = key {
-                open_composer(app, id, state).await;
+                open_composer(app, id, None, state).await;
             }
         }
         _ => {}
@@ -734,9 +739,16 @@ fn open_peer_composer(
         ))));
 }
 
+/// Open the send composer for a client.
+///
+/// `action_index` selects one of the protocol's actions up front — that is
+/// what the inlined `[ send_command ]`-style rows pass, so pressing one lands
+/// straight on that action's parameters instead of on a menu. `None` (the `n`
+/// shortcut) opens on the action list.
 async fn open_composer(
     app: &mut DashboardApp,
     client_id: crate::state::ClientId,
+    action_index: Option<usize>,
     state: &AppState,
 ) {
     let Some(row) = app.snapshot.clients.iter().find(|c| c.id == client_id) else {
@@ -766,11 +778,16 @@ async fn open_composer(
         app.push_system(format!("{} declares no client actions", row.protocol));
         return;
     }
-    app.modals.push(Modal::Composer(Box::new(ComposerModel::new(
-        client_id,
-        &row.protocol,
-        actions,
-    ))));
+    let mut model = ComposerModel::new(client_id, &row.protocol, actions);
+    if let Some(index) = action_index {
+        // The row's index comes from the same vocabulary call, so it is in
+        // range; guard anyway rather than silently opening the wrong action.
+        if index < model.actions.len() {
+            model.selected = index;
+            model.choose();
+        }
+    }
+    app.modals.push(Modal::Composer(Box::new(model)));
 }
 
 async fn handle_modal_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState) -> Outcome {

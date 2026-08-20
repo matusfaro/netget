@@ -47,8 +47,12 @@ pub fn help_lines() -> Vec<(Option<&'static str>, &'static str)> {
             "under a live connection, where the protocol permits",
         ),
         (
-            Some("[ send a request ]"),
-            "first row under a client — same as n",
+            Some("[ send_command ] …"),
+            "a client's own actions, inlined — Enter fills its parameters",
+        ),
+        (
+            Some("n"),
+            "on a client: the same composer, choose the action there",
         ),
         (
             Some("[ disconnect ]"),

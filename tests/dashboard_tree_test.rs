@@ -319,6 +319,7 @@ fn client_row(send_state: SendState) -> ClientRow {
         requests: vec![entry(5, None)],
         task_count: 0,
         send_state,
+        send_actions: vec!["send_command".into(), "send_text".into()],
         intercepts: Vec::new(),
     }
 }
@@ -374,13 +375,20 @@ fn a_client_tree_groups_its_connections_with_their_traffic() {
         "attempts merged into the peer group: {groups:?}"
     );
 
-    // Sending is what a client is for: first row under the root.
+    // Sending is what a client is for: its own actions are the first rows
+    // under the root, one per verb, not a generic "send a request" button.
     assert_eq!(
         rows[1].node,
-        NodeId::Action(key, tree::RowAction::Send),
+        NodeId::Action(key, tree::RowAction::SendAction(0)),
         "{:?}",
         rows.iter().map(|r| &r.label).collect::<Vec<_>>()
     );
+    assert_eq!(rows[1].label, "[ send_command ]");
+    assert_eq!(
+        rows[2].node,
+        NodeId::Action(key, tree::RowAction::SendAction(1))
+    );
+    assert_eq!(rows[2].label, "[ send_text ]");
 
     // Newest connection first; each carries its own requests.
     let under_peer = subtree(&rows, "peer (");
@@ -598,6 +606,9 @@ fn client_verbs_and_peer_messaging_follow_state() {
     let has = |action: RowAction, rows: &[tree::TreeRow]| {
         rows.iter().any(|r| r.node == NodeId::Action(key, action))
     };
+    // Every declared action is reachable as its own row.
+    assert!(has(RowAction::SendAction(0), &rows));
+    assert!(has(RowAction::SendAction(1), &rows));
     assert!(has(RowAction::Disconnect, &rows));
     assert!(!has(RowAction::Connect, &rows));
     assert!(has(RowAction::Stop, &rows));
@@ -606,11 +617,30 @@ fn client_verbs_and_peer_messaging_follow_state() {
         "the client's stop row says remove"
     );
 
-    // Disconnected: connect + remove, no disconnect.
+    // Disconnected: connect + remove, no disconnect — and no action rows,
+    // replaced by the row that says why sending is unavailable.
     let row = client_row(SendState::NotConnected);
     let rows = tree::client_rows(&row, &TreeState::default());
     assert!(has(RowAction::Connect, &rows));
     assert!(!has(RowAction::Disconnect, &rows));
+    assert!(!has(RowAction::SendAction(0), &rows));
+    assert!(
+        rows.iter().any(|r| r.label.contains("not connected")),
+        "{:?}",
+        rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+
+    // A protocol that declares nothing to send says so, rather than showing
+    // an empty gap where the verbs would be.
+    let mut row = client_row(SendState::Ready);
+    row.send_actions.clear();
+    let rows = tree::client_rows(&row, &TreeState::default());
+    assert!(
+        rows.iter()
+            .any(|r| r.label.contains("declares no client actions")),
+        "{:?}",
+        rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
 
     // A server connection that registered a peer handle offers messaging.
     let server_key = UiKey::Server(ServerId::new(1));

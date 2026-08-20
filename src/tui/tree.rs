@@ -18,6 +18,11 @@ use crate::tui::projection::{ClientRow, SendState, ServerRow};
 /// How many children a group shows before the "… N more" row.
 pub const CHILD_LIMIT: usize = 5;
 
+/// How many of a client's own actions are inlined under it before the rest
+/// collapse behind "… N more". Higher than [`CHILD_LIMIT`] because these are
+/// the client's whole point, and most protocols declare only a handful.
+pub const INLINE_ACTION_LIMIT: usize = 8;
+
 /// Something the user can do, sitting in the tree as a row of its own.
 ///
 /// These used to be right-aligned buttons on the group rows — `[ edit ]` on the
@@ -35,8 +40,13 @@ pub enum RowAction {
     AddRoute,
     /// Connect a client of the counterpart protocol to this server.
     AddClient,
-    /// Compose and send a request through this client.
+    /// Compose and send a request through this client, choosing the action in
+    /// the composer. Kept for the `n` shortcut and for the rows that explain
+    /// why sending is unavailable.
     Send,
+    /// Send one specific action, by index into `ClientRow::send_actions`. The
+    /// composer opens straight on that action's parameters.
+    SendAction(usize),
     /// Compose and send an action to one live server connection (only where
     /// the protocol registered a peer handle).
     MessagePeer(u32),
@@ -753,8 +763,33 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
 
     // Sending is what a client is FOR, so it is the first thing under the
     // root — not something to discover three levels down under a peer.
+    //
+    // One row per action the protocol actually offers (telnet's send_command
+    // and send_text, TCP's send_tcp_data), rather than a single generic
+    // button: the verbs ARE the protocol, and a menu that only says "send a
+    // request" hides what this client can do until you open it.
     match row.send_state {
-        SendState::Ready => rows.push(action_row(key, RowAction::Send, 1, "[ send a request ]")),
+        SendState::Ready if !row.send_actions.is_empty() => {
+            let sends: Vec<TreeRow> = row
+                .send_actions
+                .iter()
+                .enumerate()
+                .map(|(index, name)| {
+                    action_row(key, RowAction::SendAction(index), 1, format!("[ {name} ]"))
+                })
+                .collect();
+            // Capped generously: a protocol with a long vocabulary must not
+            // push config and peers off the screen, but the common case (a
+            // handful of verbs) is never truncated.
+            push_capped_with_limit(&mut rows, state, &instance, 1, sends, INLINE_ACTION_LIMIT);
+        }
+        // Connected, but the protocol declares nothing to send.
+        SendState::Ready => rows.push(disabled_row(
+            key,
+            RowAction::Send,
+            1,
+            "(this protocol declares no client actions)",
+        )),
         SendState::NotConnected => rows.push(disabled_row(
             key,
             RowAction::Send,
