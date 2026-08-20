@@ -37,7 +37,14 @@ pub enum RowAction {
     AddClient,
     /// Compose and send a request through this client.
     Send,
-    /// Stop this instance.
+    /// Compose and send an action to one live server connection (only where
+    /// the protocol registered a peer handle).
+    MessagePeer(u32),
+    /// Hang up the client's connection but keep the row for a later connect.
+    Disconnect,
+    /// (Re)connect a disconnected client.
+    Connect,
+    /// Stop this instance (servers) / remove it (clients).
     Stop,
 }
 
@@ -67,8 +74,7 @@ pub enum NodeId {
     /// protocols, whose events carry no connection.
     Peer(UiKey, Option<u32>),
     Request(UiKey, u64),
-    /// Client connection attempts, and one attempt by its start time.
-    Attempts(UiKey),
+    /// One client connection (live or past), by its start time.
     Attempt(UiKey, u64),
     /// One line of an expanded request's detail (index into its detail lines).
     RequestDetail(UiKey, u64, usize),
@@ -177,8 +183,15 @@ impl TreeState {
     }
 
     /// Whether a node is collapsed unless explicitly opened.
+    ///
+    /// Config and handlers are settings — consulted sometimes, in the way
+    /// always. Peers and their traffic are what the dashboard is FOR, so they
+    /// stay open.
     pub fn defaults_closed(node: &NodeId) -> bool {
-        matches!(node, NodeId::Request(_, _))
+        matches!(
+            node,
+            NodeId::Request(_, _) | NodeId::Config(_) | NodeId::Routing(_)
+        )
     }
 
     pub fn is_open(&self, node: &NodeId) -> bool {
@@ -381,9 +394,9 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
     // the whole tree where something is blocked on the human.
     push_intercepts(&mut rows, key, &row.intercepts);
 
-    // ---- config ----
+    // ---- config (collapsed by default: settings, not traffic) ----
     let config = NodeId::Config(key);
-    let config_expanded = state.is_expanded(&config);
+    let config_expanded = state.is_open(&config);
     let mut config_items: Vec<TreeRow> = Vec::new();
     if let Some(params) = row.startup_params.as_ref().and_then(|p| p.as_object()) {
         for (k, v) in params {
@@ -432,30 +445,28 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
         rows.push(action_row(key, RowAction::EditConfig, 2, "[ edit config ]"));
     }
 
-    // ---- routing ----
+    // ---- handlers (collapsed by default) ----
     let routing = NodeId::Routing(key);
-    let routing_expanded = state.is_expanded(&routing);
+    let routing_expanded = state.is_open(&routing);
     rows.push(TreeRow::group(
         routing.clone(),
         1,
-        format!("routing ({})", handler_count(row.routing.as_ref())),
+        format!("handlers ({})", handler_count(row.routing.as_ref())),
         routing_expanded,
     ));
     if routing_expanded {
         let routes = route_rows(key, 2, row.routing.as_ref());
         push_capped(&mut rows, state, &routing, 2, routes);
-        rows.push(action_row(
-            key,
-            RowAction::AddRoute,
-            2,
-            "[ + add response ]",
-        ));
-        rows.push(TreeRow::leaf(
-            NodeId::RoutingFallback(key),
-            2,
-            "otherwise → LLM (the instance instruction)",
-            RowStyle::Dim,
-        ));
+        rows.push(action_row(key, RowAction::AddRoute, 2, "[ + add handler ]"));
+        // Stated only when reachable: with a `*` rule nothing falls through.
+        if !has_wildcard(row.routing.as_ref()) {
+            rows.push(TreeRow::leaf(
+                NodeId::RoutingFallback(key),
+                2,
+                "otherwise → LLM (the instance instruction)",
+                RowStyle::Dim,
+            ));
+        }
     }
 
     // ---- peers, with each peer's requests beneath it ----
@@ -488,6 +499,16 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
                 &row.requests,
                 &mut rows,
             ));
+            // Messaging one peer, where the protocol permits it: the row sits
+            // with the peer's own traffic, since that is where the send lands.
+            if conn.can_message && state.is_expanded(&NodeId::Peer(key, Some(conn.id))) {
+                rows.push(action_row(
+                    key,
+                    RowAction::MessagePeer(conn.id),
+                    3,
+                    "[ message this peer ]",
+                ));
+            }
         }
         for closed in &row.recent {
             peer_rows.push(peer_with_requests(
@@ -624,6 +645,20 @@ fn handler_count(routing: Option<&crate::scripting::EventHandlerConfig>) -> usiz
     routing.map(|c| c.handlers.len()).unwrap_or(0)
 }
 
+/// Whether a `*` rule exists. When one does, nothing can fall through to the
+/// LLM, so showing the "otherwise → LLM" note would claim a path that cannot
+/// happen.
+fn has_wildcard(routing: Option<&crate::scripting::EventHandlerConfig>) -> bool {
+    routing.is_some_and(|c| {
+        c.handlers.iter().any(|h| {
+            matches!(
+                h.event_pattern,
+                crate::scripting::event_handler::EventPattern::Wildcard
+            )
+        })
+    })
+}
+
 /// One row per configured handler, in match order.
 ///
 /// Activating a row edits *that* handler. The always-present LLM fallback is
@@ -734,9 +769,9 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         )),
     }
 
-    // ---- config ----
+    // ---- config (collapsed by default: settings, not traffic) ----
     let config = NodeId::Config(key);
-    let config_expanded = state.is_expanded(&config);
+    let config_expanded = state.is_open(&config);
     let mut config_items: Vec<TreeRow> = Vec::new();
     if let Some(params) = row.startup_params.as_ref().and_then(|p| p.as_object()) {
         for (k, v) in params {
@@ -777,127 +812,143 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         rows.push(action_row(key, RowAction::EditConfig, 2, "[ edit config ]"));
     }
 
-    // ---- auto-reply rules ----
+    // ---- handlers (collapsed by default) ----
     //
-    // A client's routing decides how to REACT to what the server sends back.
-    // Calling it "routing (0)" next to a send button read as the way to send —
-    // it is not, so the label says what it actually is.
+    // A client's handlers decide how to REACT to what the server sends back;
+    // sending is the `[ send a request ]` row above.
     let routing = NodeId::Routing(key);
-    let routing_expanded = state.is_expanded(&routing);
+    let routing_expanded = state.is_open(&routing);
     rows.push(TreeRow::group(
         routing.clone(),
         1,
-        format!("auto-reply rules ({})", handler_count(row.routing.as_ref())),
+        format!("handlers ({})", handler_count(row.routing.as_ref())),
         routing_expanded,
     ));
     if routing_expanded {
         let routes = route_rows(key, 2, row.routing.as_ref());
         push_capped(&mut rows, state, &routing, 2, routes);
-        rows.push(action_row(
-            key,
-            RowAction::AddRoute,
-            2,
-            "[ + auto-reply rule ]",
-        ));
-        rows.push(TreeRow::leaf(
-            NodeId::RoutingFallback(key),
-            2,
-            "otherwise → the LLM decides how to react (instance instruction)",
-            RowStyle::Dim,
-        ));
-    }
-
-    // ---- peer (a client has one) with its requests ----
-    let peers = NodeId::Peers(key);
-    let peers_expanded = state.is_expanded(&peers);
-    rows.push(TreeRow::group(
-        peers.clone(),
-        1,
-        format!("peer · {} req", row.requests.len()),
-        peers_expanded,
-    ));
-    if peers_expanded {
-        let conn_label = match &row.connection {
-            Some(c) => format!("{}  ↓{} ↑{}", c.remote_addr, c.bytes_received, c.bytes_sent),
-            None => row.remote_addr.clone(),
-        };
-        peer_with_requests(
-            key,
-            state,
-            row.connection.as_ref().map(|c| c.id),
-            conn_label,
-            match row.send_state {
-                SendState::Ready => RowStyle::Good,
-                _ => RowStyle::Dim,
-            },
-            &row.requests,
-            &mut rows,
-        );
-
-        // A client's injected actions carry no connection id, so they would
-        // otherwise be invisible; show them under the peer they went through.
-        let orphans: Vec<&AccessLogEntry> = row
-            .requests
-            .iter()
-            .filter(|r| r.connection_id != row.connection.as_ref().map(|c| c.id))
-            .collect();
-        if !orphans.is_empty() {
-            let node = NodeId::Peer(key, None);
-            let expanded = state.is_expanded(&node);
-            rows.push(TreeRow::group(
-                node.clone(),
-                2,
-                format!("(no connection id) · {} req", orphans.len()),
-                expanded,
-            ));
-            if expanded {
-                let items: Vec<Vec<TreeRow>> = orphans
-                    .iter()
-                    .map(|e| request_rows(key, state, e, 3))
-                    .collect();
-                push_capped_groups(&mut rows, state, &node, 3, items);
-            }
-        }
-
-        if row.requests.is_empty() && row.connection.is_none() {
+        rows.push(action_row(key, RowAction::AddRoute, 2, "[ + add handler ]"));
+        // Stated only when reachable: with a `*` rule nothing falls through.
+        if !has_wildcard(row.routing.as_ref()) {
             rows.push(TreeRow::leaf(
-                NodeId::Peer(key, None),
+                NodeId::RoutingFallback(key),
                 2,
-                "(nothing yet)",
+                "otherwise → the LLM decides how to react (instance instruction)",
                 RowStyle::Dim,
             ));
         }
     }
 
-    // Connection attempts are diagnostic history, a sibling of `peer` rather
-    // than one of its children.
-    if !row.history.is_empty() {
-        let attempts = NodeId::Attempts(key);
-        let expanded = state.is_expanded(&attempts);
-        rows.push(TreeRow::group(
-            attempts.clone(),
-            1,
-            format!("attempts ({})", row.history.len()),
-            expanded,
-        ));
-        if expanded {
-            let children: Vec<TreeRow> = row
-                .history
-                .iter()
-                .rev()
-                .map(|attempt| {
-                    TreeRow::leaf(
-                        NodeId::Attempt(key, attempt.started_unix_ms),
-                        2,
-                        format!("{} — {}", attempt.remote_addr, attempt.outcome),
-                        RowStyle::Dim,
+    // ---- peer: one entry per connection, its traffic beneath ----
+    //
+    // The old layout split this into a `peer` group (the live connection) and
+    // a sibling `attempts` list (bare history rows). Merged: every connection
+    // — live or past — is one entry here, and the requests that flowed during
+    // it sit underneath. Requests are attributed to connections by time:
+    // attempts are chronological, so a request belongs to the last connection
+    // that started before it.
+    let peers = NodeId::Peers(key);
+    let peers_expanded = state.is_expanded(&peers);
+    let connection_count = row.history.len().max(usize::from(row.connection.is_some()));
+    rows.push(TreeRow::group(
+        peers.clone(),
+        1,
+        format!(
+            "peer ({} connection{}, {} req)",
+            connection_count,
+            if connection_count == 1 { "" } else { "s" },
+            row.requests.len()
+        ),
+        peers_expanded,
+    ));
+    if peers_expanded {
+        if row.history.is_empty() {
+            // No recorded attempts (older protocols): fall back to one entry
+            // for the live connection, carrying everything.
+            match &row.connection {
+                Some(c) => {
+                    peer_with_requests(
+                        key,
+                        state,
+                        None,
+                        format!("{}  ↓{} ↑{}", c.remote_addr, c.bytes_received, c.bytes_sent),
+                        if c.active {
+                            RowStyle::Good
+                        } else {
+                            RowStyle::Dim
+                        },
+                        &row.requests,
+                        &mut rows,
+                    );
+                }
+                None => rows.push(TreeRow::leaf(
+                    NodeId::Peer(key, None),
+                    2,
+                    "(no connections yet)",
+                    RowStyle::Dim,
+                )),
+            }
+        } else {
+            let starts: Vec<u64> = row.history.iter().map(|a| a.started_unix_ms).collect();
+            let last = row.history.len() - 1;
+            // Newest connection first.
+            for (index, attempt) in row.history.iter().enumerate().rev() {
+                // The window: from this connection's start (0 for the first,
+                // so early requests are never orphaned) to the next one's.
+                let from = if index == 0 { 0 } else { starts[index] };
+                let to = starts.get(index + 1).copied().unwrap_or(u64::MAX);
+                let mine: Vec<&AccessLogEntry> = row
+                    .requests
+                    .iter()
+                    .filter(|r| r.unix_ms >= from && r.unix_ms < to)
+                    .collect();
+
+                let live =
+                    index == last && attempt.ended_unix_ms.is_none() && row.connection.is_some();
+                let label = if live {
+                    let c = row.connection.as_ref().expect("checked above");
+                    format!(
+                        "{}  ↓{} ↑{}  · {} req",
+                        c.remote_addr,
+                        c.bytes_received,
+                        c.bytes_sent,
+                        mine.len()
                     )
-                })
-                .collect();
-            push_capped(&mut rows, state, &attempts, 2, children);
+                } else {
+                    format!(
+                        "{} — {}{}  · {} req",
+                        attempt.remote_addr,
+                        attempt.outcome,
+                        if attempt.ended_unix_ms.is_some() {
+                            " (closed)"
+                        } else {
+                            ""
+                        },
+                        mine.len()
+                    )
+                };
+
+                let node = NodeId::Attempt(key, attempt.started_unix_ms);
+                let expanded = state.is_expanded(&node);
+                let mut group = TreeRow::group(node.clone(), 2, label, expanded);
+                group.style = if live { RowStyle::Good } else { RowStyle::Dim };
+                rows.push(group);
+                if expanded && !mine.is_empty() {
+                    let items: Vec<Vec<TreeRow>> = mine
+                        .iter()
+                        .map(|entry| request_rows(key, state, entry, 3))
+                        .collect();
+                    push_capped_groups(&mut rows, state, &node, 3, items);
+                }
+            }
         }
     }
 
-    rows.push(action_row(key, RowAction::Stop, 1, "[ stop client ]"));
+    // Hang up / reconnect keep the row; remove takes it away entirely.
+    match row.send_state {
+        SendState::NotConnected => rows.push(action_row(key, RowAction::Connect, 1, "[ connect ]")),
+        _ => rows.push(action_row(key, RowAction::Disconnect, 1, "[ disconnect ]")),
+    }
+    rows.push(action_row(key, RowAction::Stop, 1, "[ remove client ]"));
     rows
 }

@@ -32,7 +32,17 @@ fn conn(id: u32) -> ConnRow {
         bytes_received: 10,
         bytes_sent: 20,
         active: true,
+        can_message: false,
     }
+}
+
+/// A default tree state with the collapsed-by-default groups opened, for
+/// tests that assert on config/handler contents.
+fn all_open(key: UiKey) -> TreeState {
+    let mut state = TreeState::default();
+    state.expand(&NodeId::Config(key));
+    state.expand(&NodeId::Routing(key));
+    state
 }
 
 fn server(conns: Vec<ConnRow>, requests: Vec<AccessLogEntry>) -> ServerRow {
@@ -92,14 +102,23 @@ fn an_instance_is_the_root_with_config_routing_and_peers_beneath() {
     assert_eq!(roots.len(), 1);
     assert!(roots[0].contains("#1 TCP"), "root was {:?}", roots[0]);
 
-    // The three groups sit one level in.
+    // The three groups sit one level in. Config and handlers start COLLAPSED —
+    // they are settings; peers (the traffic) start open.
     let groups = labels_at_depth(&rows, 1);
     assert!(groups.iter().any(|l| l.starts_with("config")), "{groups:?}");
     assert!(
-        groups.iter().any(|l| l.starts_with("routing")),
+        groups.iter().any(|l| l.starts_with("handlers")),
         "{groups:?}"
     );
     assert!(groups.iter().any(|l| l.starts_with("peers")), "{groups:?}");
+    assert!(
+        subtree(&rows, "config").is_empty() && subtree(&rows, "handlers").is_empty(),
+        "config and handlers default to collapsed"
+    );
+    assert!(
+        !subtree(&rows, "peers").is_empty(),
+        "peers default to expanded"
+    );
 
     // Every group row is expandable. Action rows sit at this depth too and are
     // leaves by design — `[ stop server ]` has nothing to expand.
@@ -276,13 +295,16 @@ fn expanding_a_request_does_not_truncate_the_request_list() {
     );
 }
 
-#[test]
-fn a_client_tree_groups_its_peer_requests_and_attempts() {
-    let row = ClientRow {
+fn client_row(send_state: SendState) -> ClientRow {
+    ClientRow {
         id: ClientId::new(2),
         protocol: "TCP".into(),
         remote_addr: "127.0.0.1:8080".into(),
-        status: ClientStatus::Connected,
+        status: if send_state == SendState::NotConnected {
+            ClientStatus::Disconnected
+        } else {
+            ClientStatus::Connected
+        },
         instruction: "be a client".into(),
         memory_len: 0,
         startup_params: None,
@@ -296,36 +318,98 @@ fn a_client_tree_groups_its_peer_requests_and_attempts() {
         }],
         requests: vec![entry(5, None)],
         task_count: 0,
-        send_state: SendState::Ready,
+        send_state,
         intercepts: Vec::new(),
-    };
+    }
+}
+
+/// The client's peer group: one entry per connection (live or past), with the
+/// requests that flowed during it beneath — attempts are not a separate list.
+#[test]
+fn a_client_tree_groups_its_connections_with_their_traffic() {
+    let mut row = client_row(SendState::Ready);
+    // Two connections: an old one that closed, and the live one. The request
+    // stream spans both; time attributes each to its connection.
+    row.history = vec![
+        netget::state::client::ClientConnectionAttempt {
+            remote_addr: "127.0.0.1:8080".into(),
+            started_unix_ms: 1_700_000_000_000,
+            ended_unix_ms: Some(1_700_000_000_900),
+            outcome: "connected".into(),
+        },
+        netget::state::client::ClientConnectionAttempt {
+            remote_addr: "127.0.0.1:8080".into(),
+            started_unix_ms: 1_700_000_001_000,
+            ended_unix_ms: None,
+            outcome: "connected".into(),
+        },
+    ];
+    row.connection = Some(ConnRow {
+        id: 9,
+        remote_addr: "127.0.0.1:8080".into(),
+        bytes_received: 5,
+        bytes_sent: 7,
+        active: true,
+        can_message: false,
+    });
+    // entry ids double as unix_ms offsets (see `entry`): 5 lands in the first
+    // window, 2000 in the second.
+    row.requests = vec![entry(5, None), entry(2000, None)];
+
     let rows = tree::client_rows(&row, &TreeState::default());
+    let key = UiKey::Client(row.id);
 
     let groups = labels_at_depth(&rows, 1);
     assert!(groups.iter().any(|l| l.starts_with("config")), "{groups:?}");
-    // A client's rules react to what the server sends back; calling that
-    // "routing" next to a send button read as the way to send.
     assert!(
-        groups.iter().any(|l| l.starts_with("auto-reply rules")),
+        groups.iter().any(|l| l.starts_with("handlers")),
         "{groups:?}"
     );
-    assert!(groups.iter().any(|l| l.starts_with("peer")), "{groups:?}");
-    // Attempts are a sibling of peer, not one of its children.
     assert!(
-        groups.iter().any(|l| l.starts_with("attempts")),
-        "attempts should be their own group: {groups:?}"
+        groups.iter().any(|l| l.starts_with("peer (2 connections")),
+        "{groups:?}"
+    );
+    assert!(
+        !groups.iter().any(|l| l.starts_with("attempts")),
+        "attempts merged into the peer group: {groups:?}"
     );
 
-    // Sending is what a client is for, so it is the FIRST row under the root —
-    // before config, before rules — not something discovered under a peer.
-    let send = NodeId::Action(UiKey::Client(row.id), tree::RowAction::Send);
+    // Sending is what a client is for: first row under the root.
     assert_eq!(
         rows[1].node,
-        send,
-        "[ send a request ] should be the first child of the client root: {:?}",
+        NodeId::Action(key, tree::RowAction::Send),
+        "{:?}",
         rows.iter().map(|r| &r.label).collect::<Vec<_>>()
     );
-    assert!(rows[1].label.contains("send"), "{}", rows[1].label);
+
+    // Newest connection first; each carries its own requests.
+    let under_peer = subtree(&rows, "peer (");
+    let entries: Vec<&tree::TreeRow> = under_peer
+        .iter()
+        .filter(|r| matches!(r.node, NodeId::Attempt(_, _)))
+        .collect();
+    assert_eq!(entries.len(), 2, "one entry per connection");
+    assert!(
+        entries[0].label.contains("↓5 ↑7") && entries[0].label.contains("· 1 req"),
+        "the live connection shows its counters and its own traffic: {}",
+        entries[0].label
+    );
+    assert!(
+        entries[1].label.contains("(closed)") && entries[1].label.contains("· 1 req"),
+        "the closed connection keeps its own traffic: {}",
+        entries[1].label
+    );
+
+    // The requests really sit beneath their connection.
+    let live_node = NodeId::Attempt(key, 1_700_000_001_000);
+    let live_index = under_peer
+        .iter()
+        .position(|r| r.node == live_node)
+        .expect("live entry");
+    assert!(
+        matches!(under_peer[live_index + 1].node, NodeId::Request(_, 2000)),
+        "the live connection's request is the one from its own window"
+    );
 }
 
 /// Every verb is a row, under the noun it acts on.
@@ -338,7 +422,7 @@ fn actions_are_rows_beneath_the_thing_they_act_on() {
     use tree::RowAction;
     let key = UiKey::Server(ServerId::new(1));
     let row = server(vec![conn(1)], vec![]);
-    let rows = tree::server_rows(&row, &TreeState::default());
+    let rows = tree::server_rows(&row, &all_open(key));
 
     let action_at = |group: &str, action: RowAction| {
         subtree(&rows, group)
@@ -351,8 +435,8 @@ fn actions_are_rows_beneath_the_thing_they_act_on() {
         "editing config belongs under `config`"
     );
     assert!(
-        action_at("routing", RowAction::AddRoute),
-        "adding a response belongs under `routing`"
+        action_at("handlers", RowAction::AddRoute),
+        "adding a handler belongs under `handlers`"
     );
     assert!(
         action_at("peers", RowAction::AddClient),
@@ -380,7 +464,7 @@ fn the_edit_row_is_not_charged_against_the_child_cap() {
     let mut row = server(vec![], vec![]);
     row.startup_params = Some(serde_json::Value::Object(params));
 
-    let rows = tree::server_rows(&row, &TreeState::default());
+    let rows = tree::server_rows(&row, &all_open(key));
     let under_config = subtree(&rows, "config");
     assert!(
         under_config.iter().any(|r| r.label.starts_with("… ")),
@@ -444,9 +528,10 @@ fn a_pending_intercept_is_visible_and_activatable() {
 /// and deletable when it is neither.
 #[test]
 fn the_llm_fallback_is_stated_but_not_a_route() {
+    let key = UiKey::Server(ServerId::new(1));
     let row = server(vec![], vec![]);
-    let rows = tree::server_rows(&row, &TreeState::default());
-    let under_routing = subtree(&rows, "routing");
+    let rows = tree::server_rows(&row, &all_open(key));
+    let under_routing = subtree(&rows, "handlers");
 
     assert!(
         under_routing
@@ -462,8 +547,88 @@ fn the_llm_fallback_is_stated_but_not_a_route() {
         "with no handlers configured there are no routes, only the fallback note"
     );
     assert!(
-        rows.iter().any(|r| r.label.starts_with("routing (0)")),
+        rows.iter().any(|r| r.label.starts_with("handlers (0)")),
         "the fallback must not be counted as a configured handler: {:?}",
         rows.iter().map(|r| &r.label).collect::<Vec<_>>()
     );
+}
+
+/// With a `*` rule nothing can fall through, so the "otherwise → LLM" note
+/// would describe a path that cannot happen — it disappears.
+#[test]
+fn a_wildcard_handler_hides_the_llm_fallback_note() {
+    use netget::scripting::{EventHandler, EventHandlerConfig, EventHandlerType, EventPattern};
+
+    let key = UiKey::Server(ServerId::new(1));
+    let mut config = EventHandlerConfig::new();
+    config.add_handler(EventHandler::new(
+        EventPattern::wildcard(),
+        EventHandlerType::manual(300),
+    ));
+    let mut row = server(vec![], vec![]);
+    row.routing = Some(config);
+
+    let rows = tree::server_rows(&row, &all_open(key));
+    let under = subtree(&rows, "handlers");
+    assert!(
+        under.iter().any(|r| r.label.contains("MANUAL")),
+        "{:?}",
+        under.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+    assert!(
+        !under
+            .iter()
+            .any(|r| matches!(r.node, NodeId::RoutingFallback(_))),
+        "a wildcard rule catches everything; the LLM note must go: {:?}",
+        under.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+}
+
+/// The verbs a client offers: disconnect while connected (keeping the row),
+/// connect while disconnected, and remove always. A message-capable server
+/// connection additionally offers [ message this peer ].
+#[test]
+fn client_verbs_and_peer_messaging_follow_state() {
+    use tree::RowAction;
+
+    // Connected client: disconnect + remove, no connect.
+    let row = client_row(SendState::Ready);
+    let rows = tree::client_rows(&row, &TreeState::default());
+    let key = UiKey::Client(row.id);
+    let has = |action: RowAction, rows: &[tree::TreeRow]| {
+        rows.iter().any(|r| r.node == NodeId::Action(key, action))
+    };
+    assert!(has(RowAction::Disconnect, &rows));
+    assert!(!has(RowAction::Connect, &rows));
+    assert!(has(RowAction::Stop, &rows));
+    assert!(
+        rows.iter().any(|r| r.label.contains("remove client")),
+        "the client's stop row says remove"
+    );
+
+    // Disconnected: connect + remove, no disconnect.
+    let row = client_row(SendState::NotConnected);
+    let rows = tree::client_rows(&row, &TreeState::default());
+    assert!(has(RowAction::Connect, &rows));
+    assert!(!has(RowAction::Disconnect, &rows));
+
+    // A server connection that registered a peer handle offers messaging.
+    let server_key = UiKey::Server(ServerId::new(1));
+    let mut c = conn(1);
+    c.can_message = true;
+    let srow = server(vec![c], vec![]);
+    let rows = tree::server_rows(&srow, &TreeState::default());
+    assert!(
+        rows.iter()
+            .any(|r| r.node == NodeId::Action(server_key, RowAction::MessagePeer(1))),
+        "{:?}",
+        rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+    );
+
+    // And one that did not, does not.
+    let srow = server(vec![conn(1)], vec![]);
+    let rows = tree::server_rows(&srow, &TreeState::default());
+    assert!(!rows
+        .iter()
+        .any(|r| matches!(r.node, NodeId::Action(_, RowAction::MessagePeer(_)))));
 }

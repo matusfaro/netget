@@ -36,7 +36,9 @@ pub async fn submit(
             let mut handler = event_handler.clone();
             let tx = status_tx.clone();
             tokio::spawn(async move {
-                if let Err(e) = handler.handle_interpret_with_actions(input, tx.clone(), None).await
+                if let Err(e) = handler
+                    .handle_interpret_with_actions(input, tx.clone(), None)
+                    .await
                 {
                     let _ = tx.send(format!("[ERROR] LLM request failed: {e}"));
                 }
@@ -82,7 +84,8 @@ pub async fn submit(
                         "No models available from the backend.".to_string()
                     }
                     Ok(models) => {
-                        let mut lines = vec!["Available models (/model <name> to switch):".to_string()];
+                        let mut lines =
+                            vec!["Available models (/model <name> to switch):".to_string()];
                         for model in models {
                             let marker = if model == current { "→" } else { " " };
                             lines.push(format!("  {marker} {model}"));
@@ -91,7 +94,11 @@ pub async fn submit(
                     }
                     Err(e) => format!(
                         "Could not list models: {e}\nCurrent model: {}",
-                        if current.is_empty() { "(none)" } else { &current }
+                        if current.is_empty() {
+                            "(none)"
+                        } else {
+                            &current
+                        }
                     ),
                 };
                 let _ = ui_tx.send(crate::tui::uimsg::UiMsg::Chat(message));
@@ -135,22 +142,21 @@ pub async fn submit(
     app.dirty = true;
 }
 
-/// `/stop <id>`: unified id may name a server or a client.
+/// `/stop <id>`: unified id may name a server or a client. Immediate — the
+/// user typed the id; a confirmation would only repeat it back.
 async fn stop_by_unified_id(app: &mut DashboardApp, state: &AppState, id: u32) {
     let server_id = crate::state::ServerId::new(id);
     if state.get_server(server_id).await.is_some() {
-        app.modals.push(Modal::Confirm {
-            message: format!("Stop server #{id}?"),
-            action: PendingAction::StopServer(server_id),
-        });
+        let line =
+            crate::tui::modal::confirm::execute(&PendingAction::StopServer(server_id), state).await;
+        app.push_system(line);
         return;
     }
     let client_id = crate::state::ClientId::new(id);
     if state.get_client(client_id).await.is_some() {
-        app.modals.push(Modal::Confirm {
-            message: format!("Stop client #{id}?"),
-            action: PendingAction::StopClient(client_id),
-        });
+        let line =
+            crate::tui::modal::confirm::execute(&PendingAction::StopClient(client_id), state).await;
+        app.push_system(line);
         return;
     }
     app.push_system(format!("No server or client with id {id}"));

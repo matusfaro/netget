@@ -443,6 +443,10 @@ struct AppStateInner {
     pub(crate) pending_intercepts: Vec<crate::state::intercepts::PendingIntercept>,
     /// Monotonic id source for [`Self::pending_intercepts`].
     pub(crate) next_intercept_id: u64,
+    /// Command channels into individual server connections, for protocols that
+    /// adopted peer messaging (the dashboard's "message this peer"). Reuses the
+    /// client command types: a command is just {action, reply}.
+    peer_handles: HashMap<(ServerId, u32), crate::state::client_handles::ClientHandle>,
 }
 
 impl AppStateInner {
@@ -462,6 +466,9 @@ impl AppStateInner {
         }
         // A live-instance handle must never outlive the server it points at.
         self.server_handles.remove(&server_id);
+        // Dropping a peer handle closes its channel, which ends the per-peer
+        // command task.
+        self.peer_handles.retain(|(sid, _), _| *sid != server_id);
         self.drop_tasks_for_server(server_id);
 
         // Tear down any pipe touching this server (as source or sink), mirroring
@@ -600,6 +607,7 @@ impl AppState {
                 client_handles: HashMap::new(),
                 pending_intercepts: Vec::new(),
                 next_intercept_id: 1,
+                peer_handles: HashMap::new(),
             })),
         }
     }
@@ -925,6 +933,89 @@ impl AppState {
     pub async fn remove_intercept(&self, id: u64) {
         let mut inner = self.inner.write().await;
         inner.pending_intercepts.retain(|e| e.id != id);
+    }
+
+    // ===== Peer command handles (message one server connection) =====
+
+    /// Register a command channel into one connection of a server. Only
+    /// protocols that adopted peer messaging call this; the dashboard offers
+    /// "message this peer" exactly where a handle exists.
+    pub async fn register_peer_handle(
+        &self,
+        server_id: ServerId,
+        connection_id: u32,
+        handle: crate::state::client_handles::ClientHandle,
+    ) {
+        let mut inner = self.inner.write().await;
+        if !inner.servers.contains_key(&server_id) {
+            return;
+        }
+        inner
+            .peer_handles
+            .insert((server_id, connection_id), handle);
+    }
+
+    /// Whether a connection accepts injected actions.
+    pub async fn has_peer_handle(&self, server_id: ServerId, connection_id: u32) -> bool {
+        self.inner
+            .read()
+            .await
+            .peer_handles
+            .contains_key(&(server_id, connection_id))
+    }
+
+    /// Drop a connection's command handle (the owning loop does this when the
+    /// connection closes).
+    pub async fn remove_peer_handle(&self, server_id: ServerId, connection_id: u32) {
+        self.inner
+            .write()
+            .await
+            .peer_handles
+            .remove(&(server_id, connection_id));
+    }
+
+    /// Execute one action inside a server connection's own task and wait for
+    /// the outcome. Same lock discipline as `send_to_client`: clone the handle
+    /// out, drop the guard, then await.
+    pub async fn send_to_peer(
+        &self,
+        server_id: ServerId,
+        connection_id: u32,
+        action: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<crate::state::client_handles::ClientSendOutcome> {
+        use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+
+        let handle = {
+            let inner = self.inner.read().await;
+            inner.peer_handles.get(&(server_id, connection_id)).cloned()
+        };
+        let Some(handle) = handle else {
+            anyhow::bail!(
+                "connection #{connection_id} on server #{} does not accept injected actions",
+                server_id.as_u32()
+            );
+        };
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let command = ClientCommand { action, reply_tx };
+        if handle.command_tx.try_send(command).is_err() {
+            // Full queue or a closed channel: either way the peer is not
+            // taking commands right now. Prune a dead entry so the UI stops
+            // offering it.
+            let mut inner = self.inner.write().await;
+            if let Some(entry) = inner.peer_handles.get(&(server_id, connection_id)) {
+                if entry.command_tx.is_closed() {
+                    inner.peer_handles.remove(&(server_id, connection_id));
+                    return Ok(ClientSendOutcome::Disconnected);
+                }
+            }
+            anyhow::bail!("connection #{connection_id} is busy — try again");
+        }
+        match tokio::time::timeout(timeout, reply_rx).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => Ok(ClientSendOutcome::Disconnected),
+            Err(_) => anyhow::bail!("no outcome within {}s", timeout.as_secs()),
+        }
     }
 
     // ===== Client command handles (see crate::state::client_handles) =====
@@ -2034,6 +2125,27 @@ impl AppState {
     /// keeps its socket open and keeps calling the LLM. Every handle registered via
     /// [`Self::register_client_task`] is therefore aborted explicitly here, which is
     /// what makes `stop_client` actually stop a client rather than just forgetting it.
+    /// Disconnect a client but KEEP its row, so it can be reconnected later.
+    ///
+    /// Aborts the connection tasks (which closes the socket), drops the command
+    /// handle, and marks the client Disconnected. Scheduled tasks and
+    /// configuration survive — this is "hang up", not "remove".
+    pub async fn disconnect_client(&self, id: ClientId) -> bool {
+        {
+            let mut inner = self.inner.write().await;
+            if !inner.clients.contains_key(&id) {
+                return false;
+            }
+            for handle in inner.client_tasks.remove(&id).unwrap_or_default() {
+                handle.abort();
+            }
+            inner.client_handles.remove(&id);
+        }
+        self.update_client_status(id, super::client::ClientStatus::Disconnected)
+            .await;
+        true
+    }
+
     pub async fn remove_client(&self, id: ClientId) -> Option<ClientInstance> {
         let client = {
             let mut inner = self.inner.write().await;

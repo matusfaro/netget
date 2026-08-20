@@ -306,7 +306,7 @@ async fn handle_rail_key(
         }
         KeyCode::Char('x') => {
             if let Some(key_owner) = owner {
-                push_stop_confirm(app, key_owner);
+                stop_instance(app, key_owner, state).await;
             }
         }
         KeyCode::Char('e')
@@ -382,7 +382,22 @@ async fn activate_row(
                     open_composer(app, id, state).await;
                 }
             }
-            RowAction::Stop => push_stop_confirm(app, k),
+            RowAction::MessagePeer(conn_id) => {
+                if let UiKey::Server(id) = k {
+                    open_peer_composer(app, id, conn_id, state);
+                }
+            }
+            RowAction::Disconnect => {
+                if let UiKey::Client(id) = k {
+                    disconnect_client(app, id, state).await;
+                }
+            }
+            RowAction::Connect => {
+                if let UiKey::Client(id) = k {
+                    connect_client(app, id, state);
+                }
+            }
+            RowAction::Stop => stop_instance(app, k, state).await,
         },
         NodeId::Intercept(k, intercept_id) => open_intercept(app, k, intercept_id, state),
         NodeId::RoutingFallback(_) | NodeId::RequestDetail(..) => {}
@@ -451,21 +466,49 @@ enum RouteTarget {
     New,
 }
 
-fn push_stop_confirm(app: &mut DashboardApp, key: UiKey) {
-    let (message, action) = match key {
-        UiKey::Server(id) => (
-            format!(
-                "Stop server #{}? Live connections will be dropped.",
-                id.as_u32()
-            ),
-            PendingAction::StopServer(id),
-        ),
-        UiKey::Client(id) => (
-            format!("Stop client #{}?", id.as_u32()),
-            PendingAction::StopClient(id),
-        ),
+/// Stop an instance immediately — no confirmation. Stopping is cheap to redo
+/// (recreate from the picker) and the dialog was pure friction; only the bulk
+/// actions (stop all, quit) keep a confirm.
+async fn stop_instance(app: &mut DashboardApp, key: UiKey, state: &AppState) {
+    let action = match key {
+        UiKey::Server(id) => PendingAction::StopServer(id),
+        UiKey::Client(id) => PendingAction::StopClient(id),
     };
-    app.modals.push(Modal::Confirm { message, action });
+    let line = confirm::execute(&action, state).await;
+    app.push_system(line);
+}
+
+/// Hang up a client's connection, keeping the row for `[ connect ]` later.
+async fn disconnect_client(app: &mut DashboardApp, id: crate::state::ClientId, state: &AppState) {
+    if state.disconnect_client(id).await {
+        app.push_system(format!(
+            "client #{} disconnected — [ connect ] re-establishes it",
+            id.as_u32()
+        ));
+    } else {
+        app.push_system(format!("client #{} is already gone", id.as_u32()));
+    }
+}
+
+/// (Re)connect a disconnected client. Spawned: connecting is network I/O and
+/// must not block the event loop (see `crate::tui::uimsg`).
+fn connect_client(app: &mut DashboardApp, id: crate::state::ClientId, state: &AppState) {
+    app.push_system(format!("connecting client #{}…", id.as_u32()));
+    let llm = app.llm_client.clone();
+    let status_tx = app.status_tx.clone();
+    let ui_tx = app.ui_tx.clone();
+    let state = state.clone();
+    tokio::spawn(async move {
+        let message = match crate::cli::client_startup::start_client_by_id(
+            &state, id, &llm, &status_tx,
+        )
+        .await
+        {
+            Ok(_) => format!("client #{} connected", id.as_u32()),
+            Err(e) => format!("client #{} failed to connect: {e}", id.as_u32()),
+        };
+        let _ = ui_tx.send(UiMsg::Chat(message));
+    });
 }
 
 async fn handle_band_shortcut(
@@ -658,6 +701,37 @@ async fn open_client_for_server(
             result,
         });
     });
+}
+
+/// Compose an action for one live server connection. The vocabulary is the
+/// server protocol's sync actions — its wire verbs (send_tcp_data and
+/// friends), not its management ones.
+fn open_peer_composer(
+    app: &mut DashboardApp,
+    server_id: crate::state::ServerId,
+    connection_id: u32,
+    _state: &AppState,
+) {
+    use crate::tui::modal::composer::ComposerModel;
+    let Some(row) = app.snapshot.servers.iter().find(|s| s.id == server_id) else {
+        return;
+    };
+    let Ok(protocol) = crate::protocol::server_registry::registry().resolve(&row.protocol) else {
+        app.push_system(format!("{} is not a registered protocol", row.protocol));
+        return;
+    };
+    let actions = protocol.get_sync_actions();
+    if actions.is_empty() {
+        app.push_system(format!("{} declares no wire actions to send", row.protocol));
+        return;
+    }
+    app.modals
+        .push(Modal::Composer(Box::new(ComposerModel::for_peer(
+            server_id,
+            connection_id,
+            &row.protocol,
+            actions,
+        ))));
 }
 
 async fn open_composer(
@@ -1132,8 +1206,8 @@ async fn run_composer_action(
                     .await
                     .map(|outcome| {
                         format!(
-                            "client #{}: {}",
-                            model.client_id.as_u32(),
+                            "{}: {}",
+                            model.target.describe(),
                             crate::tui::modal::composer::describe(&outcome)
                         )
                     })

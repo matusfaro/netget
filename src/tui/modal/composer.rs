@@ -9,7 +9,30 @@ use anyhow::Result;
 use crate::llm::actions::ActionDefinition;
 use crate::state::app_state::AppState;
 use crate::state::client_handles::ClientSendOutcome;
-use crate::state::ClientId;
+use crate::state::{ClientId, ServerId};
+
+/// What the composed action is delivered to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposerTarget {
+    /// A running client's connection loop (`AppState::send_to_client`).
+    Client(ClientId),
+    /// One live connection of a server (`AppState::send_to_peer`) — offered
+    /// only where the protocol registered a peer handle.
+    Peer { server: ServerId, connection: u32 },
+}
+
+impl ComposerTarget {
+    /// Short label for titles and chat lines.
+    pub fn describe(&self) -> String {
+        match self {
+            ComposerTarget::Client(id) => format!("client #{}", id.as_u32()),
+            ComposerTarget::Peer { server, connection } => format!(
+                "peer (connection #{connection} of server #{})",
+                server.as_u32()
+            ),
+        }
+    }
+}
 
 /// How long a composed send waits for the client's loop to report back.
 pub const SEND_TIMEOUT: Duration = Duration::from_secs(10);
@@ -25,7 +48,7 @@ pub struct ComposerField {
 
 #[derive(Debug, Clone)]
 pub struct ComposerModel {
-    pub client_id: ClientId,
+    pub target: ComposerTarget,
     pub protocol: String,
     pub actions: Vec<ActionDefinition>,
     /// `None` while choosing an action; `Some` once one is picked.
@@ -46,8 +69,26 @@ pub struct ComposerModel {
 
 impl ComposerModel {
     pub fn new(client_id: ClientId, protocol: &str, actions: Vec<ActionDefinition>) -> Self {
+        Self::for_target(ComposerTarget::Client(client_id), protocol, actions)
+    }
+
+    /// Compose for one live connection of a server.
+    pub fn for_peer(
+        server: ServerId,
+        connection: u32,
+        protocol: &str,
+        actions: Vec<ActionDefinition>,
+    ) -> Self {
+        Self::for_target(
+            ComposerTarget::Peer { server, connection },
+            protocol,
+            actions,
+        )
+    }
+
+    fn for_target(target: ComposerTarget, protocol: &str, actions: Vec<ActionDefinition>) -> Self {
         Self {
-            client_id,
+            target,
             protocol: protocol.to_string(),
             actions,
             chosen: None,
@@ -238,12 +279,17 @@ impl ComposerModel {
         Ok(serde_json::Value::Object(map))
     }
 
-    /// Send the composed action through the running client.
+    /// Deliver the composed action to the target.
     pub async fn send(&self, state: &AppState) -> Result<ClientSendOutcome> {
         let action = self.build_action()?;
-        state
-            .send_to_client(self.client_id, action, SEND_TIMEOUT)
-            .await
+        match self.target {
+            ComposerTarget::Client(id) => state.send_to_client(id, action, SEND_TIMEOUT).await,
+            ComposerTarget::Peer { server, connection } => {
+                state
+                    .send_to_peer(server, connection, action, SEND_TIMEOUT)
+                    .await
+            }
+        }
     }
 }
 

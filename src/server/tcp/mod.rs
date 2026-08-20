@@ -120,6 +120,27 @@ impl TcpServer {
                             },
                         );
 
+                        // Peer messaging: the dashboard can inject an action into
+                        // THIS connection (send_tcp_data through the same
+                        // executor the model's actions use). The task ends when
+                        // the handle is dropped — by the close paths below or by
+                        // server teardown.
+                        let peer_rx = crate::server::peer_support::register_peer_channel(
+                            &app_state,
+                            server_id,
+                            connection_id.as_u32(),
+                        )
+                        .await;
+                        crate::server::peer_support::spawn_peer_command_task(
+                            peer_rx,
+                            protocol.clone(),
+                            app_state.clone(),
+                            server_id,
+                            connection_id.as_u32(),
+                            write_half_arc.clone(),
+                            status_tx.clone(),
+                        );
+
                         // Send the greeting banner, if this server was asked for one.
                         if send_first {
                             let llm_client_clone = llm_client.clone();
@@ -158,6 +179,9 @@ impl TcpServer {
                                     Ok(0) => {
                                         // Connection closed
                                         connections_clone.lock().await.remove(&connection_id);
+                                        app_state_clone
+                                            .remove_peer_handle(server_id, connection_id.as_u32())
+                                            .await;
                                         app_state_clone
                                             .close_connection_on_server(server_id, connection_id)
                                             .await;
@@ -240,6 +264,9 @@ impl TcpServer {
                                             connection_id, e
                                         ));
                                         connections_clone.lock().await.remove(&connection_id);
+                                        app_state_clone
+                                            .remove_peer_handle(server_id, connection_id.as_u32())
+                                            .await;
                                         break;
                                     }
                                 }

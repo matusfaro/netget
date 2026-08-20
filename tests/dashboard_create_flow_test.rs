@@ -284,6 +284,69 @@ async fn create_server_then_client_then_send_without_an_llm() {
             .any(|e| e.event_type == "injected_action"),
         "the client's request log should record the injected action"
     );
+
+    // 6. The server can message that peer directly — TCP adopted the peer
+    //    channel, so the connection advertises it in the projection.
+    let snapshot = projection::build_snapshot(&state).await;
+    let conn = snapshot.servers[0]
+        .conns
+        .iter()
+        .find(|c| c.can_message)
+        .expect("the live TCP connection should accept injected actions");
+
+    let outcome = state
+        .send_to_peer(
+            server_id,
+            conn.id,
+            serde_json::json!({"type": "send_tcp_data", "data": "hello-from-server"}),
+            Duration::from_secs(10),
+        )
+        .await
+        .expect("send to peer");
+    assert!(
+        matches!(
+            outcome,
+            netget::state::client_handles::ClientSendOutcome::Sent { bytes_sent } if bytes_sent > 0
+        ),
+        "expected Sent, got {outcome:?}"
+    );
+
+    // Proof it reached the wire: the client's manual rule parks the received
+    // data as a pending question carrying exactly those bytes. (The TCP client
+    // reports payloads hex-encoded, and earlier traffic may have parked its
+    // own questions, so scan for ours.)
+    let expected_hex = hex::encode("hello-from-server");
+    let mut delivered = false;
+    'outer: for _ in 0..200 {
+        for view in state.list_intercepts().await {
+            let payload = view.event_data.clone().unwrap_or_default().to_string();
+            if payload.contains("hello-from-server") || payload.contains(&expected_hex) {
+                delivered = true;
+                break 'outer;
+            }
+            // Not ours (e.g. the client's parked question about the earlier
+            // "pong"): answer it with nothing so the loop can surface the next
+            // event — exactly what the human does at the dashboard.
+            let _ = state.resolve_intercept(view.id, Vec::new()).await;
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert!(
+        delivered,
+        "the client should have received the server's message on the wire"
+    );
+
+    // The injected send shows in the server's request log too, under this
+    // connection.
+    let entries = state
+        .list_access_logs_for(Some(AccessLogOwner::Server(server_id.as_u32())), None)
+        .await;
+    assert!(
+        entries
+            .iter()
+            .any(|e| e.event_type == "injected_action" && e.connection_id == Some(conn.id)),
+        "the server's request log should record the peer message"
+    );
 }
 
 #[tokio::test]

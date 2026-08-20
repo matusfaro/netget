@@ -108,9 +108,15 @@ impl Modal {
                 }
             },
             Modal::TextEditor { editor, .. } => format!("Edit {}", editor.label),
-            Modal::Composer(composer) => {
-                format!("Send via client #{}", composer.client_id.as_u32())
-            }
+            Modal::Composer(composer) => match composer.target {
+                composer::ComposerTarget::Client(id) => {
+                    format!("Send a request — client #{}", id.as_u32())
+                }
+                composer::ComposerTarget::Peer { server, connection } => format!(
+                    "Message peer — connection #{connection} of server #{}",
+                    server.as_u32()
+                ),
+            },
             Modal::Routing(model) => match model.key {
                 UiKey::Server(id) => format!("Routing — server #{}", id.as_u32()),
                 UiKey::Client(id) => format!("Auto-reply rules — client #{}", id.as_u32()),

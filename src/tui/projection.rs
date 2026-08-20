@@ -19,6 +19,9 @@ pub struct ConnRow {
     pub bytes_received: u64,
     pub bytes_sent: u64,
     pub active: bool,
+    /// Whether this connection accepts injected actions ("message this
+    /// peer") — true only where the protocol registered a peer handle.
+    pub can_message: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -137,17 +140,17 @@ pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
 
     let mut server_rows = Vec::with_capacity(servers.len());
     for server in servers {
-        let mut conns: Vec<ConnRow> = server
-            .connections
-            .values()
-            .map(|c| ConnRow {
+        let mut conns: Vec<ConnRow> = Vec::with_capacity(server.connections.len());
+        for c in server.connections.values() {
+            conns.push(ConnRow {
                 id: c.id.as_u32(),
                 remote_addr: c.remote_addr.to_string(),
                 bytes_received: c.bytes_received,
                 bytes_sent: c.bytes_sent,
                 active: c.status == crate::state::server::ConnectionStatus::Active,
-            })
-            .collect();
+                can_message: state.has_peer_handle(server.id, c.id.as_u32()).await,
+            });
+        }
         conns.sort_by_key(|c| c.id);
 
         let task_count = tasks
@@ -212,6 +215,7 @@ pub async fn build_snapshot(state: &AppState) -> RailSnapshot {
                 bytes_received: c.bytes_received,
                 bytes_sent: c.bytes_sent,
                 active: c.status == ClientStatus::Connected,
+                can_message: false,
             }),
             history: client.connection_history.iter().cloned().collect(),
             requests: client_requests

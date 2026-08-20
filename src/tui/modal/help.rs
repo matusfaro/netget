@@ -36,22 +36,33 @@ pub fn help_lines() -> Vec<(Option<&'static str>, &'static str)> {
             "last rows of the rail — the protocol picker",
         ),
         (Some("[ edit config ]"), "under config — same as e"),
-        (Some("[ + add response ]"), "under routing — same as r"),
-        (Some("a route row"), "Enter edits that rule directly"),
+        (Some("[ + add handler ]"), "under handlers — same as r"),
+        (Some("a handler row"), "Enter edits that handler directly"),
         (
             Some("[ + connect a … ]"),
             "under a server's peers — same as c",
         ),
         (
+            Some("[ message this peer ]"),
+            "under a live connection, where the protocol permits",
+        ),
+        (
             Some("[ send a request ]"),
             "first row under a client — same as n",
         ),
-        (Some("[ stop … ]"), "last row of an instance — same as x"),
+        (
+            Some("[ disconnect ]"),
+            "hang up a client but keep it; [ connect ] redials",
+        ),
+        (
+            Some("[ stop / remove ]"),
+            "last row of an instance — immediate, same as x",
+        ),
         (
             Some("⚠ waiting for YOU"),
             "a MANUAL rule parked a request — Enter answers it",
         ),
-        (None, "Ways a rule can answer (routing / auto-reply)"),
+        (None, "Ways a handler can answer"),
         (Some("STATIC"), "fixed actions, no model call — cheapest"),
         (
             Some("SCRIPT"),
@@ -68,8 +79,11 @@ pub fn help_lines() -> Vec<(Option<&'static str>, &'static str)> {
         (None, "Instance shortcuts"),
         (Some("a"), "add: new server / client (protocol picker)"),
         (Some("e"), "edit the selected instance's config"),
-        (Some("r"), "edit routing (LLM / script / static handlers)"),
-        (Some("x"), "stop the selected instance (confirmed)"),
+        (Some("r"), "edit handlers (static / script / LLM / manual)"),
+        (
+            Some("x"),
+            "stop or remove the selected instance (immediate)",
+        ),
         (
             Some("c"),
             "on a server: connect a client of the same protocol",
