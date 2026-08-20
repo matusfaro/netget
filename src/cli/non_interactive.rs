@@ -474,6 +474,7 @@ pub async fn run_with_actions(
                         scheduled_tasks,
                         feedback_instructions,
                         llm.clone(),
+                        None, // status_tx: headless, drain to tracing
                     )
                     .await
                     {

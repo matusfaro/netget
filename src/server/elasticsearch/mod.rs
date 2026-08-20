@@ -288,10 +288,7 @@ async fn handle_elasticsearch_request_with_llm(
                 e
             );
 
-            let reason = format!(
-                "netget: {}",
-                crate::utils::truncate_for_log(&e.to_string(), 200)
-            );
+            let reason = crate::utils::WireFailure::classify(&e).prefixed_text();
             let error_response = serde_json::json!({
                 "error": {
                     "root_cause": [{

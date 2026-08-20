@@ -6,6 +6,7 @@
 
 // Shared plumbing: budget-checked LLM entry point used by every client protocol.
 // See the module docs for why clients need a hard call ceiling.
+pub mod command_support;
 pub mod llm_budget;
 
 // arp client

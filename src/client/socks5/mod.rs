@@ -200,11 +200,42 @@ impl Socks5Client {
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
         let task_registrar = app_state.clone();
+        // Command channel: lets the dashboard inject actions into this loop
+        // via AppState::send_to_client (see client/command_support.rs).
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
         let task_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 8192];
 
             loop {
-                match read_half.read(&mut buffer).await {
+                let read_result = tokio::select! {
+                    read = read_half.read(&mut buffer) => read,
+                    Some(cmd) = command_rx.recv() => {
+                        let disconnect = crate::client::command_support::handle_stream_client_command(
+                            &crate::client::socks5::actions::Socks5ClientProtocol,
+                            &write_half_arc,
+                            cmd,
+                            client_id,
+                            &app_state,
+                            &status_tx,
+                        )
+                        .await;
+                        if disconnect {
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Disconnected)
+                                .await;
+                            let _ = status_tx.send(format!(
+                                "[CLIENT] SOCKS5 client {} disconnected (injected action)",
+                                client_id
+                            ));
+                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                            break;
+                        }
+                        continue;
+                    }
+                };
+                match read_result {
                     Ok(0) => {
                         info!("SOCKS5 client {} disconnected", client_id);
                         app_state
@@ -322,6 +353,10 @@ impl Socks5Client {
                     }
                 }
             }
+        
+            // The loop owns the only receiver; dropping the registered handle
+            // makes later send_to_client calls fail fast instead of timing out.
+            app_state.remove_client_handle(client_id).await;
         });
         task_registrar
             .register_client_task(client_id, task_handle)

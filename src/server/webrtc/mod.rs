@@ -756,10 +756,13 @@ impl WebRtcServer {
             let signal: WebRtcSignal = match serde_json::from_str(&text) {
                 Ok(signal) => signal,
                 Err(e) => {
+                    // serde's message quotes the offending input and names internal types, so
+                    // it is logged rather than sent - see `crate::utils::wire_failure`.
+                    debug!("WebRTC signalling frame did not parse: {e}");
                     send_signal(
                         &out_tx,
                         &WebRtcSignal::Error {
-                            message: format!("malformed signalling frame: {}", e),
+                            message: "malformed signalling frame".to_string(),
                         },
                     );
                     continue;
@@ -832,10 +835,11 @@ impl WebRtcServer {
             let offer = match parse_offer(&sdp) {
                 Ok(offer) => offer,
                 Err(e) => {
+                    debug!("WebRTC SDP offer was unusable: {e}");
                     send_signal(
                         &out_tx,
                         &WebRtcSignal::Error {
-                            message: format!("unusable SDP offer: {}", e),
+                            message: "unusable SDP offer".to_string(),
                         },
                     );
                     continue;

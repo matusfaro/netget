@@ -293,7 +293,7 @@ async fn handle_npm_request(
             // HTTP connection continues.
             Log::new(Some(&status_tx)).warn(format!("NPM LLM call failed: {}", e));
             let error_response = json!({
-                "error": format!("LLM error: {}", e)
+                "error": crate::utils::WireFailure::classify(&e).text()
             });
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -304,13 +304,16 @@ async fn handle_npm_request(
     }
 }
 
-/// A 500 naming what was wrong with the model's answer.
+/// A 500 for an answer the model gave that this server cannot turn into a response.
 ///
 /// Every branch below used to `.unwrap()` on the field it needed. A missing field is
 /// the model's mistake, and `.unwrap()` inside a per-connection tokio task is the
 /// worst possible response to it: the panic is swallowed, the server keeps reporting
 /// `Running`, and the client hangs until its own timeout with nothing in the log
 /// connecting the two. An explicit 500 tells the client *and* the operator.
+///
+/// `reason` names action fields and this server's own expectations of them, so it goes
+/// to the operator only — the peer gets a category. See `crate::utils::wire_failure`.
 fn npm_server_error(
     status_tx: &mpsc::UnboundedSender<String>,
     reason: &str,
@@ -320,7 +323,7 @@ fn npm_server_error(
         .status(StatusCode::INTERNAL_SERVER_ERROR)
         .header("Content-Type", "application/json")
         .body(Full::new(Bytes::from(
-            json!({ "error": format!("netget: {}", reason) }).to_string(),
+            json!({ "error": crate::utils::WireFailure::Unavailable.prefixed_text() }).to_string(),
         )))
         .unwrap()
 }

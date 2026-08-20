@@ -342,15 +342,15 @@ async fn handle_saml_idp_request(
                 "LLM error for SAML IDP request (overload={}, status {}): {}",
                 overloaded, status, e
             ));
-            let reason =
-                crate::utils::truncate_for_log(&e.to_string(), 200).replace(['\r', '\n'], " ");
             build_safe_response(
                 status,
                 [(
                     "content-type".to_string(),
                     "text/plain; charset=utf-8".to_string(),
                 )],
-                format!("netget: {reason}"),
+                crate::utils::WireFailure::classify(&e)
+                    .prefixed_text()
+                    .to_string(),
             )
         }
     };

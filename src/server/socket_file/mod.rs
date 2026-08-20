@@ -461,7 +461,7 @@ impl SocketFileServer {
         }
 
         // Merge any queued data with new data
-        let all_data = {
+        let mut all_data = {
             let mut conns = connections.lock().await;
             let conn_data = conns.get_mut(&connection_id).unwrap();
             conn_data.state = ConnectionState::Processing;
@@ -637,10 +637,26 @@ impl SocketFileServer {
                     };
 
                     if has_queued {
-                        log.debug(format!(
-                            "Processing queued data for socket file connection {connection_id}"
-                        ));
-                        // Loop continues to process queued data
+                        // Take the queue and make it the next iteration's payload.
+                        // Leaving it in place re-sent the SAME bytes to the model on
+                        // every pass and never emptied the queue: one response per
+                        // iteration, forever, for a single line of input.
+                        let queued = {
+                            let mut conns = connections.lock().await;
+                            match conns.get_mut(&connection_id) {
+                                Some(conn) => std::mem::take(&mut conn.queued_data),
+                                None => return,
+                            }
+                        };
+                        if queued.is_empty() {
+                            connections
+                                .lock()
+                                .await
+                                .entry(connection_id)
+                                .and_modify(|conn| conn.state = ConnectionState::Idle);
+                            return;
+                        }
+                        all_data = Bytes::from(queued);
                     } else {
                         // Go to Idle state
                         connections

@@ -338,14 +338,15 @@ impl TelnetServer {
 /// in words, that the server could not answer - and to say so on its own line so it cannot be
 /// mistaken for the output of whatever they typed.
 ///
+/// The text is a category, never the error: see `crate::utils::wire_failure`. This is the
+/// path that put netget's own retry message on a stranger's terminal.
+///
 /// CRLF because a raw Telnet client is usually in a mode where a bare LF does not return the
 /// carriage, which would leave the message stair-stepping across the terminal.
 #[cfg(feature = "telnet")]
 fn telnet_failure_notice(err: &anyhow::Error) -> String {
-    let reason = crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
-    if crate::llm::is_overload_error(err) {
-        format!("\r\n[netget] backend at capacity, try again shortly ({reason})\r\n")
-    } else {
-        format!("\r\n[netget] cannot answer right now: {reason}\r\n")
-    }
+    format!(
+        "\r\n[netget] {}\r\n",
+        crate::utils::WireFailure::classify(err).text()
+    )
 }

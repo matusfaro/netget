@@ -239,8 +239,14 @@ pub struct AccessLogEntry {
     pub id: u64,
     /// Unix time in milliseconds when the entry was recorded
     pub unix_ms: u64,
-    /// Server that handled the request
-    pub server_id: u32,
+    /// Server that handled the request (absent on client-side entries).
+    /// Serialization skips `None`, so pre-existing server entries keep their
+    /// exact JSON shape for MCP consumers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_id: Option<u32>,
+    /// Client that produced/handled the event (absent on server-side entries)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<u32>,
     /// Protocol name (e.g. "http", "dns")
     pub protocol: String,
     /// Connection the request arrived on, if the protocol is connection-oriented
@@ -249,12 +255,35 @@ pub struct AccessLogEntry {
     pub event_type: String,
     /// The request: structured event data
     pub request: serde_json::Value,
-    /// The response: action JSON produced for this request
+    /// The response: action JSON produced for this request.
+    ///
+    /// Server entries record actions as executed (failures appear as
+    /// `FAILED: <action>` envelopes). Client entries record the actions the
+    /// handler/LLM *produced* — execution happens later inside the client's
+    /// connection loop, which does not report back here.
     pub response: Vec<serde_json::Value>,
 }
 
+impl AccessLogEntry {
+    /// Which instance this entry belongs to.
+    pub fn owner(&self) -> Option<AccessLogOwner> {
+        match (self.server_id, self.client_id) {
+            (Some(id), _) => Some(AccessLogOwner::Server(id)),
+            (None, Some(id)) => Some(AccessLogOwner::Client(id)),
+            (None, None) => None,
+        }
+    }
+}
+
+/// The instance an access-log entry belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessLogOwner {
+    Server(u32),
+    Client(u32),
+}
+
 /// Maximum number of access-log entries retained in memory (ring buffer).
-const ACCESS_LOG_CAPACITY: usize = 200;
+const ACCESS_LOG_CAPACITY: usize = 1000;
 
 /// One instance's accumulated feedback, taken out of its buffer for processing.
 ///
@@ -405,6 +434,19 @@ struct AppStateInner {
     /// See `crate::state::server_handles` for the full rationale and the wiring
     /// still needed in `src/llm/actions/`.
     server_handles: HashMap<ServerId, crate::state::server_handles::ServerHandle>,
+    /// Command channels into running clients' connection loops (the dashboard's
+    /// \[send\] button and any future programmatic client control). See
+    /// `crate::state::client_handles` for the design.
+    client_handles: HashMap<ClientId, crate::state::client_handles::ClientHandle>,
+    /// Events parked by a `manual` handler, waiting for a human to compose the
+    /// answer at the dashboard. See `crate::state::intercepts`.
+    pub(crate) pending_intercepts: Vec<crate::state::intercepts::PendingIntercept>,
+    /// Monotonic id source for [`Self::pending_intercepts`].
+    pub(crate) next_intercept_id: u64,
+    /// Command channels into individual server connections, for protocols that
+    /// adopted peer messaging (the dashboard's "message this peer"). Reuses the
+    /// client command types: a command is just {action, reply}.
+    peer_handles: HashMap<(ServerId, u32), crate::state::client_handles::ClientHandle>,
 }
 
 impl AppStateInner {
@@ -424,6 +466,9 @@ impl AppStateInner {
         }
         // A live-instance handle must never outlive the server it points at.
         self.server_handles.remove(&server_id);
+        // Dropping a peer handle closes its channel, which ends the per-peer
+        // command task.
+        self.peer_handles.retain(|(sid, _), _| *sid != server_id);
         self.drop_tasks_for_server(server_id);
 
         // Tear down any pipe touching this server (as source or sink), mirroring
@@ -559,6 +604,10 @@ impl AppState {
                 client_tasks: HashMap::new(),
                 server_tasks: HashMap::new(),
                 server_handles: HashMap::new(),
+                client_handles: HashMap::new(),
+                pending_intercepts: Vec::new(),
+                next_intercept_id: 1,
+                peer_handles: HashMap::new(),
             })),
         }
     }
@@ -798,6 +847,269 @@ impl AppState {
     /// Whether a server has registered a live-instance handle
     pub async fn has_server_handle(&self, id: ServerId) -> bool {
         self.inner.read().await.server_handles.contains_key(&id)
+    }
+
+    // ===== Manual-handler intercepts (see crate::state::intercepts) =====
+
+    /// Park an event for a human to answer. Returns the intercept id and the
+    /// receiver the dispatcher must await (under its own timeout).
+    pub async fn park_intercept(
+        &self,
+        owner: crate::state::intercepts::InterceptOwner,
+        connection_id: Option<u32>,
+        event_type: &str,
+        description: &str,
+        event_data: Option<serde_json::Value>,
+    ) -> (u64, tokio::sync::oneshot::Receiver<Vec<serde_json::Value>>) {
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let mut inner = self.inner.write().await;
+        let id = inner.next_intercept_id;
+        inner.next_intercept_id += 1;
+        inner.pending_intercepts.retain(|entry| !entry.is_dead());
+        inner
+            .pending_intercepts
+            .push(crate::state::intercepts::PendingIntercept {
+                id,
+                owner,
+                connection_id,
+                event_type: event_type.to_string(),
+                description: description.to_string(),
+                event_data,
+                created_unix_ms: crate::state::intercepts::now_unix_ms(),
+                reply_tx: Some(reply_tx),
+            });
+        (id, reply_rx)
+    }
+
+    /// Pending intercepts, oldest first, with dead entries pruned.
+    pub async fn list_intercepts(&self) -> Vec<crate::state::intercepts::InterceptView> {
+        let mut inner = self.inner.write().await;
+        inner.pending_intercepts.retain(|entry| !entry.is_dead());
+        inner.pending_intercepts.iter().map(|e| e.view()).collect()
+    }
+
+    /// Answer a parked event with the operator's actions.
+    ///
+    /// Errors if the intercept is gone — already answered, dismissed, or the
+    /// waiting dispatcher gave up (timeout / connection closed). The answer is
+    /// then NOT delivered anywhere; the peer has already received the
+    /// fail-closed reply.
+    pub async fn resolve_intercept(
+        &self,
+        id: u64,
+        actions: Vec<serde_json::Value>,
+    ) -> std::result::Result<(), String> {
+        let entry = {
+            let mut inner = self.inner.write().await;
+            let Some(index) = inner.pending_intercepts.iter().position(|e| e.id == id) else {
+                return Err(format!("request #{id} is no longer waiting"));
+            };
+            inner.pending_intercepts.remove(index)
+        };
+        let Some(tx) = entry.reply_tx else {
+            return Err(format!("request #{id} was already answered"));
+        };
+        tx.send(actions).map_err(|_| {
+            format!(
+                "request #{id} timed out before this answer — the peer already got the \
+                 fail-closed reply"
+            )
+        })
+    }
+
+    /// Refuse a parked event: the dispatcher sees "no answer" immediately and
+    /// takes the fail-closed path instead of waiting out its timeout.
+    pub async fn dismiss_intercept(&self, id: u64) -> bool {
+        let mut inner = self.inner.write().await;
+        let before = inner.pending_intercepts.len();
+        // Dropping the entry drops its sender, which wakes the dispatcher's
+        // `await` with RecvError.
+        inner.pending_intercepts.retain(|e| e.id != id);
+        inner.pending_intercepts.len() != before
+    }
+
+    /// Drop a parked entry without answering (the dispatcher cleans up after
+    /// its own timeout so the list never shows a question nobody is waiting on).
+    pub async fn remove_intercept(&self, id: u64) {
+        let mut inner = self.inner.write().await;
+        inner.pending_intercepts.retain(|e| e.id != id);
+    }
+
+    // ===== Peer command handles (message one server connection) =====
+
+    /// Register a command channel into one connection of a server. Only
+    /// protocols that adopted peer messaging call this; the dashboard offers
+    /// "message this peer" exactly where a handle exists.
+    pub async fn register_peer_handle(
+        &self,
+        server_id: ServerId,
+        connection_id: u32,
+        handle: crate::state::client_handles::ClientHandle,
+    ) {
+        let mut inner = self.inner.write().await;
+        if !inner.servers.contains_key(&server_id) {
+            return;
+        }
+        inner
+            .peer_handles
+            .insert((server_id, connection_id), handle);
+    }
+
+    /// Whether a connection accepts injected actions.
+    pub async fn has_peer_handle(&self, server_id: ServerId, connection_id: u32) -> bool {
+        self.inner
+            .read()
+            .await
+            .peer_handles
+            .contains_key(&(server_id, connection_id))
+    }
+
+    /// Drop a connection's command handle (the owning loop does this when the
+    /// connection closes).
+    pub async fn remove_peer_handle(&self, server_id: ServerId, connection_id: u32) {
+        self.inner
+            .write()
+            .await
+            .peer_handles
+            .remove(&(server_id, connection_id));
+    }
+
+    /// Execute one action inside a server connection's own task and wait for
+    /// the outcome. Same lock discipline as `send_to_client`: clone the handle
+    /// out, drop the guard, then await.
+    pub async fn send_to_peer(
+        &self,
+        server_id: ServerId,
+        connection_id: u32,
+        action: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<crate::state::client_handles::ClientSendOutcome> {
+        use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+
+        let handle = {
+            let inner = self.inner.read().await;
+            inner.peer_handles.get(&(server_id, connection_id)).cloned()
+        };
+        let Some(handle) = handle else {
+            anyhow::bail!(
+                "connection #{connection_id} on server #{} does not accept injected actions",
+                server_id.as_u32()
+            );
+        };
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let command = ClientCommand { action, reply_tx };
+        if handle.command_tx.try_send(command).is_err() {
+            // Full queue or a closed channel: either way the peer is not
+            // taking commands right now. Prune a dead entry so the UI stops
+            // offering it.
+            let mut inner = self.inner.write().await;
+            if let Some(entry) = inner.peer_handles.get(&(server_id, connection_id)) {
+                if entry.command_tx.is_closed() {
+                    inner.peer_handles.remove(&(server_id, connection_id));
+                    return Ok(ClientSendOutcome::Disconnected);
+                }
+            }
+            anyhow::bail!("connection #{connection_id} is busy — try again");
+        }
+        match tokio::time::timeout(timeout, reply_rx).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => Ok(ClientSendOutcome::Disconnected),
+            Err(_) => anyhow::bail!("no outcome within {}s", timeout.as_secs()),
+        }
+    }
+
+    // ===== Client command handles (see crate::state::client_handles) =====
+
+    /// Register the command channel for a running client. No-op if the client
+    /// row is already gone (raced with `stop_client`) — the caller's receiver
+    /// is then the only reference and sends fail cleanly.
+    pub async fn register_client_handle(
+        &self,
+        id: ClientId,
+        handle: crate::state::client_handles::ClientHandle,
+    ) {
+        let mut inner = self.inner.write().await;
+        if !inner.clients.contains_key(&id) {
+            return;
+        }
+        inner.client_handles.insert(id, handle);
+    }
+
+    /// The command handle for a client, if its loop registered one.
+    pub async fn client_handle(
+        &self,
+        id: ClientId,
+    ) -> Option<crate::state::client_handles::ClientHandle> {
+        self.inner.read().await.client_handles.get(&id).cloned()
+    }
+
+    /// Whether a running client accepts injected commands. The UI uses this to
+    /// grey out \[send\] for clients that have not adopted the channel.
+    pub async fn has_client_handle(&self, id: ClientId) -> bool {
+        self.inner.read().await.client_handles.contains_key(&id)
+    }
+
+    /// Drop a client's command handle (called by the loop on exit; also done
+    /// by `remove_client`).
+    pub async fn remove_client_handle(&self, id: ClientId) {
+        self.inner.write().await.client_handles.remove(&id);
+    }
+
+    /// Execute one action inside a running client's connection loop and wait
+    /// for the outcome.
+    ///
+    /// Lock discipline: the handle is cloned out under the read guard and the
+    /// guard dropped before any await on the channel.
+    pub async fn send_to_client(
+        &self,
+        id: ClientId,
+        action: serde_json::Value,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<crate::state::client_handles::ClientSendOutcome> {
+        use crate::state::client_handles::ClientCommand;
+
+        let handle = match self.client_handle(id).await {
+            Some(handle) => handle,
+            None => {
+                anyhow::bail!(
+                    "client #{} does not accept injected commands \
+                     (not running, or its protocol has not adopted the command channel)",
+                    id.as_u32()
+                )
+            }
+        };
+
+        let (reply_tx, reply_rx) = tokio::sync::oneshot::channel();
+        let command = ClientCommand { action, reply_tx };
+
+        // A full channel within the timeout means the loop is alive but busy;
+        // a closed channel means the loop exited.
+        match tokio::time::timeout(timeout, handle.command_tx.send(command)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => anyhow::bail!(
+                "client #{}'s connection loop is not running (channel closed)",
+                id.as_u32()
+            ),
+            Err(_) => anyhow::bail!(
+                "client #{} is busy (command queue full after {:?})",
+                id.as_u32(),
+                timeout
+            ),
+        }
+
+        match tokio::time::timeout(timeout, reply_rx).await {
+            Ok(Ok(outcome)) => outcome,
+            Ok(Err(_)) => anyhow::bail!(
+                "client #{}'s connection loop dropped the command without executing it \
+                 (loop shutting down)",
+                id.as_u32()
+            ),
+            Err(_) => anyhow::bail!(
+                "client #{} did not report an outcome within {:?}",
+                id.as_u32(),
+                timeout
+            ),
+        }
     }
 
     /// Number of background tasks currently tracked for a server
@@ -1402,6 +1714,21 @@ impl AppState {
             .await;
     }
 
+    /// Recently closed connections for a server, newest first. Empty when the
+    /// server does not exist.
+    pub async fn get_recent_connections(
+        &self,
+        server_id: ServerId,
+    ) -> Vec<super::server::ClosedConnectionSummary> {
+        self.inner
+            .read()
+            .await
+            .servers
+            .get(&server_id)
+            .map(|server| server.recent_connections.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     // ========== Proxy Filter Configuration Methods ==========
 
     /// Get proxy filter configuration for a server
@@ -1798,19 +2125,49 @@ impl AppState {
     /// keeps its socket open and keeps calling the LLM. Every handle registered via
     /// [`Self::register_client_task`] is therefore aborted explicitly here, which is
     /// what makes `stop_client` actually stop a client rather than just forgetting it.
+    /// Disconnect a client but KEEP its row, so it can be reconnected later.
+    ///
+    /// Aborts the connection tasks (which closes the socket), drops the command
+    /// handle, and marks the client Disconnected. Scheduled tasks and
+    /// configuration survive — this is "hang up", not "remove".
+    pub async fn disconnect_client(&self, id: ClientId) -> bool {
+        {
+            let mut inner = self.inner.write().await;
+            if !inner.clients.contains_key(&id) {
+                return false;
+            }
+            for handle in inner.client_tasks.remove(&id).unwrap_or_default() {
+                handle.abort();
+            }
+            inner.client_handles.remove(&id);
+        }
+        self.update_client_status(id, super::client::ClientStatus::Disconnected)
+            .await;
+        true
+    }
+
     pub async fn remove_client(&self, id: ClientId) -> Option<ClientInstance> {
-        let mut inner = self.inner.write().await;
-        let client = inner.clients.remove(&id);
-        inner.client_llm_calls.remove(&id);
+        let client = {
+            let mut inner = self.inner.write().await;
+            let client = inner.clients.remove(&id);
+            inner.client_llm_calls.remove(&id);
+            // A command handle must never outlive the client it points at.
+            inner.client_handles.remove(&id);
 
-        for handle in inner.client_tasks.remove(&id).unwrap_or_default() {
-            handle.abort();
-        }
+            for handle in inner.client_tasks.remove(&id).unwrap_or_default() {
+                handle.abort();
+            }
 
-        // Set mode to Idle if no more clients and no servers
-        if inner.clients.is_empty() && inner.servers.is_empty() {
-            inner.mode = Mode::Idle;
-        }
+            // Set mode to Idle if no more clients and no servers
+            if inner.clients.is_empty() && inner.servers.is_empty() {
+                inner.mode = Mode::Idle;
+            }
+
+            client
+        };
+        // Guard dropped above: resident-script teardown awaits child kills and
+        // must not run under the state lock.
+        crate::scripting::ResidentScriptManager::shutdown_client(id.as_u32()).await;
 
         client
     }
@@ -1922,6 +2279,7 @@ impl AppState {
     /// Update client status
     pub async fn update_client_status(&self, id: ClientId, status: super::client::ClientStatus) {
         if let Some(client) = self.inner.write().await.clients.get_mut(&id) {
+            client.record_status_transition(&status);
             client.status = status;
             client.status_changed_at = std::time::Instant::now();
         }
@@ -2595,19 +2953,24 @@ impl AppState {
     // ===== Access Log Methods =====
 
     /// Record a request/response access-log entry (ring buffer, oldest dropped past capacity).
+    /// Returns the assigned entry id.
     pub async fn record_access_log(
         &self,
-        server_id: u32,
+        owner: AccessLogOwner,
         protocol: &str,
         connection_id: Option<u32>,
         event_type: &str,
         request: serde_json::Value,
         response: Vec<serde_json::Value>,
-    ) {
+    ) -> u64 {
         let unix_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
+        let (server_id, client_id) = match owner {
+            AccessLogOwner::Server(id) => (Some(id), None),
+            AccessLogOwner::Client(id) => (None, Some(id)),
+        };
 
         let mut inner = self.inner.write().await;
         let id = inner.next_access_log_id;
@@ -2616,6 +2979,7 @@ impl AppState {
             id,
             unix_ms,
             server_id,
+            client_id,
             protocol: protocol.to_string(),
             connection_id,
             event_type: event_type.to_string(),
@@ -2625,14 +2989,32 @@ impl AppState {
         while inner.access_logs.len() > ACCESS_LOG_CAPACITY {
             inner.access_logs.pop_front();
         }
+        id
     }
 
     /// Return the most recent access-log entries, newest first (up to `limit`).
     /// Pass `None` for the full retained buffer.
     pub async fn list_access_logs(&self, limit: Option<usize>) -> Vec<AccessLogEntry> {
+        self.list_access_logs_for(None, limit).await
+    }
+
+    /// Return the most recent access-log entries for one instance (or all,
+    /// with `owner: None`), newest first (up to `limit`).
+    pub async fn list_access_logs_for(
+        &self,
+        owner: Option<AccessLogOwner>,
+        limit: Option<usize>,
+    ) -> Vec<AccessLogEntry> {
         let inner = self.inner.read().await;
         let take = limit.unwrap_or(ACCESS_LOG_CAPACITY);
-        inner.access_logs.iter().rev().take(take).cloned().collect()
+        inner
+            .access_logs
+            .iter()
+            .rev()
+            .filter(|entry| owner.is_none() || entry.owner() == owner)
+            .take(take)
+            .cloned()
+            .collect()
     }
 
     /// Look up a single access-log entry by id.

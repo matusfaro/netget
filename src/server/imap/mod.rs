@@ -602,17 +602,16 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
 /// would tell the client the command was carried out.
 #[cfg(feature = "imap")]
 fn imap_failure_code(err: &anyhow::Error) -> (&'static str, String) {
-    // Response text is a single line; a newline in the error would forge a second response.
-    let sanitized =
-        crate::utils::truncate::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
-    if crate::llm::is_overload_error(err) {
-        (
-            "UNAVAILABLE",
-            format!("netget: backend at capacity, retry later ({})", sanitized),
-        )
+    // The text is a category, never the error itself (`crate::utils::wire_failure`), which
+    // also makes it structurally impossible for a newline in an error to forge a second
+    // response line.
+    let failure = crate::utils::WireFailure::classify(err);
+    let code = if failure.is_overloaded() {
+        "UNAVAILABLE"
     } else {
-        ("SERVERBUG", format!("netget: {}", sanitized))
-    }
+        "SERVERBUG"
+    };
+    (code, failure.prefixed_text().to_string())
 }
 
 /// Does this payload contain the tagged `OK` completion for `tag`?

@@ -96,6 +96,18 @@ status_tx.send("[CLIENT] TCP client connected");      // → TUI
 - **Write Error**: Log, connection may close
 - **LLM Error**: Log, continue accepting data
 
+### Command channel (injected actions)
+
+The read loop carries a `tokio::select!` arm on a bounded command channel
+(`client/command_support.rs`), registered via
+`AppState::register_client_handle`. `AppState::send_to_client(client_id,
+action, timeout)` executes an action (`send_tcp_data`, `disconnect`,
+`wait_for_more`) inside the loop exactly as LLM-produced actions run — this is
+what the dashboard's [send] button calls, and it needs no LLM. Each injected
+action is recorded in the access log (owner = client, event
+`injected_action`). On loop exit the handle is dropped so later sends fail
+fast. E2E: `tests/client_handle_test.rs`.
+
 ## Limitations
 
 - **No TLS Support** - Raw TCP only (TLS could be added later)

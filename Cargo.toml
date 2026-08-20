@@ -629,8 +629,11 @@ libc = "0.2"
 # Vendored = compile from source, needed for Android/cross-compilation
 openssl-sys = { version = "0.9", optional = true, features = ["vendored"] }
 
-# Terminal UI - using crossterm for rolling terminal
+# Terminal UI - crossterm (rolling terminal) + ratatui (full-screen dashboard).
+# ratatui is pinned to 0.29: 0.30 moves to crossterm 0.29 and we pin crossterm 0.28.
 crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
+tui-textarea = "0.7"
 futures = "0.3"
 textwrap = "0.16"
 termbg = "0.5"  # Terminal background detection for adaptive theming

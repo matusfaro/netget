@@ -12,7 +12,7 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
-use tracing::{error, trace};
+use tracing::{debug, error, trace};
 
 #[cfg(feature = "etcd")]
 use crate::llm::action_helper::call_llm;
@@ -159,7 +159,10 @@ fn llm_failure(
          ({}); no key-value data is being invented.",
         method, e, status, name
     ));
-    GrpcFailure::new(status, format!("netget etcd: handler unavailable: {}", e))
+    GrpcFailure::new(
+        status,
+        crate::utils::WireFailure::classify(&e).prefixed_text(),
+    )
 }
 
 /// A failure to be reported to the client as a gRPC status rather than as a transport error.
@@ -171,8 +174,11 @@ struct GrpcFailure {
 
 #[cfg(feature = "etcd")]
 impl GrpcFailure {
-    fn new(status: i32, message: String) -> Self {
-        Self { status, message }
+    fn new(status: i32, message: impl Into<String>) -> Self {
+        Self {
+            status,
+            message: message.into(),
+        }
     }
 
     /// Map the `code` string of an `etcd_error` action onto a gRPC status code. etcd itself
@@ -197,26 +203,29 @@ impl From<anyhow::Error> for GrpcFailure {
         // Classify here too, not only at the explicit call sites: `?` on an anyhow error is
         // reachable from several places in this module and an overload must never be reported
         // as a non-retryable INTERNAL just because it took the implicit path.
+        //
+        // `grpc-message` is client-visible, so it carries the category and not the error -
+        // see `crate::utils::wire_failure`.
         let status = grpc_status_for_llm_failure(&e);
-        Self::new(status, e.to_string())
+        Self::new(status, crate::utils::WireFailure::classify(&e).text())
     }
 }
 
 #[cfg(feature = "etcd")]
 impl From<prost::DecodeError> for GrpcFailure {
     fn from(e: prost::DecodeError) -> Self {
-        // A body this server cannot decode is the client's malformed input, not a server bug.
-        Self::new(
-            GRPC_INVALID_ARGUMENT,
-            format!("could not decode request message: {}", e),
-        )
+        // A body this server cannot decode is the client's malformed input, not a server bug -
+        // but the decoder's own message is ours, so it is logged rather than sent.
+        debug!("etcd request message did not decode: {e}");
+        Self::new(GRPC_INVALID_ARGUMENT, "could not decode request message")
     }
 }
 
 #[cfg(feature = "etcd")]
 impl From<prost::EncodeError> for GrpcFailure {
     fn from(e: prost::EncodeError) -> Self {
-        Self::new(GRPC_INTERNAL, format!("could not encode response: {}", e))
+        debug!("etcd response encoding failed: {e}");
+        Self::new(GRPC_INTERNAL, "could not encode response")
     }
 }
 

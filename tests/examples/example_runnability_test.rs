@@ -316,13 +316,14 @@ fn try_run_script(
         } else {
             event_pattern.to_string()
         },
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 0,
             stack: proto.protocol_name().to_string(),
             memory: String::new(),
             instruction: String::new(),
-        },
+        }),
         connection: None,
         event,
     };

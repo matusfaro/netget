@@ -1937,6 +1937,20 @@ impl EventHandler {
                         })?;
                     EventHandlerType::static_response(actions.clone())
                 }
+                // A human answers each matched event at the dashboard; no answer
+                // within the timeout fails closed.
+                "manual" => {
+                    let timeout_secs = match handler_type_json.get("timeout_secs") {
+                        None => crate::scripting::DEFAULT_MANUAL_TIMEOUT_SECS,
+                        Some(v) => v.as_u64().filter(|t| *t > 0).ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "'timeout_secs' for a manual handler must be a positive integer \
+                                 number of seconds"
+                            )
+                        })?,
+                    };
+                    EventHandlerType::manual(timeout_secs)
+                }
                 _ => anyhow::bail!("Unknown handler type: {}", handler_type_str),
             };
 
@@ -2585,6 +2599,7 @@ impl EventHandler {
                             scheduled_tasks,
                             feedback_instructions,
                             self.llm.clone(),
+                            None, // status_tx: /load path, drain to tracing
                         )
                         .await
                         {

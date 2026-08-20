@@ -587,6 +587,8 @@ pub async fn start_server_from_action(
         feedback_instructions,
         feedback_buffer: Vec::new(),
         last_feedback_processed: None,
+        recent_connections: Default::default(),
+        connection_opened_at: Default::default(),
     };
 
     let server_id = state.add_server(server).await;

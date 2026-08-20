@@ -315,12 +315,25 @@ pub struct Args {
     )]
     pub theme: String,
 
-    /// Suppress ASCII art banner on startup
+    /// Show the generated ASCII art banner on startup (off by default)
+    ///
+    /// `--suppress-art` is kept as a hidden no-op so existing scripts and the
+    /// test harness keep working now that suppressing is the default.
     #[clap(
-        long = "suppress-art",
-        help = "Skip the Ollama-generated ASCII art banner on startup"
+        long = "show-art",
+        help = "Show the Ollama-generated ASCII art banner on startup (costs one model round trip)"
     )]
+    pub show_art: bool,
+
+    #[clap(long = "suppress-art", hide = true)]
     pub suppress_art: bool,
+
+    /// Use the legacy rolling-terminal TUI instead of the full-screen dashboard
+    #[clap(
+        long = "legacy-tui",
+        help = "Use the legacy rolling-terminal TUI (scrollback-based, no mouse) instead of the default full-screen dashboard"
+    )]
+    pub legacy_tui: bool,
 
     /// Maximum concurrent LLM requests (default: 1)
     #[clap(

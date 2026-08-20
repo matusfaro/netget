@@ -132,6 +132,8 @@ pub async fn save_server(state: &AppState, server_id: ServerId, filename: &str) 
         feedback_instructions: None,
         feedback_buffer: Vec::new(),
         last_feedback_processed: None,
+        recent_connections: Default::default(),
+        connection_opened_at: Default::default(),
     };
 
     let actions = vec![server_to_action(&server)];
@@ -170,6 +172,7 @@ pub async fn save_client(state: &AppState, client_id: ClientId, filename: &str) 
         feedback_instructions: None,
         feedback_buffer: Vec::new(),
         last_feedback_processed: None,
+        connection_history: Default::default(),
     };
 
     let actions = vec![client_to_action(&client)];

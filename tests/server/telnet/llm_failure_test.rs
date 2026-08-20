@@ -74,6 +74,30 @@ async fn test_telnet_writes_a_notice_when_llm_fails() -> E2EResult<()> {
         "the notice must not look like the echo the handler would have produced: {notice}"
     );
 
+    // The notice used to interpolate the error, so a plain telnet session printed
+    // `[netget] cannot answer right now: ✗  LLM failed to generate valid response after
+    // retries.` — netget's own retry machinery on a stranger's terminal. Nothing about how
+    // this server is built is the peer's to read; the detail belongs in the log and the TUI.
+    // See `tests/wire_failure_test.rs` and `src/utils/wire_failure.rs`.
+    for token in [
+        "✗",
+        "retries",
+        "LLM",
+        "llm",
+        "Ollama",
+        "ollama",
+        "http://",
+        "127.0.0.1",
+        "telnet_message_received",
+        "anyhow",
+        "Error(",
+    ] {
+        assert!(
+            !notice.contains(token),
+            "the notice leaked netget's internals to the peer ({token:?}): {notice}"
+        );
+    }
+
     server.verify_mocks().await?;
     server.stop().await?;
     Ok(())

@@ -478,7 +478,7 @@ async fn handle_login(
             ));
             Ok(json_200(error_envelope(
                 CODE_AUTH_UNAVAILABLE,
-                &format!("netget: authentication backend unavailable: {e}"),
+                crate::utils::WireFailure::classify(&e).prefixed_text(),
             )))
         }
     }
@@ -591,7 +591,7 @@ async fn handle_query(
             };
             Ok(json_200(error_envelope(
                 code,
-                &format!("netget: query backend unavailable: {e}"),
+                crate::utils::WireFailure::classify(&e).prefixed_text(),
             )))
         }
     }
@@ -670,7 +670,7 @@ async fn handle_session(
             Log::new(Some(&status_tx)).warn(format!("Snowflake session LLM error: {}", e));
             Ok(json_200(error_envelope(
                 CODE_INTERNAL,
-                &format!("netget: session backend unavailable: {e}"),
+                crate::utils::WireFailure::classify(&e).prefixed_text(),
             )))
         }
     }

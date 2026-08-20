@@ -307,7 +307,7 @@ async fn handle_tags_list_v2(
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(
                     json!({
-                        "error": format!("LLM error: {}", e)
+                        "error": crate::utils::WireFailure::classify(&e).text()
                     })
                     .to_string(),
                 )))
@@ -448,7 +448,7 @@ async fn handle_generate_v2(
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .header("Content-Type", "application/json")
                 .body(Full::new(Bytes::from(
-                    json!({"error": format!("LLM error: {}", e)}).to_string(),
+                    json!({"error": crate::utils::WireFailure::classify(&e).text()}).to_string(),
                 )))
                 .unwrap())
         }
@@ -586,7 +586,7 @@ async fn handle_chat_v2(
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(Full::new(Bytes::from(
-                    json!({"error": format!("LLM error: {}", e)}).to_string(),
+                    json!({"error": crate::utils::WireFailure::classify(&e).text()}).to_string(),
                 )))
                 .unwrap())
         }

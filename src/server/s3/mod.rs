@@ -247,7 +247,7 @@ async fn handle_s3_request_with_llm(
                 .header("Content-Type", "application/xml")
                 .body(Full::new(Bytes::from(build_error_xml(
                     "InternalError",
-                    &e.to_string(),
+                    crate::utils::WireFailure::classify(&e).text(),
                 ))))
                 .unwrap())
         }

@@ -212,19 +212,27 @@ impl JsonRpcMessage {
         if value.get("id").is_some() {
             match serde_json::from_value::<JsonRpcRequest>(value) {
                 Ok(req) => Ok(Self::Request(req)),
-                Err(e) => Err(JsonRpcError::custom(
-                    ErrorCode::InvalidRequest,
-                    format!("Failed to parse request: {}", e),
-                )),
+                Err(e) => {
+                    // serde's message quotes the payload and names our own Rust fields, so it
+                    // is logged rather than returned - see `crate::utils::wire_failure`.
+                    tracing::debug!("MCP request did not parse: {e}");
+                    Err(JsonRpcError::custom(
+                        ErrorCode::InvalidRequest,
+                        "Failed to parse request".to_string(),
+                    ))
+                }
             }
         } else {
             // Try parsing as notification (no id field)
             match serde_json::from_value::<JsonRpcNotification>(value) {
                 Ok(notif) => Ok(Self::Notification(notif)),
-                Err(e) => Err(JsonRpcError::custom(
-                    ErrorCode::InvalidRequest,
-                    format!("Failed to parse notification: {}", e),
-                )),
+                Err(e) => {
+                    tracing::debug!("MCP notification did not parse: {e}");
+                    Err(JsonRpcError::custom(
+                        ErrorCode::InvalidRequest,
+                        "Failed to parse notification".to_string(),
+                    ))
+                }
             }
         }
     }

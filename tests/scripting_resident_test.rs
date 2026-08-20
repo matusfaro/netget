@@ -38,13 +38,14 @@ fn make_input(
     });
     ScriptInput {
         event_type_id: event_type.to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: server_id,
             port: 9000,
             stack: "TCP".to_string(),
             memory: String::new(),
             instruction: String::new(),
-        },
+        }),
         connection,
         event,
     }

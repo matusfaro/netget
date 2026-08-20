@@ -237,7 +237,7 @@ async fn handle_openai_request(
                 .body(Full::new(Bytes::from(
                     json!({
                         "error": {
-                            "message": format!("Internal error: {}", e),
+                            "message": crate::utils::WireFailure::classify(&e).text(),
                             "type": "server_error",
                             "code": "internal_error"
                         }

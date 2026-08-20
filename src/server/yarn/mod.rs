@@ -270,13 +270,10 @@ async fn handle_yarn_request(
             };
             error!("LLM error for YARN request (status {}): {}", status, e);
             console_error!(status_tx, "YARN answering {} on LLM failure: {}", status, e);
-            let reason = format!(
-                "netget: {}",
-                crate::utils::truncate_for_log(&e.to_string(), 200)
-            );
+            let reason = crate::utils::WireFailure::classify(&e).prefixed_text();
             Ok(build_yarn_response(
                 status,
-                yarn_remote_exception(status, exception, &reason),
+                yarn_remote_exception(status, exception, reason),
                 None,
             ))
         }

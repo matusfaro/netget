@@ -186,7 +186,6 @@ impl ClientForm {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<ClientId> {
-        let _ = status_tx; // create logs via the client loop's own channel
         let remote_addr = self
             .remote_addr
             .clone()
@@ -208,6 +207,7 @@ impl ClientForm {
             self.scheduled_tasks,
             self.feedback_instructions,
             llm_client,
+            Some(status_tx),
         )
         .await
     }
@@ -547,6 +547,7 @@ pub async fn update_client(
             form.scheduled_tasks,
             feedback_instructions,
             llm_client,
+            Some(status_tx.clone()),
         )
         .await?;
 

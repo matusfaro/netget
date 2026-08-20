@@ -1484,12 +1484,7 @@ impl CassandraServer {
         } else {
             (CASSANDRA_ERROR_SERVER_ERROR, "Server error")
         };
-        let reason = crate::utils::truncate_for_log(&err.to_string(), 200);
-        let message = if overloaded {
-            format!("netget: backend at capacity, retry later: {reason}")
-        } else {
-            format!("netget: {reason}")
-        };
+        let message = crate::utils::WireFailure::classify(err).prefixed_text();
         Log::new(Some(status_tx)).warn(format!(
             "Cassandra connection {} answering {} with ERROR 0x{:04X} ({}): {}",
             connection_id, stage, code, label, message

@@ -443,7 +443,7 @@ impl QuicServer {
         // Merge any queued data with new data. The stream can disappear between
         // the state check above and this lock (peer reset, close_this_stream on
         // another task), so this must not unwrap.
-        let all_data = {
+        let mut all_data = {
             let mut streams_lock = streams.lock().await;
             let Some(stream_data) = streams_lock.get_mut(&stream_id) else {
                 debug!(
@@ -629,9 +629,26 @@ impl QuicServer {
                     };
 
                     if has_queued {
-                        Log::new(Some(&status_tx))
-                            .debug(format!("Processing queued data for stream {}", stream_id));
-                        // Loop continues to process queued data
+                        // Take the queue and make it the next iteration's payload.
+                        // Leaving it in place re-sent the SAME bytes to the model on
+                        // every pass and never emptied the queue: one response per
+                        // iteration, forever, for a single line of input.
+                        let queued = {
+                            let mut streams_lock = streams.lock().await;
+                            match streams_lock.get_mut(&stream_id) {
+                                Some(stream) => std::mem::take(&mut stream.queued_data),
+                                None => return,
+                            }
+                        };
+                        if queued.is_empty() {
+                            streams
+                                .lock()
+                                .await
+                                .entry(stream_id)
+                                .and_modify(|s| s.state = StreamState::Idle);
+                            return;
+                        }
+                        all_data = Bytes::from(queued);
                     } else {
                         // Go to Idle state
                         streams
