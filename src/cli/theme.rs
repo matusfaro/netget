@@ -45,7 +45,12 @@ impl ColorPalette {
         Self {
             error: Color::Red,
             warning: Color::Yellow,
-            info: Color::Blue,
+            // NOT ansi Blue: on a dark background that is the classic
+            // unreadable pair, and `info` is the dashboard's accent — field
+            // values, focused borders, buttons. 75 is a bright steel blue
+            // that stays legible on black (256-color, which every TERM the
+            // dashboard runs under supports).
+            info: Color::AnsiValue(75),
             debug: Color::Cyan,
             trace: Color::DarkGrey,
             reasoning: Color::Magenta,
@@ -90,7 +95,11 @@ impl ColorPalette {
         Self {
             error: Color::Red,
             warning: Color::DarkYellow,
-            info: Color::Blue,
+            // A mid-brightness 256-color blue that reads on both black and
+            // white; ansi Blue is near-invisible on dark terminals, and
+            // neutral is exactly the palette a dark terminal lands on when
+            // detection fails.
+            info: Color::AnsiValue(32),
             debug: Color::DarkCyan,
             trace: Color::Grey,
             reasoning: Color::Magenta,
@@ -132,7 +141,7 @@ pub fn detect_theme() -> Option<Theme> {
         // Apple Terminal is known to have issues with termbg
         if term_program == "Apple_Terminal" {
             debug!("Skipping theme detection on Apple Terminal (known issues)");
-            return None;
+            return theme_from_colorfgbg();
         }
     }
 
@@ -152,13 +161,32 @@ pub fn detect_theme() -> Option<Theme> {
         Ok(Ok(termbg::Theme::Dark)) => Some(Theme::Dark),
         Ok(Err(e)) => {
             debug!("Theme detection failed: {:?}", e);
-            None
+            theme_from_colorfgbg()
         }
         Err(_) => {
             debug!("Theme detection panicked");
-            None
+            theme_from_colorfgbg()
         }
     }
+}
+
+/// Second-chance detection from `$COLORFGBG` ("fg;bg", e.g. "15;0").
+///
+/// Terminals that don't answer the OSC query (or where we dare not send it,
+/// like Apple Terminal) often still export this. Falling back here is what
+/// keeps a dark terminal from landing on the neutral palette, whose blue is
+/// barely readable on black — the exact complaint this fixes.
+fn theme_from_colorfgbg() -> Option<Theme> {
+    let value = std::env::var("COLORFGBG").ok()?;
+    let bg = value.rsplit(';').next()?.trim().parse::<u8>().ok()?;
+    // ANSI 0-6 and 8 are dark backgrounds; 7 and 15 are light.
+    let theme = if bg == 7 || bg == 15 {
+        Theme::Light
+    } else {
+        Theme::Dark
+    };
+    debug!("Theme from COLORFGBG={value}: {theme:?}");
+    Some(theme)
 }
 
 /// Flush any pending input from stdin without blocking
