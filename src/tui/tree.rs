@@ -50,6 +50,9 @@ pub enum RowAction {
     /// Compose and send an action to one live server connection (only where
     /// the protocol registered a peer handle).
     MessagePeer(u32),
+    /// Close one live server connection from the server's side (same
+    /// availability as `MessagePeer`: it goes through the peer handle).
+    DisconnectPeer(u32),
     /// Hang up the client's connection but keep the row for a later connect.
     Disconnect,
     /// (Re)connect a disconnected client.
@@ -356,16 +359,18 @@ fn waiting_chip(count: usize) -> String {
     }
 }
 
-/// One high-visibility row per pending intercept, right under the instance.
+/// One high-visibility row per pending intercept, at `depth` (right under the
+/// instance, or under the peer it belongs to).
 fn push_intercepts(
     rows: &mut Vec<TreeRow>,
     key: UiKey,
     intercepts: &[crate::state::intercepts::InterceptView],
+    depth: u16,
 ) {
     for view in intercepts {
         rows.push(TreeRow::leaf(
             NodeId::Intercept(key, view.id),
-            1,
+            depth,
             format!(
                 "⚠ {} waiting for YOUR answer — Enter to respond",
                 view.event_type
@@ -404,8 +409,9 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
     }
 
     // Requests waiting for YOUR answer come first — they are the only rows in
-    // the whole tree where something is blocked on the human.
-    push_intercepts(&mut rows, key, &row.intercepts);
+    // the whole tree where something is blocked on the human. (The peer a
+    // question belongs to is flagged on its own row too, below.)
+    push_intercepts(&mut rows, key, &row.intercepts, 1);
 
     // Lifecycle next, at a fixed place. At the bottom it moved every time a
     // peer connected or a request arrived, so it was never where you left it.
@@ -489,7 +495,9 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
     // ---- peers, with each peer's requests beneath it ----
     let peers = NodeId::Peers(key);
     let peers_expanded = state.is_expanded(&peers);
-    let live = row.conns.len();
+    // A connection stays in the map for a while after it closes (until the
+    // closed-connection sweep moves it to `recent`); it is not live.
+    let live = row.conns.iter().filter(|c| c.active).count();
     rows.push(TreeRow::group(
         peers.clone(),
         1,
@@ -500,13 +508,27 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
     if peers_expanded {
         let mut peer_rows: Vec<TreeRow> = Vec::new();
         for conn in &row.conns {
+            // A peer whose request is parked for the human says so on its own
+            // row; the activatable question row is up under the instance.
+            let waiting = row
+                .intercepts
+                .iter()
+                .any(|v| v.connection_id == Some(conn.id));
             peer_rows.push(peer_with_requests(
                 key,
                 state,
                 Some(conn.id),
                 format!(
-                    "{}  ↓{} ↑{}",
-                    conn.remote_addr, conn.bytes_received, conn.bytes_sent
+                    "{}  ↓{} ↑{}{}{}",
+                    conn.remote_addr,
+                    conn.bytes_received,
+                    conn.bytes_sent,
+                    if conn.active { "" } else { "  (closed)" },
+                    if waiting {
+                        "  ⚠ waiting for your answer"
+                    } else {
+                        ""
+                    }
                 ),
                 if conn.active {
                     RowStyle::Good
@@ -516,15 +538,33 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
                 &row.requests,
                 &mut rows,
             ));
-            // Messaging one peer, where the protocol permits it: the row sits
-            // with the peer's own traffic, since that is where the send lands.
-            if conn.can_message && state.is_expanded(&NodeId::Peer(key, Some(conn.id))) {
-                rows.push(action_row(
-                    key,
-                    RowAction::MessagePeer(conn.id),
-                    3,
-                    "[ message this peer ]",
-                ));
+            // Verbs only on a live peer: there is nothing to message or hang
+            // up once it has closed.
+            if conn.active && state.is_expanded(&NodeId::Peer(key, Some(conn.id))) {
+                // What the server can do to this peer, where the protocol
+                // permits it (a registered peer handle): the rows sit with the
+                // peer's own traffic, since that is where a send lands.
+                if conn.can_message {
+                    rows.push(action_row(
+                        key,
+                        RowAction::MessagePeer(conn.id),
+                        3,
+                        "[ message this peer ]",
+                    ));
+                    rows.push(action_row(
+                        key,
+                        RowAction::DisconnectPeer(conn.id),
+                        3,
+                        "[ disconnect this peer ]",
+                    ));
+                } else {
+                    rows.push(disabled_row(
+                        key,
+                        RowAction::MessagePeer(conn.id),
+                        3,
+                        "(this protocol cannot message or disconnect a peer from here yet)",
+                    ));
+                }
             }
         }
         for closed in &row.recent {
@@ -771,7 +811,7 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         return rows;
     }
 
-    push_intercepts(&mut rows, key, &row.intercepts);
+    push_intercepts(&mut rows, key, &row.intercepts, 1);
 
     // Lifecycle first, at a fixed place — see the server's note. Hang up and
     // reconnect keep the instance; remove takes it away entirely.

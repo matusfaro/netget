@@ -79,9 +79,10 @@ pub enum ModalAction {
     /// Show the Wireshark command for the instance the form describes — before
     /// it exists, so the capture can be running when it starts.
     FormWireshark,
-    /// Compose the response actions for a pending intercept.
+    /// Open the composer on the pending intercept: pick an action, fill its
+    /// fields, send — that answers it.
     InterceptCompose,
-    /// Deliver the composed answer to the waiting connection.
+    /// Answer with zero actions: acknowledge, send nothing.
     InterceptSend,
     /// Refuse the request: the peer gets the fail-closed reply now.
     InterceptDismiss,
@@ -91,7 +92,7 @@ pub enum ModalAction {
     ComposerRaw,
     /// Back out of the composer's field form to the action list.
     ComposerBack,
-    /// Accept the text editor's content (same as Ctrl-S).
+    /// Accept the text editor's content.
     EditorAccept,
     /// Discard the text editor's content (same as Esc).
     EditorCancel,
@@ -116,8 +117,8 @@ impl ModalAction {
             ModalAction::FormApply => "[ Apply ]",
             ModalAction::FormCancel => "[ Cancel ]",
             ModalAction::FormWireshark => "[ View in Wireshark ]",
-            ModalAction::InterceptCompose => "[ Compose actions… ]",
-            ModalAction::InterceptSend => "[ Send response ]",
+            ModalAction::InterceptCompose => "[ Compose answer… ]",
+            ModalAction::InterceptSend => "[ Answer with nothing ]",
             ModalAction::InterceptDismiss => "[ Fail closed ]",
             ModalAction::ComposerSend => "[ Send ]",
             ModalAction::ComposerRaw => "[ Raw JSON ]",

@@ -169,6 +169,9 @@ impl Modal {
                     "Message peer — connection #{connection} of server #{}",
                     server.as_u32()
                 ),
+                composer::ComposerTarget::Intercept { id, .. } => {
+                    format!("Answer request #{id} — pick what to send")
+                }
             },
             Modal::Routing(model) => match model.key {
                 UiKey::Server(id) => format!("Routing — server #{}", id.as_u32()),
@@ -204,17 +207,23 @@ impl Modal {
                 } else if form.editing.is_some() {
                     "type to edit · Enter accept · Esc cancel field"
                 } else {
-                    "↑/↓ field · Enter edit · Ctrl-S apply · Esc cancel"
+                    "↑/↓ field · Enter edit · Tab → buttons · Esc cancel"
                 }
             }
-            Modal::TextEditor { .. } => "Ctrl-S accept · Esc cancel",
+            Modal::TextEditor { editor, .. } => {
+                if editor.focused_button.is_some() {
+                    "Tab next button · Enter press · type to go back to the text"
+                } else {
+                    "Tab → buttons · Esc cancel"
+                }
+            }
             Modal::Composer(composer) => {
                 if composer.busy {
                     "sending…"
                 } else if composer.editing.is_some() {
                     "type to edit · Enter accept · Esc cancel field"
                 } else if composer.chosen.is_some() {
-                    "↑/↓ field · Enter edit · Ctrl-J raw JSON · Ctrl-S send · Esc back"
+                    "↑/↓ field · Enter edit (Space flips a checkbox) · Tab → buttons · Esc back"
                 } else {
                     "↑/↓ action · Enter choose · Esc cancel"
                 }

@@ -10,6 +10,7 @@ use crate::llm::actions::ActionDefinition;
 use crate::state::app_state::AppState;
 use crate::state::client_handles::ClientSendOutcome;
 use crate::state::{ClientId, ServerId};
+use crate::tui::app::UiKey;
 
 /// What the composed action is delivered to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,6 +20,10 @@ pub enum ComposerTarget {
     /// One live connection of a server (`AppState::send_to_peer`) — offered
     /// only where the protocol registered a peer handle.
     Peer { server: ServerId, connection: u32 },
+    /// A request a `manual` rule parked (`AppState::resolve_intercept`): the
+    /// composed action *is* the answer, and the waiting dispatcher — not the
+    /// composer — puts it on the wire.
+    Intercept { id: u64, owner: UiKey },
 }
 
 impl ComposerTarget {
@@ -30,6 +35,25 @@ impl ComposerTarget {
                 "peer (connection #{connection} of server #{})",
                 server.as_u32()
             ),
+            ComposerTarget::Intercept { id, .. } => format!("request #{id}"),
+        }
+    }
+}
+
+/// How a parameter is edited. Everything is text on the wire; this only
+/// decides the control — a boolean is a toggle, not a word you have to spell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    Text,
+    Bool,
+}
+
+impl FieldKind {
+    fn from_type_hint(hint: &str) -> Self {
+        if hint.to_ascii_lowercase().contains("bool") {
+            FieldKind::Bool
+        } else {
+            FieldKind::Text
         }
     }
 }
@@ -50,6 +74,19 @@ pub struct ComposerField {
     pub placeholder: String,
     pub help: String,
     pub required: bool,
+    pub kind: FieldKind,
+}
+
+impl ComposerField {
+    /// Flip a boolean field. Empty (unset) reads as false, so the first press
+    /// turns it on.
+    pub fn toggle(&mut self) {
+        self.value = if self.value.trim() == "true" {
+            "false".to_string()
+        } else {
+            "true".to_string()
+        };
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +127,17 @@ impl ComposerModel {
             protocol,
             actions,
         )
+    }
+
+    /// Compose the answer to a parked request. The vocabulary is whatever the
+    /// owning protocol can execute for that event.
+    pub fn for_intercept(
+        id: u64,
+        owner: UiKey,
+        protocol: &str,
+        actions: Vec<ActionDefinition>,
+    ) -> Self {
+        Self::for_target(ComposerTarget::Intercept { id, owner }, protocol, actions)
     }
 
     fn for_target(target: ComposerTarget, protocol: &str, actions: Vec<ActionDefinition>) -> Self {
@@ -208,6 +256,7 @@ impl ComposerModel {
                     },
                     help: format!("{} ({})", param.description, param.type_hint),
                     required: param.required,
+                    kind: FieldKind::from_type_hint(&param.type_hint),
                 }
             })
             .collect();
@@ -236,10 +285,35 @@ impl ComposerModel {
         }
     }
 
+    /// The selected field, if any.
+    pub fn selected_field(&self) -> Option<&ComposerField> {
+        self.fields.get(self.selected)
+    }
+
+    /// Start editing the selected field — or, for a boolean, just flip it.
     pub fn begin_edit(&mut self) {
-        if let Some(field) = self.fields.get(self.selected) {
-            self.editing = Some(field.value.clone());
+        if let Some(field) = self.fields.get_mut(self.selected) {
+            if field.kind == FieldKind::Bool {
+                field.toggle();
+            } else {
+                self.editing = Some(field.value.clone());
+            }
         }
+    }
+
+    /// Everything the raw-JSON view can hold. For an intercept the answer is
+    /// a *list* of actions, so a JSON array is accepted there; elsewhere the
+    /// composer sends exactly one action.
+    pub fn build_answer(&self) -> Result<Vec<serde_json::Value>> {
+        if let Some(raw) = &self.raw_json {
+            let value: serde_json::Value = serde_json::from_str(raw)
+                .map_err(|e| anyhow::anyhow!("action JSON is invalid: {e}"))?;
+            return Ok(match value {
+                serde_json::Value::Array(items) => items,
+                other => vec![other],
+            });
+        }
+        Ok(vec![self.build_action()?])
     }
 
     pub fn commit_edit(&mut self) {
@@ -308,6 +382,15 @@ impl ComposerModel {
                     .send_to_peer(server, connection, action, SEND_TIMEOUT)
                     .await
             }
+            // Resolving is a channel send under a short lock; the waiting
+            // dispatcher does the wire work and reports in the access log.
+            ComposerTarget::Intercept { id, .. } => state
+                .resolve_intercept(id, vec![action])
+                .await
+                .map(|()| ClientSendOutcome::Executed {
+                    detail: "answered".to_string(),
+                })
+                .map_err(|e| anyhow::anyhow!(e)),
         }
     }
 
@@ -322,6 +405,7 @@ impl ComposerModel {
             ComposerTarget::Peer { server, .. } => {
                 crate::state::intercepts::InterceptOwner::Server(server)
             }
+            ComposerTarget::Intercept { .. } => return None,
         };
         let waiting = state
             .list_intercepts()

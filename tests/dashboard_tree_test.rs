@@ -151,9 +151,12 @@ fn requests_nest_under_the_peer_that_carried_them() {
     assert!(peers[0].contains("· 2 req"), "peer 1 has two: {peers:?}");
     assert!(peers[1].contains("· 1 req"), "peer 2 has one: {peers:?}");
 
-    // The request rows under the first peer are its own, not peer 2's.
+    // The request rows under the first peer are its own, not peer 2's. (The
+    // peer's own verb rows — message / disconnect, or the note that the
+    // protocol offers neither — sit there too and are not requests.)
     let under_first: Vec<&str> = subtree(under_peers, "127.0.0.1:40001")
         .iter()
+        .filter(|r| !matches!(r.node, NodeId::Action(..)))
         .map(|r| r.label.as_str())
         .collect();
     assert_eq!(under_first.len(), 2, "{under_first:?}");
@@ -182,7 +185,10 @@ fn a_long_list_is_capped_and_the_cap_can_be_lifted() {
 
     let mut state = TreeState::default();
     let rows = tree::server_rows(&row, &state);
-    let shown = rows.iter().filter(|r| r.depth == 3).count();
+    let shown = rows
+        .iter()
+        .filter(|r| r.depth == 3 && !matches!(r.node, NodeId::Action(..)))
+        .count();
     assert_eq!(shown, CHILD_LIMIT + 1, "capped list plus the '… more' row");
     assert!(
         rows.iter()
@@ -200,7 +206,12 @@ fn a_long_list_is_capped_and_the_cap_can_be_lifted() {
     let peer = NodeId::Peer(UiKey::Server(ServerId::new(1)), Some(1));
     state.show_all(&peer);
     let rows = tree::server_rows(&row, &state);
-    assert_eq!(rows.iter().filter(|r| r.depth == 3).count(), total);
+    assert_eq!(
+        rows.iter()
+            .filter(|r| r.depth == 3 && !matches!(r.node, NodeId::Action(..)))
+            .count(),
+        total
+    );
     assert!(!rows.iter().any(|r| r.label.starts_with("… ")));
 }
 
@@ -663,10 +674,20 @@ fn client_verbs_and_peer_messaging_follow_state() {
         rows.iter().map(|r| &r.label).collect::<Vec<_>>()
     );
 
-    // And one that did not, does not.
+    // A handle also brings the server-side hang-up.
+    assert!(rows
+        .iter()
+        .any(|r| r.node == NodeId::Action(server_key, RowAction::DisconnectPeer(1))));
+
+    // One that did not register a handle gets neither verb — only a dim row
+    // saying why, so the missing control does not read as a missing feature.
     let srow = server(vec![conn(1)], vec![]);
     let rows = tree::server_rows(&srow, &TreeState::default());
-    assert!(!rows
+    assert!(!rows.iter().any(|r| matches!(
+        r.node,
+        NodeId::Action(_, RowAction::MessagePeer(_) | RowAction::DisconnectPeer(_))
+    ) && r.style == tree::RowStyle::Button));
+    assert!(rows
         .iter()
-        .any(|r| matches!(r.node, NodeId::Action(_, RowAction::MessagePeer(_)))));
+        .any(|r| r.style == tree::RowStyle::Dim && r.label.contains("cannot message")));
 }

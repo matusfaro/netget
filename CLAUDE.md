@@ -28,9 +28,32 @@ drift. A client's own protocol verbs are inlined as rows too (telnet's `[ send_c
 `projection::is_initiable_action` keeps response-only verbs (`wait_for_more`) and duplicates of
 the lifecycle rows (`disconnect`) out of that list, while `n` still opens the full vocabulary.
 
+A server's live peer gets the same treatment where the protocol registered a peer handle
+(`server/peer_support.rs`; `tcp` and `telnet` have): `[ message this peer ]` opens the composer
+on the server's wire verbs, `[ disconnect this peer ]` runs its `close_connection` through the
+same handle (half-close + marked closed at once, because a peer that never reads — our own
+client parked on a manual question — would otherwise leave the row "live" after you hung up).
+A protocol without a handle shows one dim row saying so instead of nothing. A peer whose request
+is parked for you is flagged `⚠ waiting for your answer` on its own row; the activatable question
+row stays first under the instance.
+
 `config` and `handlers` are **collapsed by default** — settings, not traffic; `peers` is open.
-The keyboard shortcuts still work (`a` add, `e` config, `r` handlers, `c` connect a client,
-`n` compose, `x` stop/remove, F1 help), but nothing depends on knowing them.
+The letter shortcuts still work (`a` add, `e` config, `r` handlers, `c` connect a client,
+`n` compose, `x` stop/remove, F1 help), but nothing depends on knowing them — and **no modal
+requires a chord**. Every button is a Tab stop: in the text editor Tab leaves the text for
+`[ Accept ]` / `[ Cancel ]` (it used to insert a tab, leaving Ctrl-S as the only way out); the
+form, composer and routing editors have no Ctrl-S/Ctrl-J bindings any more, only their buttons.
+
+**Answering a parked request is the composer, not a JSON box.** The intercept modal offers three
+things: `[ Compose answer… ]` opens `ComposerModel::for_intercept` — pick one of the protocol's
+actions from a list, fill its parameters as fields (a `bool` parameter is a checkbox: Enter or
+Space flips it), Send resolves the intercept and closes both modals; `[ Answer with nothing ]`
+resolves with zero actions (acknowledge, say nothing — a real answer, distinct from a timeout);
+`[ Fail closed ]` refuses. Raw JSON is still one button away inside the composer, and for an
+intercept it accepts an array so a multi-action answer is possible; it is never the starting
+point. The earlier "Compose actions… (JSON editor) + Send response" pair was the reported
+confusion: two buttons whose difference was invisible, and a free-form JSON field nobody could
+fill.
 
 Stopping is immediate: only the bulk actions (stop all, quit) still confirm.
 
@@ -780,6 +803,18 @@ Read before assuming a subsystem is sound:
   because `tests/helpers/netget.rs` passes `--llm-max-concurrent 1000` to every E2E test, so
   the shipped value was exercised by no test at all; `tests/llm_concurrency_default_test.rs`
   now runs with the flag omitted entirely.
+- **The 10-second idle sweep is for connectionless protocols only — declare it.**
+  `AppState::cleanup_old_connections` (ticked by the TUI and the MCP loop) evicts any connection
+  whose `last_activity` is older than 10s. It exists for UDP/raw/link-level servers, whose
+  per-remote-address entries nothing ever closes. It used to run over **every** server, so any
+  idle TCP-style connection — a telnet peer parked >10s for a human's manual answer, a BGP
+  session between keepalives — was removed from state and drawn as `(closed)` while its socket
+  was alive, and every later stat update and the real close targeted an entry that was gone.
+  It now runs only where `ProtocolMetadataV2::connectionless` is set (`.connectionless()` on the
+  builder; the 22 UDP/raw servers declare it). A new connectionless protocol that forgets the
+  flag leaks idle entries until its server stops — mild; the old default was the dangerous one.
+  Connection-oriented servers should still call `update_connection_stats` on every read and
+  write: it is what the rail's `↓/↑` counters and connection-scoped task prompts read.
 - Per-connection tasks are untracked, so `stop_server` does not cancel in-flight connections.
 - `AppState` is one global `RwLock` over everything — a throughput ceiling, not a deadlock.
 - ~50 of the 63 root markdown files are one-off session/status reports last touched in 2025.

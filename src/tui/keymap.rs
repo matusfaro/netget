@@ -393,6 +393,11 @@ async fn activate_row(
                     open_peer_composer(app, id, conn_id, state);
                 }
             }
+            RowAction::DisconnectPeer(conn_id) => {
+                if let UiKey::Server(id) = k {
+                    disconnect_peer(app, id, conn_id, state);
+                }
+            }
             RowAction::Disconnect => {
                 if let UiKey::Client(id) = k {
                     disconnect_client(app, id, state).await;
@@ -456,7 +461,6 @@ fn open_intercept(app: &mut DashboardApp, key: UiKey, intercept_id: u64, state: 
         event_type: view.event_type,
         description: view.description,
         event_data: view.event_data,
-        actions: Vec::new(),
         vocabulary,
         error: None,
         focused: 0,
@@ -790,6 +794,45 @@ fn open_peer_composer(
         ))));
 }
 
+/// Close one live server connection from the server's side.
+///
+/// Goes through the peer handle with the protocol's own `close_connection`
+/// action, so it is available exactly where `[ message this peer ]` is and
+/// runs the same teardown the model's close would. Immediate, like the
+/// client's `[ disconnect ]`: only the bulk actions confirm.
+fn disconnect_peer(
+    app: &mut DashboardApp,
+    server_id: crate::state::ServerId,
+    connection_id: u32,
+    state: &AppState,
+) {
+    use crate::tui::modal::composer::{ComposerModel, ComposerTarget};
+    let target = ComposerTarget::Peer {
+        server: server_id,
+        connection: connection_id,
+    };
+    app.push_system(format!("{}: disconnecting…", target.describe()));
+    let ui_tx = app.ui_tx.clone();
+    let state = state.clone();
+    tokio::spawn(async move {
+        let message = match ComposerModel::deliver(
+            target,
+            &state,
+            serde_json::json!({"type": "close_connection"}),
+        )
+        .await
+        {
+            Ok(outcome) => format!(
+                "{}: {}",
+                target.describe(),
+                crate::tui::modal::composer::describe(&outcome)
+            ),
+            Err(e) => e.to_string(),
+        };
+        let _ = ui_tx.send(UiMsg::Chat(message));
+    });
+}
+
 /// Open the send composer for a client.
 ///
 /// `action_index` selects one of the protocol's actions up front — that is
@@ -976,7 +1019,7 @@ async fn handle_picker_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSta
             // defaulted, such as a client's remote address.
             if let Some(missing) = missing {
                 model.error = Some(format!(
-                    "{protocol} needs {missing} before it can start — fill it in and press Ctrl-S"
+                    "{protocol} needs {missing} before it can start — fill it in and press [ Apply ]"
                 ));
                 app.modals.push(Modal::Form(Box::new(model)));
                 return Outcome::Continue;
@@ -1066,9 +1109,6 @@ async fn handle_form_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState
                 form.begin_edit();
             }
         }
-        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
-            return run_form_action(app, crate::tui::hit::ModalAction::FormApply, state).await;
-        }
         // Typing on a selected field edits it, starting with the character
         // just typed. Requiring Enter first made every field a two-step, and
         // nothing else here wants bare letters.
@@ -1157,8 +1197,14 @@ async fn run_form_action(
     Outcome::Continue
 }
 
+/// The text editor: Tab leaves the text for the `[ Accept ]` / `[ Cancel ]`
+/// buttons (and cycles back), Enter presses the focused one, and typing
+/// returns to the text. Tab used to insert a tab character here, which left
+/// a chord as the only way to accept — the one thing the buttons exist to
+/// avoid. Indentation inside the editor is the spacebar's job.
 fn handle_text_editor_key(app: &mut DashboardApp, key: KeyEvent) -> Outcome {
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    use crate::tui::hit::ModalAction;
+
     let Some(Modal::TextEditor { editor, .. }) = app.modals.last_mut() else {
         return Outcome::Continue;
     };
@@ -1167,16 +1213,27 @@ fn handle_text_editor_key(app: &mut DashboardApp, key: KeyEvent) -> Outcome {
         KeyCode::Esc => {
             app.modals.pop();
         }
-        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => text_editor_accept(app),
+        KeyCode::Tab => editor.cycle_focus(false),
+        KeyCode::BackTab => editor.cycle_focus(true),
+        KeyCode::Enter | KeyCode::Char(' ') if editor.focused_action().is_some() => {
+            match editor.focused_action() {
+                Some(ModalAction::EditorAccept) => text_editor_accept(app),
+                Some(ModalAction::EditorCancel) => {
+                    app.modals.pop();
+                }
+                _ => {}
+            }
+        }
         _ => {
+            editor.focused_button = None;
             editor.textarea.input(tui_textarea::Input::from(key));
         }
     }
     Outcome::Continue
 }
 
-/// Accept the text editor's content into whatever opened it. Shared by Ctrl-S
-/// and the clickable `[ Accept ]` button so the two cannot diverge.
+/// Accept the text editor's content into whatever opened it. Shared by the
+/// focused and the clicked `[ Accept ]` button so the two cannot diverge.
 fn text_editor_accept(app: &mut DashboardApp) {
     use crate::tui::modal::form::FieldTarget;
 
@@ -1212,15 +1269,6 @@ fn text_editor_accept(app: &mut DashboardApp) {
                 }
             }
         }
-        // Opened from the intercept modal: the composed answer.
-        Some(Modal::Intercept(model)) => match serde_json::from_str::<serde_json::Value>(&text) {
-            Ok(serde_json::Value::Array(actions)) => {
-                model.actions = actions;
-                model.error = None;
-            }
-            Ok(_) => model.error = Some("the answer must be a JSON array of actions".into()),
-            Err(e) => model.error = Some(format!("invalid JSON: {e}")),
-        },
         _ => {}
     }
 }
@@ -1273,17 +1321,26 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
                 composer.choose();
             }
         }
-        KeyCode::Char('j') | KeyCode::Char('J') if ctrl => composer.toggle_raw_json(),
-        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
-            return run_composer_action(app, crate::tui::hit::ModalAction::ComposerSend, state)
-                .await;
+        // Space flips a boolean field, like a checkbox.
+        KeyCode::Char(' ')
+            if composer.chosen.is_some()
+                && composer.raw_json.is_none()
+                && composer.focused_button.is_none()
+                && composer
+                    .selected_field()
+                    .is_some_and(|f| f.kind == crate::tui::modal::composer::FieldKind::Bool) =>
+        {
+            composer.begin_edit();
         }
         // Typing on a parameter field edits it (see the form's note).
         KeyCode::Char(c)
             if !ctrl
                 && composer.chosen.is_some()
                 && composer.raw_json.is_none()
-                && composer.focused_button.is_none() =>
+                && composer.focused_button.is_none()
+                && composer
+                    .selected_field()
+                    .is_some_and(|f| f.kind == crate::tui::modal::composer::FieldKind::Text) =>
         {
             composer.begin_edit();
             if let Some(buffer) = composer.editing.as_mut() {
@@ -1293,7 +1350,10 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
         KeyCode::Backspace
             if composer.chosen.is_some()
                 && composer.raw_json.is_none()
-                && composer.focused_button.is_none() =>
+                && composer.focused_button.is_none()
+                && composer
+                    .selected_field()
+                    .is_some_and(|f| f.kind == crate::tui::modal::composer::FieldKind::Text) =>
         {
             composer.begin_edit();
             if let Some(buffer) = composer.editing.as_mut() {
@@ -1321,7 +1381,43 @@ async fn run_composer_action(
         ModalAction::ComposerBack => composer.back_to_actions(),
         ModalAction::ComposerRaw => composer.toggle_raw_json(),
         ModalAction::ComposerSend => {
-            use crate::tui::modal::composer::ComposerModel;
+            use crate::tui::modal::composer::{ComposerModel, ComposerTarget};
+
+            // Answering a parked request: resolving is a channel send under a
+            // short lock, so it happens inline, and both the composer and the
+            // question it answered close together.
+            if let ComposerTarget::Intercept { id, .. } = composer.target {
+                let actions = match composer.build_answer() {
+                    Ok(actions) => actions,
+                    Err(e) => {
+                        composer.error = Some(e.to_string());
+                        return Outcome::Continue;
+                    }
+                };
+                let names: Vec<String> = actions
+                    .iter()
+                    .map(|a| {
+                        a.get("type")
+                            .and_then(|t| t.as_str())
+                            .unwrap_or("(no type)")
+                            .to_string()
+                    })
+                    .collect();
+                match state.resolve_intercept(id, actions).await {
+                    Ok(()) => {
+                        app.modals.pop();
+                        if matches!(app.modals.last(), Some(Modal::Intercept(m)) if m.id == id) {
+                            app.modals.pop();
+                        }
+                        app.push_system(format!(
+                            "answered request #{id} with {}",
+                            names.join(", ")
+                        ));
+                    }
+                    Err(e) => composer.error = Some(e),
+                }
+                return Outcome::Continue;
+            }
 
             // Validate synchronously: a missing required field is the user's
             // to fix right here, so the composer stays open showing it.
@@ -1402,23 +1498,29 @@ async fn run_intercept_action(
     state: &AppState,
 ) -> Outcome {
     use crate::tui::hit::ModalAction;
-    use crate::tui::modal::text_editor::TextEditorModel;
+    use crate::tui::modal::composer::ComposerModel;
 
     let Some(Modal::Intercept(model)) = app.modals.last_mut() else {
         return Outcome::Continue;
     };
     match action {
+        // The same composer as the `[ send ]` rows: an action list, then
+        // fields. Its Send resolves the intercept (see `run_composer_action`).
         ModalAction::InterceptCompose => {
-            let editor = TextEditorModel::new(
-                "response actions",
-                "A JSON array of actions to answer with. {{event.field}} echoes the event.",
-                &model.editor_seed(),
-                true,
+            if model.vocabulary.is_empty() {
+                model.error = Some(format!(
+                    "{} declares no actions to answer with — Answer with nothing or Fail closed",
+                    model.protocol
+                ));
+                return Outcome::Continue;
+            }
+            let composer = ComposerModel::for_intercept(
+                model.id,
+                model.owner,
+                &model.protocol,
+                model.vocabulary.clone(),
             );
-            app.modals.push(Modal::TextEditor {
-                editor: Box::new(editor),
-                target: crate::tui::modal::form::FieldTarget::InterceptActions,
-            });
+            app.modals.push(Modal::Composer(Box::new(composer)));
         }
         ModalAction::InterceptSend => {
             // Zero actions is a real answer — "acknowledge, say nothing" — the
@@ -1426,13 +1528,14 @@ async fn run_intercept_action(
             // lifecycle event like connection-opened usually deserves. It is
             // delivered (Ok) and therefore distinct from a timeout (Err).
             let id = model.id;
-            let count = model.actions.len();
             // Resolving is a channel send under a short lock — no network I/O,
             // safe to do inline (the waiting dispatcher does the wire work).
-            match state.resolve_intercept(id, model.actions.clone()).await {
+            match state.resolve_intercept(id, Vec::new()).await {
                 Ok(()) => {
                     app.modals.pop();
-                    app.push_system(format!("answered request #{id} with {count} action(s)"));
+                    app.push_system(format!(
+                        "answered request #{id} with nothing (acknowledged, no reply sent)"
+                    ));
                 }
                 Err(e) => model.error = Some(e),
             }
@@ -1706,14 +1809,6 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
                     }
                 }
             }
-            KeyCode::Char('s') | KeyCode::Char('S') if ctrl => match model.commit_draft() {
-                Ok(()) => model.error = None,
-                Err(e) => {
-                    if let Some(draft) = model.draft.as_mut() {
-                        draft.error = Some(e.to_string());
-                    }
-                }
-            },
             // Typing on the two free-text fields edits them in place.
             KeyCode::Char(c) if !ctrl => match draft.focus {
                 DraftFocus::Pattern => {
@@ -1743,8 +1838,7 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
     }
 
     // Handler list and buttons. Tab moves between them; Enter activates what
-    // has focus. The shortcuts still work, but nothing depends on knowing them.
-    use crate::tui::hit::ModalAction;
+    // has focus. The letter shortcuts still work, but nothing depends on them.
     use crate::tui::modal::routing::RoutingFocus;
 
     match key.code {
@@ -1766,9 +1860,6 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
         KeyCode::Char('d') => model.delete_selected(),
         KeyCode::Char('K') => model.reorder(-1),
         KeyCode::Char('J') => model.reorder(1),
-        KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
-            return run_routing_action(app, ModalAction::RoutingSave, state).await;
-        }
         _ => {}
     }
     Outcome::Continue

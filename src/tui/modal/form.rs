@@ -41,8 +41,6 @@ pub enum FieldTarget {
     DraftInstruction,
     /// The routing draft's static action list, as a JSON array.
     DraftActions,
-    /// A pending intercept's response actions, as a JSON array.
-    InterceptActions,
 }
 
 #[derive(Debug, Clone)]
@@ -320,10 +318,9 @@ impl FormModel {
                 port: current(&FieldTarget::Port).and_then(|p| p.parse().ok()),
                 interface: current(&FieldTarget::Interface),
             },
-            Section::Clients => CaptureTarget::client(
-                &self.protocol,
-                current(&FieldTarget::RemoteAddr).as_deref(),
-            ),
+            Section::Clients => {
+                CaptureTarget::client(&self.protocol, current(&FieldTarget::RemoteAddr).as_deref())
+            }
         }
     }
 

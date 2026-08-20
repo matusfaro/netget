@@ -356,19 +356,11 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
                 rows[2],
             );
         }
-        // Clickable equivalents of Ctrl-S / Esc, so accepting an edit is not
-        // knowledge-gated on a chord. (Tab cannot reach them: it types a tab
-        // character in here, which a code editor needs more.)
-        draw_button_row(
-            frame,
-            app,
-            rows[3],
-            &[
-                crate::tui::hit::ModalAction::EditorAccept,
-                crate::tui::hit::ModalAction::EditorCancel,
-            ],
-            None,
-        );
+        // Tab reaches these from the text; they are also clickable. Accepting
+        // an edit must not be knowledge-gated on a chord.
+        let buttons = editor.buttons();
+        let focused = editor.focused_action();
+        draw_button_row(frame, app, rows[3], &buttons, focused);
         return;
     }
 
@@ -863,25 +855,33 @@ fn intercept_lines<'a>(
         }
     }
     lines.push(Line::from(""));
-    if model.actions.is_empty() {
-        lines.push(Line::from(Span::styled(
-            "your answer   (empty — Send response proceeds without saying anything; \
-             Compose actions… opens the editor with a working example)",
-            app.styles.dimmed,
-        )));
-    } else {
-        lines.push(Line::from(Span::styled(
+    lines.push(Line::from(vec![
+        Span::styled("Compose answer…      ", app.styles.normal),
+        Span::styled(
             format!(
-                "your answer   {} action(s): {}",
-                model.actions.len(),
-                model.action_names().join(", ")
+                "pick one of {}'s {} action(s) and fill in its fields",
+                model.protocol,
+                model.vocabulary.len()
             ),
-            app.styles.success,
-        )));
-    }
+            app.styles.dimmed,
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Answer with nothing  ", app.styles.normal),
+        Span::styled(
+            "acknowledge and send no reply (fine for a connect event)",
+            app.styles.dimmed,
+        ),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled("Fail closed          ", app.styles.normal),
+        Span::styled(
+            "refuse: the peer gets the protocol's error reply now",
+            app.styles.dimmed,
+        ),
+    ]));
     lines.push(Line::from(Span::styled(
-        "The connection is waiting on you. Fail closed refuses it cleanly; Esc keeps it \
-         waiting.",
+        "The connection is waiting on you; Esc keeps it waiting.",
         app.styles.dimmed,
     )));
     if let Some(error) = &model.error {
@@ -934,7 +934,7 @@ fn composer_lines_with_offsets<'a>(
             lines.push(Line::from(""));
             if let Some(raw) = &composer.raw_json {
                 lines.push(Line::from(Span::styled(
-                    "raw JSON (Ctrl-J to go back to fields):",
+                    "raw JSON — press [ Raw JSON ] again to go back to fields:",
                     app.styles.dimmed,
                 )));
                 for line in raw.lines() {
@@ -947,6 +947,13 @@ fn composer_lines_with_offsets<'a>(
                     let marker = if is_selected { "▸ " } else { "  " };
                     let value = if is_selected && composer.editing.is_some() {
                         format!("{}_", composer.editing.as_deref().unwrap_or(""))
+                    } else if field.kind == crate::tui::modal::composer::FieldKind::Bool {
+                        // A checkbox: Enter or Space flips it.
+                        if field.value.trim() == "true" {
+                            "[x] true".to_string()
+                        } else {
+                            "[ ] false".to_string()
+                        }
                     } else if field.value.is_empty() {
                         field.placeholder.clone()
                     } else {
@@ -983,7 +990,7 @@ fn composer_lines_with_offsets<'a>(
                 }
                 if composer.fields.is_empty() {
                     lines.push(Line::from(Span::styled(
-                        "(this action takes no parameters — Ctrl-S to send)",
+                        "(this action takes no parameters — Tab to [ Send ])",
                         app.styles.dimmed,
                     )));
                 }
