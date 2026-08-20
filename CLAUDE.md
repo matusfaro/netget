@@ -10,14 +10,29 @@ Three ways to run it: interactive TUI (default), headless (`--mcp` / `--mcp-http
 **The interactive TUI is the full-screen ratatui dashboard (`src/tui/`)**; the older
 rolling-terminal TUI (`src/cli/rolling_tui.rs` + `sticky_footer.rs`) is still there behind
 `--legacy-tui`. Chat is on the left, unchanged in contract — `UserCommand::parse` is shared, so
-every slash command still works. The right-hand rail lists servers and clients as horizontal
-bands (info | config | routing | peers | requests) and is the first way to **create and modify
-instances without the LLM**: `a` picks a protocol and opens a form, `e` edits config, `r` edits
-the routing table, `c` on a server starts a client of the counterpart protocol aimed at that
-server, `n` on a client composes and sends a request, `x` stops. Everything applies through
-`cli::management`'s `ServerForm`/`ClientForm`/`update_*`, so validation and the hot-apply vs
-restart split are identical to the LLM and MCP paths. The forms submit only *changed* fields —
-re-sending an unchanged port or host reads as a change and forces a needless restart.
+every slash command still works. The right-hand rail is **one borderless tree** of every server
+and client, and is the first way to **create and modify instances without the LLM**.
+
+Everything applies through `cli::management`'s `ServerForm`/`ClientForm`/`update_*`, so
+validation and the hot-apply vs restart split are identical to the LLM and MCP paths. The forms
+submit only *changed* fields — re-sending an unchanged port or host reads as a change and forces
+a needless restart.
+
+**Every action is a row** (`tree::RowAction`), placed under the thing it acts on, rather than a
+button somewhere: `[ edit config ]` under `config`, `[ + add handler ]` under `handlers`,
+`[ + connect a … ]` and `[ message this peer ]` under `peers`, `[ disconnect ]` /
+`[ connect ]` / `[ remove client ]` on a client, `[ + new server ]` / `[ + new client ]` at the
+foot of the rail. Enter and a mouse click go through the same `activate_row`, so the two cannot
+drift. A client's own protocol verbs are inlined as rows too (telnet's `[ send_command ]`,
+`[ send_text ]`), and pressing one opens the composer already on that action's parameters;
+`projection::is_initiable_action` keeps response-only verbs (`wait_for_more`) and duplicates of
+the lifecycle rows (`disconnect`) out of that list, while `n` still opens the full vocabulary.
+
+`config` and `handlers` are **collapsed by default** — settings, not traffic; `peers` is open.
+The keyboard shortcuts still work (`a` add, `e` config, `r` handlers, `c` connect a client,
+`n` compose, `x` stop/remove, F1 help), but nothing depends on knowing them.
+
+Stopping is immediate: only the bulk actions (stop all, quit) still confirm.
 
 ## Protocol inventory — always query, never trust a list
 
