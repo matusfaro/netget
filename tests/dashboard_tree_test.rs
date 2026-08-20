@@ -375,20 +375,28 @@ fn a_client_tree_groups_its_connections_with_their_traffic() {
         "attempts merged into the peer group: {groups:?}"
     );
 
-    // Sending is what a client is for: its own actions are the first rows
-    // under the root, one per verb, not a generic "send a request" button.
+    // Order under the root: lifecycle first at a fixed place (it used to sit
+    // at the bottom, where every new peer and request moved it), then the
+    // client's own verbs — one row per action, not a generic send button.
+    let labels: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
     assert_eq!(
-        rows[1].node,
-        NodeId::Action(key, tree::RowAction::SendAction(0)),
-        "{:?}",
-        rows.iter().map(|r| &r.label).collect::<Vec<_>>()
+        &labels[1..5],
+        &[
+            "[ disconnect ]",
+            "[ remove client ]",
+            "[ send_command ]",
+            "[ send_text ]"
+        ],
+        "{labels:?}"
     );
-    assert_eq!(rows[1].label, "[ send_command ]");
     assert_eq!(
-        rows[2].node,
+        rows[3].node,
+        NodeId::Action(key, tree::RowAction::SendAction(0))
+    );
+    assert_eq!(
+        rows[4].node,
         NodeId::Action(key, tree::RowAction::SendAction(1))
     );
-    assert_eq!(rows[2].label, "[ send_text ]");
 
     // Newest connection first; each carries its own requests.
     let under_peer = subtree(&rows, "peer (");

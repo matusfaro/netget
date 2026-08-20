@@ -15,8 +15,14 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
     let Some(modal) = app.modals.last() else {
         return;
     };
-    let (pw, ph) = modal.size_percent();
-    let rect = super::centered(area, pw, ph);
+    let size = modal.size();
+    let rect = super::centered_capped(
+        area,
+        size.percent_x,
+        size.percent_y,
+        size.max_cols,
+        size.max_rows,
+    );
     let title = modal.title();
     let hint = modal.hint();
 
@@ -98,10 +104,11 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
                 ratatui::layout::Constraint::Length(1),
             ])
             .split(inner);
-        let lines = form_lines(app, form);
+        let (lines, offsets) = form_lines_with_offsets(app, form);
         let buttons = form.buttons();
         let focused = form.focused_action();
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[0]);
+        push_row_hits(app, rows[0], &offsets);
         draw_button_row(frame, app, rows[1], &buttons, focused);
         return;
     }
@@ -160,7 +167,9 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
                 app.styles.dimmed,
             )));
         }
+        let mut offsets = Vec::with_capacity(handler_rows.len());
         for (index, row) in handler_rows.iter().enumerate() {
+            offsets.push(lines.len() as u16);
             let selected = model.focus == RoutingFocus::List && index == model.selected;
             lines.push(Line::from(vec![
                 Span::styled(if selected { "▸ " } else { "  " }, app.styles.accent),
@@ -185,6 +194,7 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
         let focused = model.focused_button();
         let note = model.fallback_note();
         frame.render_widget(Paragraph::new(lines), rows[0]);
+        push_row_hits(app, rows[0], &offsets);
         draw_button_row(frame, app, rows[1], &buttons, focused);
         frame.render_widget(
             Paragraph::new(Span::styled(note, app.styles.dimmed)).wrap(Wrap { trim: false }),
@@ -214,7 +224,7 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
     if let Some(Modal::Composer(composer)) = app.modals.last() {
         let buttons = composer.buttons();
         let focused = composer.focused_action();
-        let lines = composer_lines(app, composer);
+        let (lines, offsets) = composer_lines_with_offsets(app, composer);
         let rows = ratatui::layout::Layout::default()
             .direction(ratatui::layout::Direction::Vertical)
             .constraints([
@@ -223,6 +233,7 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
             ])
             .split(inner);
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[0]);
+        push_row_hits(app, rows[0], &offsets);
         draw_button_row(frame, app, rows[1], &buttons, focused);
         return;
     }
@@ -275,7 +286,14 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
                 app.styles.dimmed,
             )));
         }
+        let mut hit_offsets: Vec<u16> = Vec::new();
         for (index, entry) in matches.iter().enumerate().skip(offset).take(visible) {
+            // Absolute index, so a click after scrolling selects what was
+            // clicked rather than the same slot in an unscrolled list.
+            while hit_offsets.len() < index {
+                hit_offsets.push(u16::MAX);
+            }
+            hit_offsets.push(list.len() as u16);
             let style = if index == *selected {
                 app.styles.selected
             } else {
@@ -297,14 +315,19 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
         }
         frame.render_widget(Paragraph::new(list), rows[0]);
 
+        // Built before the hit registration below, because it is the last use
+        // of the borrow on `app.modals` that `entries`/`filter` come from.
+        let detail_lines = picker_detail_lines(app, entries, filter, *selected);
+
+        push_row_hits(app, rows[0], &hit_offsets);
+
         let detail = Block::default()
             .borders(Borders::TOP)
             .border_style(app.styles.separator);
         let detail_inner = detail.inner(rows[1]);
         frame.render_widget(detail, rows[1]);
         frame.render_widget(
-            Paragraph::new(picker_detail_lines(app, entries, filter, *selected))
-                .wrap(Wrap { trim: false }),
+            Paragraph::new(detail_lines).wrap(Wrap { trim: false }),
             detail_inner,
         );
         return;
@@ -384,6 +407,29 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp, area: Rect) {
 
 /// Detail for the highlighted protocol, rendered in a fixed pane so the list
 /// above it never moves.
+/// Register one clickable row per selectable item.
+///
+/// Modals used to push only their outer body and their buttons, so clicking a
+/// field, a protocol or an action did nothing at all — the list looked
+/// interactive and was not. `offsets[i]` is the line the i-th item was drawn
+/// on, relative to `area`.
+fn push_row_hits(app: &mut DashboardApp, area: ratatui::layout::Rect, offsets: &[u16]) {
+    for (index, offset) in offsets.iter().enumerate() {
+        if *offset >= area.height {
+            break;
+        }
+        app.hits.push(
+            ratatui::layout::Rect {
+                x: area.x,
+                y: area.y + offset,
+                width: area.width,
+                height: 1,
+            },
+            HitTarget::ModalRow(index),
+        );
+    }
+}
+
 /// Draw a row of modal buttons, registering each as a hit target.
 fn draw_button_row(
     frame: &mut ratatui::Frame,
@@ -469,8 +515,18 @@ fn picker_detail_lines<'a>(
 }
 
 fn form_lines<'a>(app: &DashboardApp, form: &crate::tui::modal::form::FormModel) -> Vec<Line<'a>> {
+    form_lines_with_offsets(app, form).0
+}
+
+/// The form's lines plus the line each field was drawn on, for hit-testing.
+fn form_lines_with_offsets<'a>(
+    app: &DashboardApp,
+    form: &crate::tui::modal::form::FormModel,
+) -> (Vec<Line<'a>>, Vec<u16>) {
+    let mut offsets = Vec::with_capacity(form.fields.len());
     let mut lines = Vec::new();
     for (index, field) in form.fields.iter().enumerate() {
+        offsets.push(lines.len() as u16);
         let is_selected = index == form.selected;
         let marker = if is_selected { "▸ " } else { "  " };
         let label_style = if is_selected {
@@ -523,7 +579,7 @@ fn form_lines<'a>(app: &DashboardApp, form: &crate::tui::modal::form::FormModel)
             app.styles.error,
         )));
     }
-    lines
+    (lines, offsets)
 }
 
 /// The handler editor's kind control: one segment per way of answering, the
@@ -838,10 +894,13 @@ fn intercept_lines<'a>(
     lines
 }
 
-fn composer_lines<'a>(
+/// The composer's lines plus the line each selectable row landed on — the
+/// actions while choosing, the parameters once chosen.
+fn composer_lines_with_offsets<'a>(
     app: &DashboardApp,
     composer: &crate::tui::modal::composer::ComposerModel,
-) -> Vec<Line<'a>> {
+) -> (Vec<Line<'a>>, Vec<u16>) {
+    let mut offsets = Vec::new();
     let mut lines = Vec::new();
     match composer.chosen {
         None => {
@@ -851,6 +910,7 @@ fn composer_lines<'a>(
             )));
             lines.push(Line::from(""));
             for (index, action) in composer.actions.iter().enumerate() {
+                offsets.push(lines.len() as u16);
                 let style = if index == composer.selected {
                     app.styles.selected
                 } else {
@@ -882,6 +942,7 @@ fn composer_lines<'a>(
                 }
             } else {
                 for (i, field) in composer.fields.iter().enumerate() {
+                    offsets.push(lines.len() as u16);
                     let is_selected = i == composer.selected;
                     let marker = if is_selected { "▸ " } else { "  " };
                     let value = if is_selected && composer.editing.is_some() {
@@ -936,7 +997,7 @@ fn composer_lines<'a>(
             app.styles.error,
         )));
     }
-    lines
+    (lines, offsets)
 }
 
 fn band_detail_lines<'a>(app: &DashboardApp, key: crate::tui::app::UiKey) -> Vec<Line<'a>> {

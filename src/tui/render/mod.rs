@@ -43,7 +43,9 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp) {
     let status = rows[1];
 
     let chat_width = ((body.width as u32 * CHAT_PERCENT as u32) / 100) as u16;
-    let chat_width = chat_width.max(CHAT_MIN_WIDTH).min(body.width.saturating_sub(20));
+    let chat_width = chat_width
+        .max(CHAT_MIN_WIDTH)
+        .min(body.width.saturating_sub(20));
     let columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(chat_width), Constraint::Min(20)])
@@ -60,8 +62,25 @@ pub fn draw(frame: &mut Frame, app: &mut DashboardApp) {
 
 /// Centre a modal rect of the given percentage inside `area`.
 pub fn centered(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
-    let width = (area.width * percent_x / 100).max(20).min(area.width);
-    let height = (area.height * percent_y / 100).max(7).min(area.height);
+    centered_capped(area, percent_x, percent_y, u16::MAX, u16::MAX)
+}
+
+/// Centre a box sized by percentage but capped at what its content needs.
+pub fn centered_capped(
+    area: Rect,
+    percent_x: u16,
+    percent_y: u16,
+    max_cols: u16,
+    max_rows: u16,
+) -> Rect {
+    let width = (area.width * percent_x / 100)
+        .min(max_cols)
+        .max(24)
+        .min(area.width);
+    let height = (area.height * percent_y / 100)
+        .min(max_rows)
+        .max(5)
+        .min(area.height);
     Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,

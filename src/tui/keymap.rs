@@ -1069,6 +1069,33 @@ async fn handle_form_key(app: &mut DashboardApp, key: KeyEvent, state: &AppState
         KeyCode::Char('s') | KeyCode::Char('S') if ctrl => {
             return run_form_action(app, crate::tui::hit::ModalAction::FormApply, state).await;
         }
+        // Typing on a selected field edits it, starting with the character
+        // just typed. Requiring Enter first made every field a two-step, and
+        // nothing else here wants bare letters.
+        KeyCode::Char(c) if !ctrl && form.focused_button.is_none() => {
+            if form
+                .selected_field()
+                .is_some_and(|field| !field.multiline && field.target != FieldTarget::SendFirst)
+            {
+                form.begin_edit();
+                if let Some(buffer) = form.editing.as_mut() {
+                    buffer.push(c);
+                }
+            }
+        }
+        KeyCode::Backspace if form.focused_button.is_none() => {
+            // Same for backspace: start editing and delete, rather than
+            // silently doing nothing until Enter is pressed.
+            if form
+                .selected_field()
+                .is_some_and(|field| !field.multiline && field.target != FieldTarget::SendFirst)
+            {
+                form.begin_edit();
+                if let Some(buffer) = form.editing.as_mut() {
+                    buffer.pop();
+                }
+            }
+        }
         _ => {}
     }
     Outcome::Continue
@@ -1251,6 +1278,28 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
             return run_composer_action(app, crate::tui::hit::ModalAction::ComposerSend, state)
                 .await;
         }
+        // Typing on a parameter field edits it (see the form's note).
+        KeyCode::Char(c)
+            if !ctrl
+                && composer.chosen.is_some()
+                && composer.raw_json.is_none()
+                && composer.focused_button.is_none() =>
+        {
+            composer.begin_edit();
+            if let Some(buffer) = composer.editing.as_mut() {
+                buffer.push(c);
+            }
+        }
+        KeyCode::Backspace
+            if composer.chosen.is_some()
+                && composer.raw_json.is_none()
+                && composer.focused_button.is_none() =>
+        {
+            composer.begin_edit();
+            if let Some(buffer) = composer.editing.as_mut() {
+                buffer.pop();
+            }
+        }
         _ => {}
     }
     Outcome::Continue
@@ -1272,30 +1321,50 @@ async fn run_composer_action(
         ModalAction::ComposerBack => composer.back_to_actions(),
         ModalAction::ComposerRaw => composer.toggle_raw_json(),
         ModalAction::ComposerSend => {
-            if composer.busy {
-                return Outcome::Continue;
-            }
-            composer.busy = true;
-            composer.error = None;
-            let model = composer.clone();
+            use crate::tui::modal::composer::ComposerModel;
+
+            // Validate synchronously: a missing required field is the user's
+            // to fix right here, so the composer stays open showing it.
+            let action = match composer.build_action() {
+                Ok(action) => action,
+                Err(e) => {
+                    composer.error = Some(e.to_string());
+                    return Outcome::Continue;
+                }
+            };
+
+            // Everything past this point is network work. Close the composer
+            // and report asynchronously — it used to sit on "sending…" until
+            // the outcome arrived, which for a client whose loop is parked on
+            // a MANUAL question meant a frozen-looking modal and then a bare
+            // timeout error.
+            let target = composer.target;
+            let name = action
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("action")
+                .to_string();
+            app.modals.pop();
+            app.push_system(format!("{}: sending {name}…", target.describe()));
+
             let ui_tx = app.ui_tx.clone();
             let state = state.clone();
             tokio::spawn(async move {
-                let result = model
-                    .send(&state)
-                    .await
-                    .map(|outcome| {
-                        format!(
-                            "{}: {}",
-                            model.target.describe(),
-                            crate::tui::modal::composer::describe(&outcome)
-                        )
-                    })
-                    .map_err(|e| e.to_string());
-                let _ = ui_tx.send(UiMsg::ActionDone {
-                    origin: ActionOrigin::Composer,
-                    result,
-                });
+                let message = match ComposerModel::deliver(target, &state, action).await {
+                    Ok(outcome) => format!(
+                        "{}: {}",
+                        target.describe(),
+                        crate::tui::modal::composer::describe(&outcome)
+                    ),
+                    // No target prefix here: send_to_client / send_to_peer
+                    // already name what failed, and prefixing produced
+                    // "client #2: client #2 did not report…".
+                    Err(e) => match ComposerModel::queue_hint(target, &state).await {
+                        Some(hint) => format!("{e} — {hint}"),
+                        None => e.to_string(),
+                    },
+                };
+                let _ = ui_tx.send(UiMsg::Chat(message));
             });
         }
         _ => {}
@@ -1440,6 +1509,13 @@ pub async fn handle_mouse(app: &mut DashboardApp, event: MouseEvent, state: &App
     if app.modal().is_some() {
         if let HitTarget::ModalActionButton(action) = target {
             return run_modal_action(app, action, state).await;
+        }
+        // Clicking a row selects it. The lists inside modals looked
+        // interactive and were not: only buttons and the outer body were
+        // registered, so a click on a field or a protocol did nothing.
+        if let HitTarget::ModalRow(index) = target {
+            select_modal_row(app, index);
+            return Outcome::Continue;
         }
         return Outcome::Continue;
     }
@@ -1638,6 +1714,29 @@ async fn handle_routing_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSt
                     }
                 }
             },
+            // Typing on the two free-text fields edits them in place.
+            KeyCode::Char(c) if !ctrl => match draft.focus {
+                DraftFocus::Pattern => {
+                    draft.editing = Some(format!("{}{c}", draft.pattern));
+                }
+                DraftFocus::Timeout => {
+                    draft.editing = Some(format!("{}{c}", draft.timeout_secs));
+                }
+                _ => {}
+            },
+            KeyCode::Backspace => match draft.focus {
+                DraftFocus::Pattern => {
+                    let mut text = draft.pattern.clone();
+                    text.pop();
+                    draft.editing = Some(text);
+                }
+                DraftFocus::Timeout => {
+                    let mut text = draft.timeout_secs.clone();
+                    text.pop();
+                    draft.editing = Some(text);
+                }
+                _ => {}
+            },
             _ => {}
         }
         return Outcome::Continue;
@@ -1750,6 +1849,40 @@ fn example_actions(actions: &[crate::llm::actions::ActionDefinition]) -> String 
     }
 }
 
+/// Point the open modal's selection at the row that was clicked.
+///
+/// Selection only — a click never *acts*, so a mis-click cannot send a
+/// request or delete a handler. Enter (or the buttons) still does that.
+fn select_modal_row(app: &mut DashboardApp, index: usize) {
+    match app.modals.last_mut() {
+        Some(Modal::Form(form)) => {
+            if index < form.fields.len() {
+                form.focused_button = None;
+                form.selected = index;
+            }
+        }
+        Some(Modal::Composer(composer)) => {
+            let len = if composer.chosen.is_some() {
+                composer.fields.len()
+            } else {
+                composer.actions.len()
+            };
+            if index < len {
+                composer.focused_button = None;
+                composer.selected = index;
+            }
+        }
+        Some(Modal::Routing(model)) => {
+            if model.draft.is_none() && index < model.handlers.len() {
+                model.focus = crate::tui::modal::routing::RoutingFocus::List;
+                model.selected = index;
+            }
+        }
+        Some(Modal::ProtocolPicker { selected, .. }) => *selected = index,
+        _ => {}
+    }
+}
+
 /// Dispatch a modal button to the editor that owns it.
 pub async fn run_modal_action(
     app: &mut DashboardApp,
@@ -1841,7 +1974,6 @@ pub fn handle_ui_msg(app: &mut DashboardApp, msg: UiMsg) {
     let matches_origin = match (origin, app.modal()) {
         (ActionOrigin::Form, Some(Modal::Form(_))) => true,
         (ActionOrigin::Routing, Some(Modal::Routing(_))) => true,
-        (ActionOrigin::Composer, Some(Modal::Composer(_))) => true,
         _ => false,
     };
 

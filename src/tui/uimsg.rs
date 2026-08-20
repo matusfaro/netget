@@ -13,7 +13,6 @@
 pub enum ActionOrigin {
     Form,
     Routing,
-    Composer,
 }
 
 #[derive(Debug)]

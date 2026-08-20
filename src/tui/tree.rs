@@ -407,6 +407,10 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
     // the whole tree where something is blocked on the human.
     push_intercepts(&mut rows, key, &row.intercepts);
 
+    // Lifecycle next, at a fixed place. At the bottom it moved every time a
+    // peer connected or a request arrived, so it was never where you left it.
+    rows.push(action_row(key, RowAction::Stop, 1, "[ stop server ]"));
+
     // ---- config (collapsed by default: settings, not traffic) ----
     let config = NodeId::Config(key);
     let config_expanded = state.is_open(&config);
@@ -578,8 +582,12 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
         }
     }
 
-    rows.push(action_row(key, RowAction::Wireshark, 1, "[ view in wireshark ]"));
-    rows.push(action_row(key, RowAction::Stop, 1, "[ stop server ]"));
+    rows.push(action_row(
+        key,
+        RowAction::Wireshark,
+        1,
+        "[ view in wireshark ]",
+    ));
     rows
 }
 
@@ -764,6 +772,14 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
     }
 
     push_intercepts(&mut rows, key, &row.intercepts);
+
+    // Lifecycle first, at a fixed place — see the server's note. Hang up and
+    // reconnect keep the instance; remove takes it away entirely.
+    match row.send_state {
+        SendState::NotConnected => rows.push(action_row(key, RowAction::Connect, 1, "[ connect ]")),
+        _ => rows.push(action_row(key, RowAction::Disconnect, 1, "[ disconnect ]")),
+    }
+    rows.push(action_row(key, RowAction::Stop, 1, "[ remove client ]"));
 
     // Sending is what a client is FOR, so it is the first thing under the
     // root — not something to discover three levels down under a peer.
@@ -983,12 +999,11 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
         }
     }
 
-    rows.push(action_row(key, RowAction::Wireshark, 1, "[ view in wireshark ]"));
-    // Hang up / reconnect keep the row; remove takes it away entirely.
-    match row.send_state {
-        SendState::NotConnected => rows.push(action_row(key, RowAction::Connect, 1, "[ connect ]")),
-        _ => rows.push(action_row(key, RowAction::Disconnect, 1, "[ disconnect ]")),
-    }
-    rows.push(action_row(key, RowAction::Stop, 1, "[ remove client ]"));
+    rows.push(action_row(
+        key,
+        RowAction::Wireshark,
+        1,
+        "[ view in wireshark ]",
+    ));
     rows
 }

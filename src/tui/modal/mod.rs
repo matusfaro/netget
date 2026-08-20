@@ -22,6 +22,49 @@ use form::{FieldTarget, FormModel};
 use protocol_picker::ProtocolEntry;
 use text_editor::TextEditorModel;
 
+/// A modal's preferred size: percentages of the screen, each capped by what
+/// the content needs so a short modal stays short on a big terminal.
+#[derive(Debug, Clone, Copy)]
+pub struct ModalSize {
+    pub percent_x: u16,
+    pub percent_y: u16,
+    pub max_cols: u16,
+    pub max_rows: u16,
+}
+
+impl ModalSize {
+    pub fn new(percent_x: u16, percent_y: u16, max_cols: u16, max_rows: u16) -> Self {
+        Self {
+            percent_x,
+            percent_y,
+            max_cols,
+            max_rows,
+        }
+    }
+}
+
+/// Rows the handler editor's body needs for the kind being edited.
+fn draft_rows(model: &routing::RoutingModel, draft: &routing::HandlerDraft) -> u16 {
+    use routing::{DraftFocus, HandlerKind};
+    // Kind control + its blurb (2 rows) + the pattern row + a blank.
+    let mut rows = 5u16;
+    // The pattern chooser lists the protocol's events while it has focus.
+    if draft.focus == DraftFocus::Pattern && draft.editing.is_none() {
+        rows += (model.event_ids.len() as u16 + 1).min(12);
+    }
+    rows += match draft.kind {
+        HandlerKind::Static => 1 + draft.actions.len() as u16,
+        HandlerKind::Script => 3 + draft.code.lines().count().min(6) as u16,
+        HandlerKind::Llm => 1,
+        // The timeout row plus its two-line explanation.
+        HandlerKind::Manual => 3,
+    };
+    if draft.error.is_some() {
+        rows += 2;
+    }
+    rows
+}
+
 /// An action deferred behind a confirmation. Closure-free so `Modal` stays a
 /// plain data enum that can be inspected and tested.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,7 +139,9 @@ impl Modal {
                 UiKey::Server(id) => format!("Server #{}", id.as_u32()),
                 UiKey::Client(id) => format!("Client #{}", id.as_u32()),
             },
-            Modal::Wireshark { plan, .. } => format!("View in Wireshark — {}", plan.target.protocol),
+            Modal::Wireshark { plan, .. } => {
+                format!("View in Wireshark — {}", plan.target.protocol)
+            }
             Modal::ProtocolPicker { section, .. } => match section {
                 Section::Servers => "New server — pick a protocol".to_string(),
                 Section::Clients => "New client — pick a protocol".to_string(),
@@ -145,7 +190,9 @@ impl Modal {
         match self {
             Modal::Help { .. } => "↑/↓ scroll · Esc close",
             Modal::RequestDetail { .. } | Modal::BandDetail { .. } => "↑/↓ scroll · Esc close",
-            Modal::Wireshark { .. } => "Ctrl-T frees the mouse to select text · ↑/↓ scroll · Esc close",
+            Modal::Wireshark { .. } => {
+                "Ctrl-T frees the mouse to select text · ↑/↓ scroll · Esc close"
+            }
             Modal::Confirm { .. } => "y confirm · n/Esc cancel",
             Modal::WebApproval { .. } => "y allow once · a always · n/Esc deny",
             Modal::ProtocolPicker { .. } => {
@@ -187,11 +234,66 @@ impl Modal {
         }
     }
 
-    /// Fraction of the screen the modal occupies (percent width, height).
-    pub fn size_percent(&self) -> (u16, u16) {
+    /// How big this modal wants to be.
+    ///
+    /// Everything used to be 85% x 85%, so a two-line confirmation and a
+    /// four-field form both opened as a near-fullscreen box of whitespace.
+    /// Each modal now caps itself at what its content actually needs; the
+    /// percentages only bound it on a small terminal.
+    pub fn size(&self) -> ModalSize {
+        // Border top + bottom, plus the button row where there is one.
+        const CHROME: u16 = 4;
+        // Scrolling modals want the screen; content-sized ones do not.
+        const TALL: u16 = 500;
+
         match self {
-            Modal::Confirm { .. } | Modal::WebApproval { .. } => (60, 30),
-            _ => (85, 85),
+            Modal::Confirm { .. } => ModalSize::new(50, 40, 72, 5),
+            Modal::WebApproval { .. } => ModalSize::new(60, 40, 88, 8),
+            Modal::Help { .. } => ModalSize::new(72, 88, 92, TALL),
+            Modal::RequestDetail { .. } | Modal::BandDetail { .. } => {
+                ModalSize::new(80, 85, 140, TALL)
+            }
+            // A copyable command line plus its explanation: wide, and tall
+            // enough to scroll rather than sized to the content.
+            Modal::Wireshark { .. } => ModalSize::new(80, 75, 132, TALL),
+            Modal::ProtocolPicker { .. } => ModalSize::new(78, 80, 128, TALL),
+            Modal::TextEditor { .. } => ModalSize::new(76, 70, 120, TALL),
+            Modal::Form(form) => {
+                // One row per field, plus the help line under the selected one.
+                let rows = form.fields.len() as u16 + 3;
+                ModalSize::new(70, 70, 104, rows + CHROME)
+            }
+            Modal::Composer(composer) => {
+                let rows = match composer.chosen {
+                    // Parameter form: a row per field plus its help line.
+                    Some(_) => composer.fields.len() as u16 * 2 + 4,
+                    // Action list: one row each, plus the heading.
+                    None => composer.actions.len() as u16 + 3,
+                };
+                ModalSize::new(70, 75, 112, rows + CHROME)
+            }
+            Modal::Intercept(model) => {
+                let payload = model
+                    .event_data
+                    .as_ref()
+                    .map(|data| {
+                        serde_json::to_string_pretty(data)
+                            .map(|text| text.lines().count() as u16)
+                            .unwrap_or(1)
+                            .min(20)
+                            + 1
+                    })
+                    .unwrap_or(0);
+                ModalSize::new(72, 75, 120, payload + 7 + CHROME)
+            }
+            Modal::Routing(model) => {
+                let rows = match &model.draft {
+                    Some(draft) => draft_rows(model, draft),
+                    // Heading, a row per rule, the fallback note.
+                    None => model.handlers.len().max(1) as u16 + 5,
+                };
+                ModalSize::new(74, 80, 124, rows + CHROME)
+            }
         }
     }
 

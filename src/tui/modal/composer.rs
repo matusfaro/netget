@@ -34,8 +34,14 @@ impl ComposerTarget {
     }
 }
 
-/// How long a composed send waits for the client's loop to report back.
-pub const SEND_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a composed send waits for the loop to report back before giving
+/// up and saying so.
+///
+/// Generous because the send is fire-and-forget: nothing is blocked on this
+/// expiring. It matters most when the loop is legitimately busy — a client
+/// whose event is parked for a MANUAL answer does not drain its command
+/// channel until the human answers, so the send sits there until then.
+pub const SEND_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct ComposerField {
@@ -281,8 +287,21 @@ impl ComposerModel {
 
     /// Deliver the composed action to the target.
     pub async fn send(&self, state: &AppState) -> Result<ClientSendOutcome> {
-        let action = self.build_action()?;
-        match self.target {
+        Self::deliver(self.target, state, self.build_action()?).await
+    }
+
+    /// Deliver an already-built action.
+    ///
+    /// Split from [`Self::send`] so the UI can do the *validation* half
+    /// synchronously — a missing required field must keep the composer open —
+    /// and then fire the *network* half without holding the modal, which
+    /// otherwise sat on "sending…" until this returned.
+    pub async fn deliver(
+        target: ComposerTarget,
+        state: &AppState,
+        action: serde_json::Value,
+    ) -> Result<ClientSendOutcome> {
+        match target {
             ComposerTarget::Client(id) => state.send_to_client(id, action, SEND_TIMEOUT).await,
             ComposerTarget::Peer { server, connection } => {
                 state
@@ -290,6 +309,30 @@ impl ComposerModel {
                     .await
             }
         }
+    }
+
+    /// Why a send might be sitting in the queue rather than going out.
+    ///
+    /// A client parks its events for a MANUAL handler *inside* its connection
+    /// loop, so while a question is waiting for the human nothing drains the
+    /// command channel. Without this the failure reads as a dead client.
+    pub async fn queue_hint(target: ComposerTarget, state: &AppState) -> Option<String> {
+        let owner = match target {
+            ComposerTarget::Client(id) => crate::state::intercepts::InterceptOwner::Client(id),
+            ComposerTarget::Peer { server, .. } => {
+                crate::state::intercepts::InterceptOwner::Server(server)
+            }
+        };
+        let waiting = state
+            .list_intercepts()
+            .await
+            .into_iter()
+            .find(|view| view.owner == owner)?;
+        Some(format!(
+            "it is still waiting for your answer to the parked '{}' request — answer that \
+             and the send goes out",
+            waiting.event_type
+        ))
     }
 }
 
