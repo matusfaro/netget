@@ -52,8 +52,7 @@ impl CoapServer {
 
         let task_registrar = app_state.clone();
         let recv_handle = tokio::spawn(async move {
-            Log::new(Some(&status_tx))
-                .info(format!("CoAP receive loop started on {local_addr}"));
+            Log::new(Some(&status_tx)).info(format!("CoAP receive loop started on {local_addr}"));
 
             // RFC 7252 §4.6: without Block-wise transfer, a message has to fit one
             // datagram; 1500 covers a full Ethernet MTU, 2048 leaves headroom.

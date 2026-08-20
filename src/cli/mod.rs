@@ -1,18 +1,20 @@
 //! CLI module - handles command-line interface and application startup
 
 mod args;
-mod banner;
+pub(crate) mod banner;
 pub mod client_startup;
+pub mod crash_restore;
 pub mod easy_startup;
 pub mod input_state;
 pub mod management;
+pub mod model_select;
 mod non_interactive;
 mod rolling_tui;
 pub mod server_startup;
 mod setup;
 mod sticky_footer;
 mod terminal_cleanup;
-mod theme;
+pub mod theme;
 
 // Re-exported so MCP mode (`src/mcp_stdio`) can drive the scheduled-task ticker on the
 // same code path the TUI and non-interactive runner use, without exposing the whole
@@ -32,6 +34,17 @@ use crate::ui::App;
 
 /// Create the LLM client from CLI args, branching on --openai-url vs --ollama-url
 pub fn create_llm_client(args: &Args, lock_enabled: bool) -> Result<OllamaClient> {
+    let mut client = create_llm_client_inner(args, lock_enabled)?;
+    if let Some(secs) = args.llm_request_timeout {
+        client = client.with_request_timeout(std::time::Duration::from_secs(secs));
+    }
+    if let Some(max_tokens) = args.llm_max_tokens {
+        client = client.with_max_tokens(max_tokens);
+    }
+    Ok(client)
+}
+
+fn create_llm_client_inner(args: &Args, lock_enabled: bool) -> Result<OllamaClient> {
     if let Some(ref openai_url) = args.openai_url {
         let api_key = args.resolve_api_key().ok_or_else(|| {
             anyhow::anyhow!(
@@ -318,18 +331,24 @@ pub async fn run() -> Result<()> {
         debug!("Creating EventHandler...");
         let event_handler = EventHandler::new(state.clone(), llm.clone());
 
-        // Note: init_terminal not needed for rolling TUI (manages terminal itself)
-        debug!("Entering rolling TUI...");
-        rolling_tui::run_rolling_tui(
-            state,
-            app,
-            event_handler,
-            llm,
-            settings,
-            &args,
-            color_palette,
-        )
-        .await
+        // Both UIs manage the terminal themselves (no init_terminal needed).
+        if args.legacy_tui {
+            debug!("Entering legacy rolling TUI...");
+            rolling_tui::run_rolling_tui(
+                state,
+                app,
+                event_handler,
+                llm,
+                settings,
+                &args,
+                color_palette,
+            )
+            .await
+        } else {
+            debug!("Entering dashboard TUI...");
+            crate::tui::run_dashboard(state, app, event_handler, llm, settings, &args, color_palette)
+                .await
+        }
     } else {
         // No prompt and no terminal available
         anyhow::bail!(
@@ -447,6 +466,7 @@ async fn run_client(protocol: &str, args: &Args) -> Result<()> {
         None, // scheduled_tasks
         None, // feedback_instructions
         llm,
+        None, // status_tx: direct --client mode, drain to tracing
     )
     .await?;
 

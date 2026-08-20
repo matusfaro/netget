@@ -120,6 +120,27 @@ impl TcpServer {
                             },
                         );
 
+                        // Peer messaging: the dashboard can inject an action into
+                        // THIS connection (send_tcp_data through the same
+                        // executor the model's actions use). The task ends when
+                        // the handle is dropped — by the close paths below or by
+                        // server teardown.
+                        let peer_rx = crate::server::peer_support::register_peer_channel(
+                            &app_state,
+                            server_id,
+                            connection_id.as_u32(),
+                        )
+                        .await;
+                        crate::server::peer_support::spawn_peer_command_task(
+                            peer_rx,
+                            protocol.clone(),
+                            app_state.clone(),
+                            server_id,
+                            connection_id.as_u32(),
+                            write_half_arc.clone(),
+                            status_tx.clone(),
+                        );
+
                         // Send the greeting banner, if this server was asked for one.
                         if send_first {
                             let llm_client_clone = llm_client.clone();
@@ -158,6 +179,9 @@ impl TcpServer {
                                     Ok(0) => {
                                         // Connection closed
                                         connections_clone.lock().await.remove(&connection_id);
+                                        app_state_clone
+                                            .remove_peer_handle(server_id, connection_id.as_u32())
+                                            .await;
                                         app_state_clone
                                             .close_connection_on_server(server_id, connection_id)
                                             .await;
@@ -200,6 +224,20 @@ impl TcpServer {
                                             ));
                                         }
 
+                                        // Keep the connection's counters live: the
+                                        // dashboard and /status read these, and TCP
+                                        // was the one server never updating them.
+                                        app_state_clone
+                                            .update_connection_stats(
+                                                server_id,
+                                                connection_id,
+                                                Some(n as u64),
+                                                None,
+                                                Some(1),
+                                                None,
+                                            )
+                                            .await;
+
                                         // Handle data in separate task
                                         let llm_clone = llm_client_clone.clone();
                                         let state_clone = app_state_clone.clone();
@@ -226,6 +264,9 @@ impl TcpServer {
                                             connection_id, e
                                         ));
                                         connections_clone.lock().await.remove(&connection_id);
+                                        app_state_clone
+                                            .remove_peer_handle(server_id, connection_id.as_u32())
+                                            .await;
                                         break;
                                     }
                                 }
@@ -362,7 +403,17 @@ impl TcpServer {
             if let Some(conn_data) = conns.get(&connection_id) {
                 conn_data.state.clone()
             } else {
-                return; // Connection not found
+                // Never silent. A miss here means the connection was torn down between the
+                // read and this lookup (peer reset, or close_this_connection on another
+                // task) - legitimate, but indistinguishable from a registration race, which
+                // is exactly what made the bitcoin accept-order bug so hard to find: the
+                // read loop logged "received N bytes" and then nothing at all.
+                debug!(
+                    "TCP connection {} is no longer registered; dropping {} received bytes",
+                    connection_id,
+                    data.len()
+                );
+                return;
             }
         };
 
@@ -390,7 +441,7 @@ impl TcpServer {
         // closes does exactly that. Unwrapping here panicked the task on that race (15 of 64
         // such clients in a burst), and a panicked socket task is silent while the server
         // still reports Running.
-        let all_data = {
+        let mut all_data = {
             let mut conns = connections.lock().await;
             let Some(conn_data) = conns.get_mut(&connection_id) else {
                 return; // Connection closed while we were waiting for the lock
@@ -419,7 +470,11 @@ impl TcpServer {
             };
 
             let Some(write_half) = write_half else {
-                return; // Connection not found
+                debug!(
+                    "TCP connection {} went away before its response could be written",
+                    connection_id
+                );
+                return;
             };
 
             // Format data for event parameter. Printable ASCII is passed through as text,
@@ -519,6 +574,16 @@ impl TcpServer {
                                         output_data.len(),
                                         connection_id
                                     ));
+                                    app_state
+                                        .update_connection_stats(
+                                            server_id,
+                                            connection_id,
+                                            None,
+                                            Some(output_data.len() as u64),
+                                            None,
+                                            Some(1),
+                                        )
+                                        .await;
                                 }
                             }
                             ActionResult::CloseConnection => {
@@ -559,8 +624,26 @@ impl TcpServer {
                     };
 
                     if has_queued {
-                        log.debug(format!("Processing queued data for {connection_id}"));
-                        // Loop continues to process queued data
+                        // Take the queue and make it the next iteration's payload.
+                        // Leaving it in place re-sent the SAME bytes to the model on
+                        // every pass and never emptied the queue: one response per
+                        // iteration, forever, for a single line of input.
+                        let queued = {
+                            let mut conns = connections.lock().await;
+                            match conns.get_mut(&connection_id) {
+                                Some(conn) => std::mem::take(&mut conn.queued_data),
+                                None => return,
+                            }
+                        };
+                        if queued.is_empty() {
+                            connections
+                                .lock()
+                                .await
+                                .entry(connection_id)
+                                .and_modify(|conn| conn.state = ConnectionState::Idle);
+                            return;
+                        }
+                        all_data = Bytes::from(queued);
                     } else {
                         // Go to Idle state
                         connections

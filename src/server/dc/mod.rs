@@ -79,6 +79,13 @@ impl DcServer {
                                 .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
 
+                            // Register the client in the protocol's own state map. This was
+                            // never called from anywhere, so `DcProtocol::clients` stayed
+                            // permanently empty and every accessor that goes through
+                            // `get_mut` - set_nickname, set_client_info, set_operator - was a
+                            // silent no-op, while get_nickname always returned None.
+                            protocol_clone.add_connection(connection_id).await;
+
                             // Send initial $Lock challenge
                             let lock_command =
                                 "$Lock EXTENDEDPROTOCOLABCABCABCABCABCABC Pk=NetGetHub|";
@@ -161,6 +168,42 @@ impl DcServer {
                                                     Some(0),
                                                 )
                                                 .await;
+
+                                            // Record the nickname the client just claimed.
+                                            //
+                                            // Nothing ever called `set_nickname`, so
+                                            // `client_nickname` below was null on every event
+                                            // this hub has ever raised - the field is
+                                            // documented as carrying the nickname "if set",
+                                            // and it never was. NMDC announces it in exactly
+                                            // two places: `$ValidateNick <nick>` at login, and
+                                            // the second field of `$MyINFO $ALL <nick> ...`.
+                                            if let Some(rest) =
+                                                command.strip_prefix("$ValidateNick ")
+                                            {
+                                                if let Some(nick) = rest.split_whitespace().next() {
+                                                    protocol_clone
+                                                        .set_nickname(
+                                                            connection_id,
+                                                            nick.to_string(),
+                                                        )
+                                                        .await;
+                                                }
+                                            } else if let Some(rest) =
+                                                command.strip_prefix("$MyINFO ")
+                                            {
+                                                let mut fields = rest.split_whitespace();
+                                                if fields.next() == Some("$ALL") {
+                                                    if let Some(nick) = fields.next() {
+                                                        protocol_clone
+                                                            .set_nickname(
+                                                                connection_id,
+                                                                nick.to_string(),
+                                                            )
+                                                            .await;
+                                                    }
+                                                }
+                                            }
 
                                             // Parse command type
                                             let command_type = if command.starts_with('$') {

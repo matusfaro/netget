@@ -385,12 +385,7 @@ impl MongodbHandler {
                             "LLM error for MongoDB command '{}' on connection {} (overload={}): {}",
                             command_name, self.connection_id, overloaded, e
                         );
-                        let reason = crate::utils::truncate_for_log(&e.to_string(), 200);
-                        let message = if overloaded {
-                            format!("netget: backend at capacity, retry later: {reason}")
-                        } else {
-                            format!("netget: {reason}")
-                        };
+                        let message = crate::utils::WireFailure::classify(&e).prefixed_text();
                         let _ = self.status_tx.send(format!(
                             "[ERROR] MongoDB connection {} replying ok:0 InternalError: {}",
                             self.connection_id, message

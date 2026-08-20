@@ -553,6 +553,27 @@ impl Server for UsbMouseProtocol {
 
 // Action definitions
 
+/// Optional connection selector shared by every action.
+///
+/// It was accepted by `resolve_handler` and demanded by name in the multi-host error
+/// ("the action must name one with 'connection_id'"), and this protocol's CLAUDE.md
+/// documented it — but no action declared it, so the model was never told it existed and
+/// could not address a specific host when more than one was attached.
+///
+/// Three forms are accepted: the number, the number as a string, and the `conn-N` form the
+/// events themselves carry. Declared "string" because that last one is what events emit.
+#[cfg(feature = "usb-mouse")]
+fn connection_id_parameter() -> Parameter {
+    Parameter {
+        name: "connection_id".to_string(),
+        type_hint: "string".to_string(),
+        description: "Which attached host to act on, as the event reports it (e.g. \"conn-2\"). \
+            Omit it when only one host is attached; required when there are several."
+            .to_string(),
+        required: false,
+    }
+}
+
 #[cfg(feature = "usb-mouse")]
 fn move_relative_action() -> ActionDefinition {
     ActionDefinition {
@@ -571,6 +592,7 @@ fn move_relative_action() -> ActionDefinition {
                 description: "Vertical movement in pixels (-127 to 127)".to_string(),
                 required: true,
             },
+            connection_id_parameter(),
         ],
         example: json!({
             "type": "move_relative",
@@ -615,6 +637,7 @@ fn move_absolute_action() -> ActionDefinition {
                 description: "Screen height in pixels (default: 1080)".to_string(),
                 required: false,
             },
+            connection_id_parameter(),
         ],
         example: json!({
             "type": "move_absolute",
@@ -638,12 +661,15 @@ fn click_action() -> ActionDefinition {
     ActionDefinition {
         name: "click".to_string(),
         description: "Click a mouse button".to_string(),
-        parameters: vec![Parameter {
-            name: "button".to_string(),
-            type_hint: "string".to_string(),
-            description: "Button to click: 'left', 'right', or 'middle'".to_string(),
-            required: true,
-        }],
+        parameters: vec![
+            Parameter {
+                name: "button".to_string(),
+                type_hint: "string".to_string(),
+                description: "Button to click: 'left', 'right', or 'middle'".to_string(),
+                required: true,
+            },
+            connection_id_parameter(),
+        ],
         example: json!({
             "type": "click",
             "button": "left"
@@ -674,6 +700,7 @@ fn scroll_action() -> ActionDefinition {
                 description: "Number of scroll steps (default: 1)".to_string(),
                 required: false,
             },
+            connection_id_parameter(),
         ],
         example: json!({
             "type": "scroll",
@@ -692,8 +719,20 @@ fn scroll_action() -> ActionDefinition {
 fn drag_action() -> ActionDefinition {
     ActionDefinition {
         name: "drag".to_string(),
-        description: "Drag from one position to another with left button held".to_string(),
+        description: "Drag from one position to another with a button held (left by default)"
+            .to_string(),
         parameters: vec![
+            // `button` was read by the executor and validated by `button_bit`, but never
+            // declared - so right- and middle-button drags were implemented and unreachable,
+            // and the model was told the action was left-only.
+            Parameter {
+                name: "button".to_string(),
+                type_hint: "string".to_string(),
+                description: "Button to hold during the drag: 'left' (default), 'right' or \
+                    'middle'"
+                    .to_string(),
+                required: false,
+            },
             Parameter {
                 name: "start_x".to_string(),
                 type_hint: "number".to_string(),
@@ -724,6 +763,7 @@ fn drag_action() -> ActionDefinition {
                 description: "Duration of drag in milliseconds (default: 500)".to_string(),
                 required: false,
             },
+            connection_id_parameter(),
         ],
         example: json!({
             "type": "drag",

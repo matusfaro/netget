@@ -98,6 +98,30 @@ pub struct ClientConnectionState {
     pub protocol_info: super::server::ProtocolConnectionInfo,
 }
 
+/// How many connection attempts a client remembers for the "recent
+/// connections" view.
+pub const CLIENT_CONNECTION_HISTORY_CAPACITY: usize = 20;
+
+/// One connection attempt in a client's lifetime, recorded on status
+/// transitions (see `AppState::update_client_status`). Wall-clock timestamps
+/// so the struct is serializable and stable across a UI session.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ClientConnectionAttempt {
+    pub remote_addr: String,
+    pub started_unix_ms: u64,
+    /// None while the attempt is still live (Connecting/Connected).
+    pub ended_unix_ms: Option<u64>,
+    /// "connecting" | "connected" | "disconnected" | "error: …"
+    pub outcome: String,
+}
+
+fn now_unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// A client instance with its own connection, state, and configuration
 ///
 /// `Clone` is derived; see [`crate::state::server::ServerInstance`] for why the hand-written
@@ -142,6 +166,10 @@ pub struct ClientInstance {
     pub feedback_buffer: Vec<serde_json::Value>,
     /// Last time feedback was processed (for debouncing)
     pub last_feedback_processed: Option<Instant>,
+    /// Connection attempts, newest last, capped at
+    /// [`CLIENT_CONNECTION_HISTORY_CAPACITY`]. Maintained by
+    /// `AppState::update_client_status` via [`Self::record_status_transition`].
+    pub connection_history: std::collections::VecDeque<ClientConnectionAttempt>,
 }
 
 impl ClientInstance {
@@ -170,6 +198,66 @@ impl ClientInstance {
             feedback_instructions: None,
             feedback_buffer: Vec::new(),
             last_feedback_processed: None,
+            connection_history: std::collections::VecDeque::new(),
+        }
+    }
+
+    /// Fold a status transition into [`Self::connection_history`]: a
+    /// `Connecting` opens a new attempt, `Connected` updates the live one, and
+    /// `Disconnected`/`Error` close it with an outcome.
+    pub fn record_status_transition(&mut self, status: &ClientStatus) {
+        let live_tail = self
+            .connection_history
+            .back_mut()
+            .filter(|attempt| attempt.ended_unix_ms.is_none());
+        match status {
+            ClientStatus::Connecting => {
+                // A reconnect while a previous attempt is still open closes it
+                // first so history never holds two live attempts.
+                if let Some(attempt) = live_tail {
+                    attempt.ended_unix_ms = Some(now_unix_ms());
+                }
+                self.connection_history.push_back(ClientConnectionAttempt {
+                    remote_addr: self.remote_addr.clone(),
+                    started_unix_ms: now_unix_ms(),
+                    ended_unix_ms: None,
+                    outcome: "connecting".to_string(),
+                });
+                let excess = self
+                    .connection_history
+                    .len()
+                    .saturating_sub(CLIENT_CONNECTION_HISTORY_CAPACITY);
+                for _ in 0..excess {
+                    self.connection_history.pop_front();
+                }
+            }
+            ClientStatus::Connected => {
+                if let Some(attempt) = live_tail {
+                    attempt.outcome = "connected".to_string();
+                } else {
+                    // Connected without a recorded Connecting (direct literal
+                    // construction starts at Connecting but never transitioned
+                    // through update_client_status): open-and-mark in one step.
+                    self.connection_history.push_back(ClientConnectionAttempt {
+                        remote_addr: self.remote_addr.clone(),
+                        started_unix_ms: now_unix_ms(),
+                        ended_unix_ms: None,
+                        outcome: "connected".to_string(),
+                    });
+                }
+            }
+            ClientStatus::Disconnected => {
+                if let Some(attempt) = live_tail {
+                    attempt.ended_unix_ms = Some(now_unix_ms());
+                    attempt.outcome = "disconnected".to_string();
+                }
+            }
+            ClientStatus::Error(message) => {
+                if let Some(attempt) = live_tail {
+                    attempt.ended_unix_ms = Some(now_unix_ms());
+                    attempt.outcome = format!("error: {message}");
+                }
+            }
         }
     }
 

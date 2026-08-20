@@ -412,7 +412,7 @@ async fn process_single_request(
                     "jsonrpc": "2.0",
                     "error": {
                         "code": INTERNAL_ERROR,
-                        "message": format!("Internal error: {}", e)
+                        "message": crate::utils::WireFailure::classify(&e).text()
                     },
                     "id": id
                 }));

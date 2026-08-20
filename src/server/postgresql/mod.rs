@@ -295,17 +295,15 @@ impl PostgresqlHandler {
                 "LLM error for PostgreSQL query on connection {} (overload={}): {}",
                 self.connection_id, overloaded, e
             );
-            let (code, message) = if overloaded {
+            let message = crate::utils::WireFailure::classify(&e).prefixed_text();
+            let code = if overloaded {
                 warn!(
                     "PostgreSQL connection {}: LLM capacity exhausted, replying 53300",
                     self.connection_id
                 );
-                (
-                    "53300",
-                    format!("netget: backend at capacity, retry: {}", e),
-                )
+                "53300"
             } else {
-                ("XX000", format!("netget: {}", e))
+                "XX000"
             };
             let _ = self
                 .status_tx
@@ -313,7 +311,7 @@ impl PostgresqlHandler {
             PgWireError::UserError(Box::new(ErrorInfo::new(
                 "ERROR".to_string(),
                 code.to_string(),
-                message,
+                message.to_string(),
             )))
         })?;
 

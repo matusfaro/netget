@@ -466,13 +466,11 @@ impl MysqlHandler {
                 // treats as "transient, safe to retry", rather than 1105 which reads as a
                 // permanent server fault.
                 let overloaded = crate::llm::is_overload_error(&e);
-                let (kind, message) = if overloaded {
-                    (
-                        ErrorKind::ER_LOCK_WAIT_TIMEOUT,
-                        format!("netget: backend at capacity, retry: {}", e),
-                    )
+                let message = crate::utils::WireFailure::classify(&e).prefixed_text();
+                let kind = if overloaded {
+                    ErrorKind::ER_LOCK_WAIT_TIMEOUT
                 } else {
-                    (ErrorKind::ER_UNKNOWN_ERROR, format!("netget: {}", e))
+                    ErrorKind::ER_UNKNOWN_ERROR
                 };
                 // Non-fatal: a wire fallback (ERR packet) is still delivered and the
                 // connection continues.

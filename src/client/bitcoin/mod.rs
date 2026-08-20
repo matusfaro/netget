@@ -284,8 +284,10 @@ impl BitcoinClient {
                 Ok(())
             }
             Err(e) => {
-                Log::new(Some(&status_tx))
-                    .error(format!("Bitcoin RPC client {} request failed: {}", client_id, e));
+                Log::new(Some(&status_tx)).error(format!(
+                    "Bitcoin RPC client {} request failed: {}",
+                    client_id, e
+                ));
                 Err(e.into())
             }
         }

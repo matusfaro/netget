@@ -32,9 +32,13 @@ use std::{
 fn connection_id_parameter() -> Parameter {
     Parameter {
         name: "connection_id".to_string(),
-        type_hint: "integer".to_string(),
-        description: "Which attached port to act on. Omit it when only one host is attached; \
-            required (copy it from the event) when there are several."
+        // "string", matching what the events emit (`"conn-7"`). Declaring "integer" while the
+        // event parameters declare "string" told the model to transform the one value it can
+        // copy, and the executor then rejected the transformed form.
+        type_hint: "string".to_string(),
+        description: "Which attached port to act on, as the event reports it (e.g. \"conn-7\"). \
+            Omit it when only one host is attached; required (copy it from the event) when \
+            there are several."
             .to_string(),
         required: false,
     }
@@ -244,8 +248,23 @@ impl UsbSerialProtocol {
             .lock()
             .map_err(|_| anyhow::anyhow!("USB serial handler registry poisoned"))?;
 
-        if let Some(id) = action["connection_id"].as_u64() {
-            let connection_id = ConnectionId::new(id as u32);
+        // Accept both spellings. Events report `connection_id` as the *string* `"conn-7"`
+        // (`mod.rs` formats it with `to_string()`), so an `as_u64()`-only read rejected the
+        // one value the model has any reason to send - it can only echo back what the event
+        // gave it. With one port attached that silently fell through to the inference path
+        // and looked like it worked; with two or more, every action failed with "the action
+        // must name one with 'connection_id'" and no value the model could send would work.
+        // Same repair as usb-keyboard, usb-mouse and usb-msc.
+        let requested = action["connection_id"]
+            .as_u64()
+            .map(|id| ConnectionId::new(id as u32))
+            .or_else(|| {
+                action["connection_id"]
+                    .as_str()
+                    .and_then(ConnectionId::from_string)
+            });
+
+        if let Some(connection_id) = requested {
             return handlers.get(&connection_id).cloned().ok_or_else(|| {
                 anyhow::anyhow!(
                     "No USB serial port attached on connection {}",

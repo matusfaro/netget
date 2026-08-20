@@ -626,14 +626,12 @@ async fn handle_openid_request(
                 method, path, status, code, overloaded, e
             ));
 
-            let description =
-                crate::utils::truncate_for_log(&e.to_string(), 200).replace(['\r', '\n'], " ");
             Ok(build_safe_response(
                 status,
                 [("content-type".to_string(), "application/json".to_string())],
                 json!({
                     "error": code,
-                    "error_description": format!("netget: {description}")
+                    "error_description": crate::utils::WireFailure::classify(&e).prefixed_text()
                 })
                 .to_string(),
             ))

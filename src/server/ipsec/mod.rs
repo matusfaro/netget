@@ -111,7 +111,8 @@ impl IpsecServer {
         // Bind UDP socket (IKE uses UDP port 500, NAT-T uses 4500)
         let socket = UdpSocket::bind(bind_addr).await?;
         let local_addr = socket.local_addr()?;
-        Log::new(Some(&status_tx)).info(format!("IPSec/IKEv2 honeypot listening on {}", local_addr));
+        Log::new(Some(&status_tx))
+            .info(format!("IPSec/IKEv2 honeypot listening on {}", local_addr));
 
         let socket = Arc::new(socket);
 

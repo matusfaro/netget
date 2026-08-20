@@ -553,10 +553,9 @@ impl ProxyServer {
                     dest_host, dest_port, e
                 ));
                 HttpsConnectionAction::Block {
-                    reason: Some(format!(
-                        "netget proxy: no filtering decision could be obtained ({})",
-                        crate::utils::truncate_for_log(&e.to_string(), 200)
-                    )),
+                    reason: Some(
+                        "netget proxy: no filtering decision could be obtained".to_string(),
+                    ),
                 }
             });
 
@@ -812,10 +811,8 @@ impl ProxyServer {
                 ));
                 RequestAction::Block {
                     status,
-                    body: format!(
-                        "netget proxy: no filtering decision could be obtained, request refused ({})",
-                        crate::utils::truncate_for_log(&e.to_string(), 200)
-                    ),
+                    body: "netget proxy: no filtering decision could be obtained, request refused"
+                        .to_string(),
                 }
             });
 
@@ -1106,8 +1103,21 @@ impl ProxyServer {
             }
         }
 
-        // Default to pass if no explicit action found
-        Ok(RequestAction::Pass)
+        // Fail closed, for the same reason the `Err` branch at the call site does: a request
+        // this proxy forwards is a request the model was asked to rule on and did not. The
+        // caller cannot tell the two apart from the action alone, so the distinction is in
+        // the body and the log - `no_decision` here, backend failure there - exactly so a
+        // silent model and a dead backend are never diagnosed as each other.
+        Log::new(Some(&status_tx)).warn(format!(
+            "Proxy blocking {} {}: handler produced no filtering decision (decision=no_decision)",
+            request_info.method, request_info.url
+        ));
+        Ok(RequestAction::Block {
+            status: 502,
+            body: "netget proxy: the filtering handler returned no decision for this request, \
+                   so it was refused"
+                .to_string(),
+        })
     }
 
     /// Consult LLM about an HTTPS connection (pass-through mode)
@@ -1152,8 +1162,21 @@ impl ProxyServer {
             }
         }
 
-        // Default to allow if no explicit action found
-        Ok(HttpsConnectionAction::Allow)
+        // Fail closed. An `Allow` here opens a bidirectional tunnel to an arbitrary host on
+        // the strength of a decision nobody made, and the access log then records it as a
+        // deliberate pass. See the sibling comment in `consult_llm_http_request`.
+        Log::new(Some(&status_tx)).warn(format!(
+            "Proxy blocking CONNECT {}:{}: handler produced no filtering decision \
+             (decision=no_decision)",
+            conn_info.destination_host, conn_info.destination_port
+        ));
+        Ok(HttpsConnectionAction::Block {
+            reason: Some(
+                "netget proxy: the filtering handler returned no decision for this connection, \
+                 so it was refused"
+                    .to_string(),
+            ),
+        })
     }
 
     /// Convert a proxy-style request (absolute-form request-target, plus

@@ -1237,8 +1237,7 @@ impl OAuth2Client {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        Log::new(Some(&status_tx))
-            .error(format!("OAuth2 client {} error: {}", client_id, error));
+        Log::new(Some(&status_tx)).error(format!("OAuth2 client {} error: {}", client_id, error));
 
         // Call LLM with error event
         let protocol = Arc::new(OAuth2ClientProtocol::new());

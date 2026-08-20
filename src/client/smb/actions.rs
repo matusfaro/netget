@@ -218,7 +218,11 @@ impl Protocol for SmbClientProtocol {
                     Parameter {
                         name: "content".to_string(),
                         type_hint: "string".to_string(),
-                        description: "File content to write".to_string(),
+                        description: "File content to write. Plain text is written as-is; to \
+                            write binary, prefix base64 with \"base64:\" - the same form \
+                            smb_file_read reports it in, so content read from one file can be \
+                            written straight to another."
+                            .to_string(),
                         required: true,
                     },
                 ],

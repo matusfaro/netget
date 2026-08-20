@@ -357,16 +357,29 @@ fn ollama_models_response_action() -> ActionDefinition {
 fn ollama_error_response_action() -> ActionDefinition {
     ActionDefinition {
         name: "ollama_error_response".to_string(),
-        description: "Respond with error message".to_string(),
-        parameters: vec![Parameter {
-            name: "error_message".to_string(),
-            type_hint: "string".to_string(),
-            description: "Error message to return".to_string(),
-            required: true,
-        }],
+        description: "Refuse this request. Returns the message as Ollama's \
+            {\"error\": \"...\"} body with a 4xx status, instead of answering it."
+            .to_string(),
+        parameters: vec![
+            Parameter {
+                name: "error_message".to_string(),
+                type_hint: "string".to_string(),
+                description: "Error message to return".to_string(),
+                required: true,
+            },
+            Parameter {
+                name: "status_code".to_string(),
+                type_hint: "number".to_string(),
+                description: "HTTP status for the refusal. Defaults to 400; real Ollama \
+                    answers 404 for an unknown model."
+                    .to_string(),
+                required: false,
+            },
+        ],
         example: json!({
             "type": "ollama_error_response",
-            "error_message": "Model not found"
+            "error_message": "Model not found",
+            "status_code": 404
         }),
         log_template: Some(
             LogTemplate::new()

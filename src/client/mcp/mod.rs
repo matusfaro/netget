@@ -443,10 +443,8 @@ impl McpClient {
                                 }
                             }
                             Err(e) => {
-                                Log::new(Some(status_tx)).error(format!(
-                                    "Failed to execute MCP action {}: {}",
-                                    name, e
-                                ));
+                                Log::new(Some(status_tx))
+                                    .error(format!("Failed to execute MCP action {}: {}", name, e));
                             }
                         }
                     }

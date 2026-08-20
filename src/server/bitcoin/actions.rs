@@ -457,6 +457,16 @@ fn send_version_action() -> ActionDefinition {
                 description: "Service flags (default: 0)".to_string(),
                 required: false,
             },
+            // Read by the executor but declared nowhere, so the model could not control it and
+            // every version message claimed the current wall-clock time.
+            Parameter {
+                name: "timestamp".to_string(),
+                type_hint: "number".to_string(),
+                description: "Unix timestamp for the version message (default: now). Peers use \
+                    it to estimate network-adjusted time."
+                    .to_string(),
+                required: false,
+            },
             Parameter {
                 name: "user_agent".to_string(),
                 type_hint: "string".to_string(),

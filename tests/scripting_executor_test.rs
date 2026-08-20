@@ -52,13 +52,14 @@ print(json.dumps(response))
 
     let input = ScriptInput {
         event_type_id: "test".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 8080,
             stack: "HTTP".to_string(),
             memory: String::new(),
             instruction: "Test".to_string(),
-        },
+        }),
         connection: None,
         event: serde_json::json!({}),
     };
@@ -101,13 +102,14 @@ print(json.dumps(response))
 
     let input = ScriptInput {
         event_type_id: "ssh_auth".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 22,
             stack: "SSH".to_string(),
             memory: String::new(),
             instruction: "Allow alice".to_string(),
-        },
+        }),
         connection: None,
         event: serde_json::json!({"username": "alice", "auth_type": "password"}),
     };
@@ -146,13 +148,14 @@ console.log(JSON.stringify(response));
 
     let input = ScriptInput {
         event_type_id: "test".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 8080,
             stack: "HTTP".to_string(),
             memory: String::new(),
             instruction: "Test".to_string(),
-        },
+        }),
         connection: None,
         event: serde_json::json!({}),
     };
@@ -188,13 +191,14 @@ fmt.Println(string(jsonBytes))
 
     let input = ScriptInput {
         event_type_id: "test".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 8080,
             stack: "HTTP".to_string(),
             memory: String::new(),
             instruction: "Test".to_string(),
-        },
+        }),
         connection: None,
         event: serde_json::json!({}),
     };
@@ -239,13 +243,14 @@ print encode_json($response);
 
     let input = ScriptInput {
         event_type_id: "test".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 8080,
             stack: "HTTP".to_string(),
             memory: String::new(),
             instruction: "Test".to_string(),
-        },
+        }),
         connection: None,
         event: serde_json::json!({}),
     };
@@ -297,13 +302,14 @@ print encode_json($response);
 
     let input = ScriptInput {
         event_type_id: "ssh_auth".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 22,
             stack: "SSH".to_string(),
             memory: String::new(),
             instruction: "Allow alice".to_string(),
-        },
+        }),
         connection: None,
         event: serde_json::json!({"username": "alice", "auth_type": "password"}),
     };
@@ -358,13 +364,14 @@ fn python_config(code: &str) -> ScriptConfig {
 fn test_input(event: serde_json::Value) -> ScriptInput {
     ScriptInput {
         event_type_id: "test".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 8080,
             stack: "TCP".to_string(),
             memory: String::new(),
             instruction: "Test".to_string(),
-        },
+        }),
         connection: None,
         event,
     }

@@ -19,71 +19,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};
 use tokio::time::{interval, Instant};
 
-/// Restore the terminal if the process dies on a *native* fatal signal.
-///
-/// The `RawModeGuard` (a `Drop`) and any Rust panic hook only run for Rust-level
-/// unwinding. A native crash — a SIGSEGV/SIGABRT/SIGTRAP from a C/ObjC library
-/// (e.g. a Metal/CoreFoundation over-release) — terminates the process without
-/// unwinding, so the guard never runs and the terminal is left in raw mode with
-/// the cursor hidden: the shell "hangs". This installs an async-signal-safe handler
-/// that puts the terminal back before the process actually dies.
-#[cfg(unix)]
-mod crash_restore {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
-    const STDIN_FD: libc::c_int = 0;
-    const STDOUT_FD: libc::c_int = 1;
-    // Show cursor; disable mouse tracking modes 1000/1002/1003/1006; disable bracketed paste 2004.
-    const RESET: &[u8] = b"\x1b[?25h\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?2004l";
-
-    // Written once, before any handler is installed; only read from the handler.
-    static mut SAVED: libc::termios = unsafe { std::mem::zeroed() };
-    static HAVE_SAVED: AtomicBool = AtomicBool::new(false);
-    static INSTALLED: AtomicBool = AtomicBool::new(false);
-
-    // Only calls async-signal-safe functions (tcsetattr, write, signal, raise).
-    extern "C" fn handler(sig: libc::c_int) {
-        unsafe {
-            if HAVE_SAVED.load(Ordering::SeqCst) {
-                libc::tcsetattr(STDIN_FD, libc::TCSANOW, std::ptr::addr_of!(SAVED));
-            }
-            libc::write(
-                STDOUT_FD,
-                RESET.as_ptr() as *const libc::c_void,
-                RESET.len(),
-            );
-            // Re-raise with the default disposition so the process still dies with
-            // this signal (and the OS records the crash) — we only cleaned up first.
-            libc::signal(sig, libc::SIG_DFL);
-            libc::raise(sig);
-        }
-    }
-
-    /// Capture the *current* (pre-raw-mode, cooked) terminal state and install the
-    /// handler. Call this immediately BEFORE enabling raw mode so the saved state is
-    /// the one to restore to. Idempotent.
-    pub fn install() {
-        if INSTALLED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        unsafe {
-            if libc::tcgetattr(STDIN_FD, std::ptr::addr_of_mut!(SAVED)) == 0 {
-                HAVE_SAVED.store(true, Ordering::SeqCst);
-            }
-            for &sig in &[
-                libc::SIGSEGV,
-                libc::SIGABRT,
-                libc::SIGBUS,
-                libc::SIGILL,
-                libc::SIGTRAP,
-                libc::SIGFPE,
-            ] {
-                libc::signal(sig, handler as libc::sighandler_t);
-            }
-        }
-    }
-}
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::events::{EventHandler, UserCommand};
 use crate::llm::OllamaClient;
@@ -122,68 +58,15 @@ pub async fn run_rolling_tui(
     // Wrap palette in Arc for sharing
     let palette = Arc::new(palette);
 
-    // Determine configured model: args override settings
-    let configured_model = args.model.clone().or(settings.lock().await.model.clone());
-
-    // Resolve the base URL for model selection and banner generation
-    let base_url = args
-        .openai_url
-        .as_deref()
-        .or(args.ollama_url.as_deref())
-        .unwrap_or("http://localhost:11434");
-
-    // Select or validate model
-    let is_openai = args.openai_url.is_some();
-    let (selected_model, model_messages) = if is_openai {
-        // OpenAI mode: model was already validated as required in create_llm_client
-        let model = configured_model.clone().unwrap_or_default();
-        let messages = vec![format!("✓  Using OpenAI-compatible backend: {}", base_url)];
-        (model, messages)
-    } else {
-        match crate::llm::select_or_validate_model(configured_model.clone(), true, base_url).await {
-            Ok(Some(model)) => {
-                info!("✓  Using model: {}", model);
-                let messages = if let Some(ref config_model) = configured_model {
-                    if config_model == &model {
-                        info!("✓  Using configured model: {}", model);
-                        vec![]
-                    } else {
-                        info!(
-                            "⚠  Configured model '{}' not found, auto-selected: {}",
-                            config_model, model
-                        );
-                        vec![]
-                    }
-                } else {
-                    vec![
-                        format!(
-                            "⚠  No model configured, auto-selected: {} (largest/most recent)",
-                            model
-                        ),
-                        "   To set a different model, use: /model or edit ~/.netget settings"
-                            .to_string(),
-                    ]
-                };
-                (model, messages)
-            }
-            Ok(None) => {
-                // No model available, but interactive mode can continue
-                warn!("⚠  No model selected. Use /model command to select one.");
-                let messages = vec![
-                    "✗  Ollama is not available or no models found.".to_string(),
-                    "   Please ensure Ollama is running: https://ollama.ai".to_string(),
-                    "   Use `/model` to list and select a model once Ollama is running."
-                        .to_string(),
-                ];
-                ("".to_string(), messages)
-            }
-            Err(e) => {
-                error!("Failed to initialize model: {}", e);
-                eprintln!("✗  Failed to initialize model: {}", e);
-                return Err(e);
-            }
-        }
+    // Resolve model + backend URL (shared logic with the dashboard)
+    let resolved = {
+        let settings_guard = settings.lock().await;
+        crate::cli::model_select::resolve_startup_model(args, &settings_guard).await?
     };
+    let base_url = resolved.base_url;
+    let base_url = base_url.as_str();
+    let selected_model = resolved.model;
+    let model_messages = resolved.messages;
 
     state
         .set_ollama_model(if selected_model.is_empty() {
@@ -207,8 +90,7 @@ pub async fn run_rolling_tui(
     // Capture the cooked terminal state and arm the native-crash restorer BEFORE
     // entering raw mode, so a SIGSEGV/SIGABRT/SIGTRAP from a C/ObjC library does not
     // leave the shell wedged in raw mode. See `crash_restore`.
-    #[cfg(unix)]
-    crash_restore::install();
+    crate::cli::crash_restore::install(b"");
     debug!("Rolling TUI: Enabling raw mode...");
     terminal::enable_raw_mode()?;
     debug!("Rolling TUI: Raw mode enabled");
@@ -311,7 +193,7 @@ pub async fn run_rolling_tui(
     // Spawn async task to generate and stream ASCII art banner (unless suppressed)
     // This runs in the background and doesn't block TUI startup
     // The banner is sent through status_tx and appears in the TUI output
-    if !args.suppress_art {
+    if args.show_art {
         let ollama_url_clone = base_url.to_string();
         let model_clone = selected_model.clone();
         let status_tx_clone = status_tx.clone();
@@ -2642,6 +2524,43 @@ async fn handle_status_command(
                     }
                 }
             }
+
+            // Privileged *default* ports are advice, not exclusion. These protocols
+            // are fully available — they just cannot use their well-known port
+            // without privilege, so name the port and move on. They used to be
+            // reported above as excluded and hidden from the model, which meant a
+            // non-root netget could not serve DNS, HTTP, SMTP or SSH at all, on any
+            // port.
+            let privileged_defaults =
+                crate::protocol::server_registry::registry().privileged_default_ports(&caps);
+            if !privileged_defaults.is_empty() {
+                print_output_line(
+                    &format!(
+                        "Available, but not on their default port ({}): this process cannot bind \
+                         below 1024, so pass a port >= 1024 (or run as root).",
+                        privileged_defaults.len()
+                    ),
+                    footer,
+                    palette,
+                )?;
+                for (name, port) in &privileged_defaults {
+                    // +8000 keeps the well-known number readable and is always
+                    // unprivileged (the largest privileged port is 1023, so the
+                    // result is 8001..=9023). It also lands on the conventional
+                    // choice for the common cases: 80 -> 8080, 443 -> 8443,
+                    // 853 -> 8853.
+                    print_output_line(
+                        &format!(
+                            "  [server] {} — defaults to {}; try {}",
+                            name,
+                            port,
+                            port + 8000
+                        ),
+                        footer,
+                        palette,
+                    )?;
+                }
+            }
         }
         UserCommand::ShowUsage => {
             // Toggle usage stats display
@@ -3490,6 +3409,7 @@ async fn handle_load(
                         scheduled_tasks,
                         feedback_instructions,
                         llm.clone(),
+                        None, // status_tx: legacy TUI keeps the drain-to-tracing behavior
                     )
                     .await
                     {

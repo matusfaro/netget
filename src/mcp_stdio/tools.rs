@@ -1178,11 +1178,16 @@ impl NetGetMcpService {
         let mut out = format!("## Recent requests ({} shown)\n\n", entries.len());
         for e in &entries {
             let age = now_ms.saturating_sub(e.unix_ms) / 1000;
+            let owner = match (e.server_id, e.client_id) {
+                (Some(id), _) => format!("server #{id}"),
+                (None, Some(id)) => format!("client #{id}"),
+                (None, None) => "unknown".to_string(),
+            };
             out.push_str(&format!(
-                "- **#{}** [{}s ago] server #{} ({}) — {} — {} → {}\n",
+                "- **#{}** [{}s ago] {} ({}) — {} — {} → {}\n",
                 e.id,
                 age,
-                e.server_id,
+                owner,
                 e.protocol,
                 e.event_type,
                 summarize_request(&e.request),
@@ -1212,16 +1217,21 @@ impl NetGetMcpService {
                     .unwrap_or_else(|_| e.request.to_string());
                 let response = serde_json::to_string_pretty(&e.response)
                     .unwrap_or_else(|_| "[]".to_string());
+                let owner = match (e.server_id, e.client_id) {
+                    (Some(id), _) => format!("Server #{id}"),
+                    (None, Some(id)) => format!("Client #{id}"),
+                    (None, None) => "Unknown".to_string(),
+                };
                 let result = format!(
                     "## Access log #{}\n\n\
-                     - **Server**: #{} ({})\n\
+                     - **Owner**: {} ({})\n\
                      - **Connection**: {}\n\
                      - **Event**: {}\n\
                      - **When**: {}s ago (unix_ms {})\n\n\
                      ### Request\n```json\n{}\n```\n\n\
                      ### Response (actions)\n```json\n{}\n```\n",
                     e.id,
-                    e.server_id,
+                    owner,
                     e.protocol,
                     e.connection_id
                         .map(|c| c.to_string())
@@ -1304,6 +1314,7 @@ impl NetGetMcpService {
             scheduled_tasks,
             params.feedback_instructions,
             self.state.llm_client.clone(),
+            None, // status_tx: MCP has no status stream, drain to tracing
         )
         .await
         {

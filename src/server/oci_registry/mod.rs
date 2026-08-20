@@ -629,7 +629,7 @@ async fn handle_oci_request(
             return Ok(error_response(
                 503,
                 "UNKNOWN",
-                &format!("registry backend unavailable: {}", e),
+                crate::utils::WireFailure::classify(&e).text(),
                 None,
             ));
         }

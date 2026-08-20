@@ -49,21 +49,33 @@ pub const HTTP_CLIENT_CONNECTED: &str = "HTTP client";
 pub const AMQP_CLIENT_CONNECTED: &str = "AMQP client";
 
 // Server patterns - TCP
-pub const TCP_SERVER_LISTENING: &str = "TCP server (action-based) listening on";
+//
+// The "(action-based)" qualifier was dropped from these startup lines long ago
+// and the constants were never updated, so every test waiting on one sat out its
+// full timeout and then failed somewhere else entirely. `tests/log_patterns_test.rs`
+// now fails the build on a constant that matches no log line.
+pub const TCP_SERVER_LISTENING: &str = "TCP server listening on";
 pub const TCP_SERVER_RECEIVED: &str = "TCP received";
 pub const TCP_SERVER_CONNECTION_CLOSED: &str = "Connection";
 
 // Server patterns - Telnet
-pub const TELNET_SERVER_LISTENING: &str = "Telnet server (action-based) listening on";
-pub const TELNET_SERVER_RECEIVED: &str = "Telnet server received data";
+pub const TELNET_SERVER_LISTENING: &str = "Telnet server listening on";
 
 // Server patterns - Redis
 pub const REDIS_SERVER_LISTENING: &str = "Redis server listening on";
-pub const REDIS_SERVER_RECEIVED: &str = "Redis server received command";
 
 // Server patterns - HTTP
-pub const HTTP_SERVER_LISTENING: &str = "HTTP server (action-based) listening on";
-pub const HTTP_SERVER_REQUEST: &str = "HTTP request received:";
+//
+// The HTTP server names itself from its TLS mode ("HTTP"/"HTTPS server listening
+// on ..."), so the shared suffix is the whole matchable part.
+pub const HTTP_SERVER_LISTENING: &str = "server listening on";
+
+// TELNET_SERVER_RECEIVED, REDIS_SERVER_RECEIVED and HTTP_SERVER_REQUEST used to
+// live here. They described per-request lines that no longer exist in any form:
+// that detail moved to the protocols' event log templates, and the per-read
+// summaries are DEBUG/Sink::FileOnly so they never reach the status stream a test
+// observes. Nothing referenced them. A pattern that cannot match is worse than an
+// absent one — it turns "this never happened" into a timeout somewhere unrelated.
 
 // General patterns
 pub const SERVER_STARTUP: &str = "Starting server";

@@ -389,17 +389,15 @@ impl Pop3Session {
 /// there is no way for this path to authenticate anybody or hand out a message.
 #[cfg(feature = "pop3")]
 fn pop3_failure_reply(err: &anyhow::Error) -> String {
-    // The reply is one line; a newline in the error text would forge a second response, and a
-    // leading `.` would terminate a multiline block.
-    let sanitized =
-        crate::utils::truncate::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
-    if crate::llm::is_overload_error(err) {
-        format!(
-            "-ERR [SYS/TEMP] netget: backend at capacity, retry later ({})\r\n",
-            sanitized
-        )
+    // The text is a category, never the error itself (`crate::utils::wire_failure`). The reply
+    // is one line, so a newline in an error would have forged a second response, and a leading
+    // `.` would have terminated a multiline block.
+    let failure = crate::utils::WireFailure::classify(err);
+    let text = failure.prefixed_text();
+    if failure.is_overloaded() {
+        format!("-ERR [SYS/TEMP] {text}\r\n")
     } else {
-        format!("-ERR [SYS/PERM] netget: {}\r\n", sanitized)
+        format!("-ERR [SYS/PERM] {text}\r\n")
     }
 }
 

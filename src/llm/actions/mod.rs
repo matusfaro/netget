@@ -517,25 +517,35 @@ pub fn normalize_action_object(value: &serde_json::Value) -> serde_json::Value {
         None => return value.clone(),
     };
 
-    let name = obj
-        .get("type")
-        .and_then(|v| v.as_str())
-        .or_else(|| obj.get("function").and_then(|v| v.as_str()))
-        .or_else(|| obj.get("name").and_then(|v| v.as_str()));
-    let name = match name {
-        Some(n) => n.to_string(),
-        None => return value.clone(),
+    // `name` is BOTH a tool-calling spelling of the action name
+    // ({"name": "send_x", "arguments": {…}}) and a legitimate *parameter* of
+    // real actions — send_nntp_group's newsgroup, create_database's database,
+    // openid/oci_registry/dc fields. Consume it as the action name only when
+    // nothing else supplies one; otherwise it is data and must survive, or the
+    // executor sees the action with the field silently missing and fails it
+    // with "Missing 'name' field" against a model answer that had it.
+    let (name, name_was_the_action) = match obj.get("type").and_then(|v| v.as_str()) {
+        Some(t) => (t.to_string(), false),
+        None => match obj.get("function").and_then(|v| v.as_str()) {
+            Some(f) => (f.to_string(), false),
+            None => match obj.get("name").and_then(|v| v.as_str()) {
+                Some(n) => (n.to_string(), true),
+                None => return value.clone(),
+            },
+        },
     };
 
     let mut out = serde_json::Map::new();
     out.insert("type".to_string(), serde_json::Value::String(name));
 
-    // Flat params: keep everything except the name and wrapper keys.
+    // Flat params: keep everything except wrapper keys and whichever key
+    // supplied the action name.
     for (k, v) in obj {
-        if matches!(
+        let is_wrapper = matches!(
             k.as_str(),
-            "type" | "function" | "name" | "args" | "arguments" | "parameters"
-        ) {
+            "type" | "function" | "args" | "arguments" | "parameters"
+        );
+        if is_wrapper || (k == "name" && name_was_the_action) {
             continue;
         }
         out.insert(k.clone(), v.clone());

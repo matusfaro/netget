@@ -363,8 +363,12 @@ fn build_peer_config_accepts_valid_key_and_ips() {
 fn build_peer_config_rejects_malformed_key() {
     use ::netget::server::wireguard::build_peer_config;
     // A malformed public key must fail-closed rather than configure a garbage peer.
-    let err = build_peer_config("not-a-valid-wireguard-key", &["10.20.30.2/32".to_string()], None)
-        .expect_err("malformed public key must be rejected");
+    let err = build_peer_config(
+        "not-a-valid-wireguard-key",
+        &["10.20.30.2/32".to_string()],
+        None,
+    )
+    .expect_err("malformed public key must be rejected");
     assert!(
         err.to_string().to_lowercase().contains("public key"),
         "error should name the public key, got: {err}"
@@ -411,8 +415,14 @@ async fn add_peer_action_is_declared_and_documented() {
         .filter(|p| p.required)
         .map(|p| p.name.as_str())
         .collect();
-    assert!(required.contains(&"public_key"), "public_key must be required");
-    assert!(required.contains(&"allowed_ips"), "allowed_ips must be required");
+    assert!(
+        required.contains(&"public_key"),
+        "public_key must be required"
+    );
+    assert!(
+        required.contains(&"allowed_ips"),
+        "allowed_ips must be required"
+    );
 }
 
 #[tokio::test]

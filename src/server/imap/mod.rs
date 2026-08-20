@@ -21,7 +21,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 #[cfg(feature = "imap")]
 use crate::llm::action_helper::call_llm;
@@ -129,10 +129,8 @@ impl ImapServer {
                             // Handle IMAP session
                             if let Err(e) = session.handle().await {
                                 error!("IMAP session error for {}: {}", connection_id, e);
-                                Log::new(Some(&status_clone)).error(format!(
-                                    "IMAP session {} error: {}",
-                                    connection_id, e
-                                ));
+                                Log::new(Some(&status_clone))
+                                    .error(format!("IMAP session {} error: {}", connection_id, e));
                             }
 
                             // Mark connection as closed
@@ -219,8 +217,7 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                         self.connection_id,
                         line.trim()
                     );
-                    Log::new(Some(&self.status_tx))
-                        .trace(format!("IMAP command: {}", line.trim()));
+                    Log::new(Some(&self.status_tx)).trace(format!("IMAP command: {}", line.trim()));
 
                     // Update bytes received
                     self.app_state
@@ -348,13 +345,32 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
         )
         .await?;
 
+        // A command completes only when a line carrying the client's own tag
+        // goes out: async-imap, Thunderbird and every other client read until
+        // they see it. Untagged data alone leaves the client blocked forever,
+        // so track what was actually written and guarantee the completion
+        // below rather than trusting the model to have produced it.
+        let mut sent_tagged_completion = false;
+        let mut sent_any_output = false;
+        let mut deferred = false;
+
         // Execute actions returned by LLM
         for action_result in result.protocol_results {
             match action_result {
                 ActionResult::Output(data) => {
+                    sent_any_output = true;
+                    let text = String::from_utf8_lossy(&data);
+                    if text.lines().any(|line| {
+                        line.trim_start()
+                            .to_uppercase()
+                            .starts_with(&format!("{} ", tag.to_uppercase()))
+                    }) {
+                        sent_tagged_completion = true;
+                    }
                     self.send_response(&data).await?;
                 }
                 ActionResult::CloseConnection => {
+                    deferred = true;
                     // Update session state to Logout
                     self.app_state
                         .update_imap_session_state(
@@ -365,6 +381,7 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                         .await;
                 }
                 ActionResult::WaitForMore => {
+                    deferred = true;
                     // Mark as accumulating (for multi-line commands like APPEND)
                     self.app_state
                         .update_imap_protocol_state(
@@ -376,6 +393,36 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
                 }
                 _ => {}
             }
+        }
+
+        // Guarantee the tagged completion. Without it the client waits out its
+        // own timeout on a command the server considers finished — the single
+        // most common way an IMAP answer goes wrong, because untagged data
+        // reads like a complete reply to everything except the client.
+        if !sent_tagged_completion && !deferred {
+            let completion = if sent_any_output {
+                // Untagged data went out, so the command did produce its answer;
+                // only the terminator is missing.
+                format!("{} OK {} completed\r\n", tag, command.to_uppercase())
+            } else {
+                // Nothing at all was written: fail closed with a refusal the
+                // client can act on, distinguishable from a real success.
+                warn!(
+                    "IMAP command {} on connection {} produced no response; answering NO",
+                    command, self.connection_id
+                );
+                format!(
+                    "{} NO netget: no response was produced for {}\r\n",
+                    tag,
+                    command.to_uppercase()
+                )
+            };
+            debug!(
+                "IMAP appending missing tagged completion for {}: {}",
+                command,
+                completion.trim_end()
+            );
+            self.send_response(completion.as_bytes()).await?;
         }
 
         // Handle state transitions based on command
@@ -421,7 +468,7 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
         for action_result in &result.protocol_results {
             if let ActionResult::Output(data) = action_result {
                 let response = String::from_utf8_lossy(&data);
-                if response.contains(&format!("{} OK", tag)) {
+                if tagged_ok_for(&response, tag) {
                     auth_success = true;
                 }
                 self.send_response(&data).await?;
@@ -555,17 +602,32 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
 /// would tell the client the command was carried out.
 #[cfg(feature = "imap")]
 fn imap_failure_code(err: &anyhow::Error) -> (&'static str, String) {
-    // Response text is a single line; a newline in the error would forge a second response.
-    let sanitized =
-        crate::utils::truncate::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
-    if crate::llm::is_overload_error(err) {
-        (
-            "UNAVAILABLE",
-            format!("netget: backend at capacity, retry later ({})", sanitized),
-        )
+    // The text is a category, never the error itself (`crate::utils::wire_failure`), which
+    // also makes it structurally impossible for a newline in an error to forge a second
+    // response line.
+    let failure = crate::utils::WireFailure::classify(err);
+    let code = if failure.is_overloaded() {
+        "UNAVAILABLE"
     } else {
-        ("SERVERBUG", format!("netget: {}", sanitized))
-    }
+        "SERVERBUG"
+    };
+    (code, failure.prefixed_text().to_string())
+}
+
+/// Does this payload contain the tagged `OK` completion for `tag`?
+///
+/// Used to decide whether a LOGIN succeeded, which makes it an authentication check, so it
+/// parses rather than pattern-matches. The previous `response.contains("{tag} OK")` searched
+/// the whole payload for that text anywhere: a refusal whose human-readable message quoted
+/// the phrase - `A001 NO LOGIN failed, expected A001 OK` - authenticated the session, and so
+/// did an untagged line that happened to contain it. RFC 3501 §7.1 puts the condition in the
+/// second field of a line whose first field is the tag, and nowhere else.
+#[cfg(feature = "imap")]
+fn tagged_ok_for(payload: &str, tag: &str) -> bool {
+    payload.lines().any(|line| {
+        let mut fields = line.trim().split_whitespace();
+        fields.next() == Some(tag) && fields.next().is_some_and(|status| status == "OK")
+    })
 }
 
 /// Parse IMAP command line into (tag, command, args)

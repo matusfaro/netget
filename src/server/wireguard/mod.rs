@@ -132,9 +132,9 @@ pub fn build_peer_config(
     // surprise, and the caller should see the error and fix it.
     let mut allowed_ip_masks: Vec<IpAddrMask> = Vec::with_capacity(allowed_ips.len());
     for ip_str in allowed_ips {
-        let mask = ip_str
-            .parse::<IpAddrMask>()
-            .with_context(|| format!("Invalid allowed IP (expected CIDR, e.g. 10.20.30.2/32): {ip_str}"))?;
+        let mask = ip_str.parse::<IpAddrMask>().with_context(|| {
+            format!("Invalid allowed IP (expected CIDR, e.g. 10.20.30.2/32): {ip_str}")
+        })?;
         allowed_ip_masks.push(mask);
     }
 
@@ -168,8 +168,7 @@ impl WireguardServer {
         let private_key_str = private_key.to_string();
         let public_key_str = public_key.to_string();
 
-        Log::new(Some(&status_tx))
-            .info(format!("WireGuard server public key: {}", public_key_str));
+        Log::new(Some(&status_tx)).info(format!("WireGuard server public key: {}", public_key_str));
 
         // Determine interface name based on OS
         let interface_name: String = if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") {

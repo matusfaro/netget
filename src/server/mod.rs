@@ -3,6 +3,7 @@
 //! Handles network servers, connection management, and protocol implementations
 
 pub mod connection;
+pub mod peer_support;
 // server_trait requires async-trait, so only compile when features that provide it are enabled
 #[cfg(any(
     feature = "tcp",

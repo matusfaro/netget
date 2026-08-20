@@ -468,16 +468,17 @@ fn encode_error(msg: &str) -> Vec<u8> {
 
 /// The RESP simple-error payload to send when the LLM backend fails.
 ///
-/// A RESP simple error is terminated by CRLF and has no length prefix, so a newline anywhere
-/// in the text ends the frame early and the remainder is parsed as the *next* reply. Model and
-/// backend error strings are routinely multi-line (a timeout with a URL, a serde error with a
-/// snippet), so this is not theoretical: it would desynchronise the connection for good.
+/// The text is a category, never the error itself (`crate::utils::wire_failure`). That also
+/// settles a framing hazard: a RESP simple error is CRLF-terminated with no length prefix, so
+/// a newline anywhere in the text ends the frame early and the remainder is parsed as the
+/// *next* reply - and backend error strings are routinely multi-line (a timeout with a URL, a
+/// serde error with a snippet), so it would have desynchronised the connection for good.
 fn redis_error_message(err: &anyhow::Error, overloaded: bool) -> String {
-    let reason = crate::utils::truncate_for_log(&err.to_string(), 200).replace(['\r', '\n'], " ");
+    let text = crate::utils::WireFailure::classify(err).prefixed_text();
     if overloaded {
-        format!("LOADING netget: backend at capacity, retry later: {reason}")
+        format!("LOADING {text}")
     } else {
-        format!("ERR netget: {reason}")
+        format!("ERR {text}")
     }
 }
 

@@ -83,13 +83,14 @@ fn test_build_config_no_source() {
 fn test_try_execute_no_config() {
     let input = ScriptInput {
         event_type_id: "test".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 8080,
             stack: "TEST".to_string(),
             memory: String::new(),
             instruction: String::new(),
-        },
+        }),
         connection: None,
         event: serde_json::json!({}),
     };
@@ -109,13 +110,14 @@ fn test_try_execute_wrong_context() {
 
     let input = ScriptInput {
         event_type_id: "http_request".to_string(),
-        server: ServerContext {
+        client: None,
+        server: Some(ServerContext {
             id: 1,
             port: 8080,
             stack: "HTTP".to_string(),
             memory: String::new(),
             instruction: String::new(),
-        },
+        }),
         connection: None,
         event: serde_json::json!({}),
     };

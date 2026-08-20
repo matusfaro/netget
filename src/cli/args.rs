@@ -273,6 +273,22 @@ pub struct Args {
     )]
     pub llm_agent_timeout: u64,
 
+    /// Wall-clock bound (seconds) on a single LLM backend call
+    #[clap(
+        long = "llm-request-timeout",
+        value_name = "SECONDS",
+        help = "Wall-clock bound (seconds) on a single LLM backend call before it is treated as a transport failure and retried. Default: 300. A locally served 31B reasoning model answering a full prompt with the default tool list was measured at ~79s idle, so the old 120s default failed whenever anything else shared the GPU. Lower it only if you would rather fail fast than wait."
+    )]
+    pub llm_request_timeout: Option<u64>,
+
+    /// Completion-token budget for a single LLM call
+    #[clap(
+        long = "llm-max-tokens",
+        value_name = "TOKENS",
+        help = "Completion tokens a single LLM call may produce before it is cut off. This is a runaway guard, not a working budget: the default (32768) sits far above any legitimate answer so it never truncates one, and --llm-request-timeout is the primary backstop. Lower it only to bound a model you expect to ramble."
+    )]
+    pub llm_max_tokens: Option<u32>,
+
     /// Path to embedded GGUF model file (enables embedded LLM inference)
     #[cfg(feature = "embedded-llm")]
     #[clap(
@@ -299,12 +315,25 @@ pub struct Args {
     )]
     pub theme: String,
 
-    /// Suppress ASCII art banner on startup
+    /// Show the generated ASCII art banner on startup (off by default)
+    ///
+    /// `--suppress-art` is kept as a hidden no-op so existing scripts and the
+    /// test harness keep working now that suppressing is the default.
     #[clap(
-        long = "suppress-art",
-        help = "Skip the Ollama-generated ASCII art banner on startup"
+        long = "show-art",
+        help = "Show the Ollama-generated ASCII art banner on startup (costs one model round trip)"
     )]
+    pub show_art: bool,
+
+    #[clap(long = "suppress-art", hide = true)]
     pub suppress_art: bool,
+
+    /// Use the legacy rolling-terminal TUI instead of the full-screen dashboard
+    #[clap(
+        long = "legacy-tui",
+        help = "Use the legacy rolling-terminal TUI (scrollback-based, no mouse) instead of the default full-screen dashboard"
+    )]
+    pub legacy_tui: bool,
 
     /// Maximum concurrent LLM requests (default: 1)
     #[clap(

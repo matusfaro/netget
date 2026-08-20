@@ -247,7 +247,7 @@ async fn handle_s3_request_with_llm(
                 .header("Content-Type", "application/xml")
                 .body(Full::new(Bytes::from(build_error_xml(
                     "InternalError",
-                    &e.to_string(),
+                    crate::utils::WireFailure::classify(&e).text(),
                 ))))
                 .unwrap())
         }
@@ -436,8 +436,10 @@ fn process_s3_action_result(
 
                     // FileOnly: the send_s3_object_list action's own log_template already
                     // reports "-> S3 list objects (...)" to the TUI at INFO.
-                    Log::new(Some(status_tx))
-                        .debug(format!("Sending S3 object list ({} objects)", objects.len()));
+                    Log::new(Some(status_tx)).debug(format!(
+                        "Sending S3 object list ({} objects)",
+                        objects.len()
+                    ));
 
                     Some(
                         Response::builder()
@@ -459,8 +461,10 @@ fn process_s3_action_result(
 
                     // FileOnly: the send_s3_bucket_list action's own log_template already
                     // reports "-> S3 list buckets (...)" to the TUI at INFO.
-                    Log::new(Some(status_tx))
-                        .debug(format!("Sending S3 bucket list ({} buckets)", buckets.len()));
+                    Log::new(Some(status_tx)).debug(format!(
+                        "Sending S3 bucket list ({} buckets)",
+                        buckets.len()
+                    ));
 
                     Some(
                         Response::builder()
@@ -491,8 +495,10 @@ fn process_s3_action_result(
 
                     // FileOnly: the send_s3_error action's own log_template already reports
                     // "-> S3 error {error_code} (...)" to the TUI at INFO.
-                    Log::new(Some(status_tx))
-                        .debug(format!("Sending S3 error: {} ({})", error_code, status_code));
+                    Log::new(Some(status_tx)).debug(format!(
+                        "Sending S3 error: {} ({})",
+                        error_code, status_code
+                    ));
 
                     Some(
                         Response::builder()

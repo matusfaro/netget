@@ -168,10 +168,8 @@ impl BootpServer {
 
                             let event = Event::new(&BOOTP_REQUEST_EVENT, event_data);
 
-                            Log::new(Some(&status_clone)).debug(format!(
-                                "BOOTP calling LLM for request from {}",
-                                peer_addr
-                            ));
+                            Log::new(Some(&status_clone))
+                                .debug(format!("BOOTP calling LLM for request from {}", peer_addr));
 
                             match call_llm(
                                 &llm_clone,

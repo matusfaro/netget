@@ -376,7 +376,7 @@ fn send_to_connection_action() -> ActionDefinition {
         ],
         example: json!({
             "type": "send_to_connection",
-            "connection_id": "conn_12345",
+            "connection_id": "conn-12345",
             "data": "Hello from TCP",
             "encoding": "utf8"
         }),
@@ -401,7 +401,7 @@ fn close_connection_action() -> ActionDefinition {
         }],
         example: json!({
             "type": "close_connection",
-            "connection_id": "conn_12345"
+            "connection_id": "conn-12345"
         }),
         log_template: Some(
             LogTemplate::new()

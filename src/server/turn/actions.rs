@@ -833,9 +833,16 @@ fn common_event_parameters() -> Vec<Parameter> {
             required: true,
         },
         Parameter {
+            // The name says "peer" and the value is the *client*. Renaming it would break
+            // every handler interpolating {{event.peer_addr}}, so the description has to carry
+            // the whole warning - and it must, because on turn_create_permission_request this
+            // field sits directly beside `peer_addresses`, which really is the peer list. A
+            // model asked to permit "the peer" reads the singular, more obvious-looking name
+            // and permits the client's own address instead of the one it was asked about.
             name: "peer_addr".to_string(),
             type_hint: "string".to_string(),
-            description: "Client's IP:port as seen by the server".to_string(),
+            description: "The CLIENT's IP:port as seen by the server - despite the name, this is never a peer to relay to. On a create-permission or channel-bind request, the peer the client is asking about is in `peer_addresses`, not here."
+                .to_string(),
             required: true,
         },
         Parameter {
@@ -964,7 +971,8 @@ pub static TURN_CREATE_PERMISSION_REQUEST_EVENT: LazyLock<EventType> = LazyLock:
         vec![Parameter {
             name: "peer_addresses".to_string(),
             type_hint: "array".to_string(),
-            description: "Peer IP:port values the client asks permission for. Until a peer is permitted, nothing is relayed to or from it.".to_string(),
+            description: "Peer IP:port values the client asks permission for - these, and not `peer_addr` (which is the client itself), are what the response must permit. Until a peer is permitted, nothing is relayed to or from it."
+                .to_string(),
             required: true,
         }],
     ))

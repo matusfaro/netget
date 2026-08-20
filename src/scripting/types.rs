@@ -149,8 +149,15 @@ pub struct ScriptInput {
     /// Type of event/context (e.g., "ssh_auth", "ssh_banner", "http_request")
     pub event_type_id: String,
 
-    /// Server information
-    pub server: ServerContext,
+    /// Server information (absent for client-side events). Serialization skips
+    /// `None`, so scripts attached to servers see exactly the input shape they
+    /// always did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server: Option<ServerContext>,
+
+    /// Client information (present only for client-side events)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client: Option<ClientContext>,
 
     /// Connection information (if applicable)
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,6 +183,25 @@ pub struct ServerContext {
     pub memory: String,
 
     /// User instructions for the server
+    pub instruction: String,
+}
+
+/// Client context information (for scripts attached to client protocols)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientContext {
+    /// Client ID
+    pub id: u32,
+
+    /// Remote address the client is connected to
+    pub remote_addr: String,
+
+    /// Protocol name (e.g. "TCP", "Telnet")
+    pub protocol: String,
+
+    /// Client memory (state storage)
+    pub memory: String,
+
+    /// User instructions for the client
     pub instruction: String,
 }
 

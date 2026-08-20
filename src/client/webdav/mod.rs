@@ -253,8 +253,7 @@ impl WebdavClient {
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
-                Log::new(Some(status_tx))
-                    .info(format!("WebDAV client {} disconnected", client_id));
+                Log::new(Some(status_tx)).info(format!("WebDAV client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
             }
             _ => {

@@ -105,6 +105,13 @@ pub struct NetGetConfig {
     pub mock_config: Option<MockLlmConfig>,
     /// Force use of real Ollama (overrides env var/flag)
     pub force_ollama: bool,
+    /// How long to wait for netget to start its servers/clients (default 120s).
+    /// Raise this for real-Ollama tests: a setup conversation can take several
+    /// model iterations at a minute or more each.
+    pub startup_timeout: Duration,
+    /// Extra CLI arguments inserted before the prompt (e.g. `--server tcp
+    /// --port 0` for a direct, no-model-call server start).
+    pub extra_args: Vec<String>,
 }
 
 /// Detect whether tests should drive a real Ollama rather than the mock.
@@ -139,6 +146,8 @@ impl NetGetConfig {
             llm_max_concurrent: Some(1000), // High concurrency for E2E tests (effectively unlimited)
             mock_config: None,
             force_ollama: false,
+            startup_timeout: Duration::from_secs(120),
+            extra_args: Vec::new(),
         }
     }
 
@@ -156,6 +165,8 @@ impl NetGetConfig {
             llm_max_concurrent: Some(1000), // High concurrency for E2E tests (effectively unlimited)
             mock_config: None,
             force_ollama: false,
+            startup_timeout: Duration::from_secs(120),
+            extra_args: Vec::new(),
         }
     }
 
@@ -180,6 +191,8 @@ impl NetGetConfig {
             llm_max_concurrent: None,
             mock_config: None,
             force_ollama: false,
+            startup_timeout: Duration::from_secs(120),
+            extra_args: Vec::new(),
         }
     }
 
@@ -253,6 +266,28 @@ impl NetGetConfig {
     {
         let builder = MockLlmBuilder::new();
         self.mock_config = Some(builder_fn(builder).build());
+        self
+    }
+
+    /// Set how long to wait for netget startup (default 120s). Real-Ollama
+    /// tests should raise this: setup can take several model iterations.
+    #[allow(dead_code)]
+    pub fn with_startup_timeout(mut self, timeout: Duration) -> Self {
+        self.startup_timeout = timeout;
+        self
+    }
+
+    /// Insert extra CLI arguments before the prompt argument. Use
+    /// `["--server", "tcp", "--port", "0"]` to start a server directly with
+    /// no initial model call (the prompt then becomes the server's
+    /// per-request instruction).
+    #[allow(dead_code)]
+    pub fn with_extra_args<I, S>(mut self, args: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extra_args = args.into_iter().map(Into::into).collect();
         self
     }
 
@@ -342,9 +377,9 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     if let Some(model) = &config.model {
         cmd.arg("--model").arg(model);
     } else {
-        // Use the same default as the application
-        // Note: Proxy tests require a capable model like qwen3-coder:30b
-        cmd.arg("--model").arg("qwen3-coder:30b");
+        // Default model for tests (override per-test with .with_model()).
+        // In mock mode the name is inert; in real-Ollama mode it must be pulled.
+        cmd.arg("--model").arg("qwen3.8:27b-mlx");
     }
 
     // Add log level
@@ -377,6 +412,11 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     // Add --ollama-url if using mock server
     if let Some(ref mock_server) = mock_ollama_server {
         cmd.arg("--ollama-url").arg(mock_server.base_url());
+    }
+
+    // Add any extra args (e.g. --server/--port for direct startup)
+    for arg in &config.extra_args {
+        cmd.arg(arg);
     }
 
     // Add the prompt as a single argument (for non-interactive mode)
@@ -421,20 +461,25 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
     // On failure, prepend anything the mock harness noticed about how it
     // answered the startup conversation. A misrouted mock rule otherwise
     // surfaces only as an opaque "No servers or clients started".
-    let (servers, clients) =
-        match wait_for_netget_startup_with_capture(&mut reader, output_lines_clone.clone()).await {
-            Ok(result) => result,
-            Err(e) => {
-                let mock_report = match mock_ollama_server {
-                    Some(ref mock) => mock.harness_diagnostics_report().await,
-                    None => None,
-                };
-                return Err(match mock_report {
-                    Some(report) => format!("{}\n\n{}", report, e).into(),
-                    None => e,
-                });
-            }
-        };
+    let (servers, clients) = match wait_for_netget_startup_with_capture(
+        &mut reader,
+        output_lines_clone.clone(),
+        config.startup_timeout,
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            let mock_report = match mock_ollama_server {
+                Some(ref mock) => mock.harness_diagnostics_report().await,
+                None => None,
+            };
+            return Err(match mock_report {
+                Some(report) => format!("{}\n\n{}", report, e).into(),
+                None => e,
+            });
+        }
+    };
 
     // IMPORTANT: Continue reading stdout in background to prevent pipe buffer from filling
     // Without this, the server will crash with "Broken pipe" when stdout buffer fills
@@ -461,6 +506,24 @@ pub async fn start_netget(config: NetGetConfig) -> E2EResult<NetGetInstance> {
 
 /// Parse server startup line and extract information
 fn parse_server_startup(line: &str) -> Option<(String, String, u16)> {
+    // Direct-start pattern (--server PROTOCOL): the model is never asked, and
+    // the line is "Server #N (STACK) started, skipping the initial model call."
+    // The port arrives separately via the "listening on ADDR:PORT" confirmation,
+    // which the startup loop already applies to port-0 servers.
+    if line.contains("started, skipping the initial model call") {
+        let id = line.split("Server #").nth(1).map(|rest| {
+            rest.chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect::<String>()
+        })?;
+        let stack_raw = line.split('(').nth(1)?.split(')').next()?;
+        let stack = server_registry::registry().parse_from_str(stack_raw)?;
+        if id.is_empty() {
+            return None;
+        }
+        return Some((id, stack, 0));
+    }
+
     // Look for pattern: "[SERVER] Starting server #N (STACK) on ADDR:PORT"
     if !line.contains("[SERVER]") || !line.contains("Starting server") {
         return None;
@@ -604,6 +667,7 @@ fn parse_client_connected(line: &str) -> Option<(String, String)> {
 async fn wait_for_netget_startup_with_capture(
     reader: &mut tokio::io::Lines<BufReader<tokio::process::ChildStdout>>,
     output_lines: std::sync::Arc<tokio::sync::Mutex<Vec<String>>>,
+    startup_timeout: Duration,
 ) -> E2EResult<(Vec<NetGetServer>, Vec<NetGetClient>)> {
     let wait_future = async move {
         let mut servers = Vec::new();
@@ -807,9 +871,12 @@ async fn wait_for_netget_startup_with_capture(
         Ok((final_servers, final_clients))
     };
 
-    timeout(Duration::from_secs(120), wait_future)
-        .await
-        .map_err(|_| "Timeout waiting for netget startup")?
+    timeout(startup_timeout, wait_future).await.map_err(|_| {
+        format!(
+            "Timeout waiting for netget startup after {:?}",
+            startup_timeout
+        )
+    })?
 }
 
 impl Drop for NetGetInstance {

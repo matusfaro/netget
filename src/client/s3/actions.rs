@@ -144,8 +144,19 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     Parameter {
                         name: "body".to_string(),
                         type_hint: "string".to_string(),
-                        description: "Object content (text or base64 for binary)".to_string(),
+                        description: "Object content. Plain text by default; set \
+                            encoding=\"base64\" to upload binary and put the base64 here."
+                            .to_string(),
                         required: true,
+                    },
+                    Parameter {
+                        name: "encoding".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "How to read `body`: \"utf8\" (default) stores it as \
+                            written, \"base64\" decodes it to bytes first. Required for binary \
+                            - without it the base64 text itself is stored."
+                            .to_string(),
+                        required: false,
                     },
                     Parameter {
                         name: "content_type".to_string(),
@@ -160,6 +171,7 @@ impl crate::llm::actions::protocol_trait::Protocol for S3ClientProtocol {
                     "bucket": "my-bucket",
                     "key": "data/file.txt",
                     "body": "Hello, S3!",
+                    "encoding": "utf8",
                     "content_type": "text/plain"
                 }),
                 log_template: None,

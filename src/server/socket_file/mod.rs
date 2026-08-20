@@ -429,7 +429,17 @@ impl SocketFileServer {
             if let Some(conn_data) = conns.get(&connection_id) {
                 conn_data.state.clone()
             } else {
-                return; // Connection not found
+                // Never silent. A miss here means the connection was torn down between the
+                // read and this lookup (peer reset, or close_this_connection on another
+                // task) - legitimate, but indistinguishable from a registration race, which
+                // is exactly what made the bitcoin accept-order bug so hard to find: the
+                // read loop logged "received N bytes" and then nothing at all.
+                debug!(
+                    "socket-file connection {} is no longer registered; dropping {} received bytes",
+                    connection_id,
+                    data.len()
+                );
+                return;
             }
         };
 
@@ -451,7 +461,7 @@ impl SocketFileServer {
         }
 
         // Merge any queued data with new data
-        let all_data = {
+        let mut all_data = {
             let mut conns = connections.lock().await;
             let conn_data = conns.get_mut(&connection_id).unwrap();
             conn_data.state = ConnectionState::Processing;
@@ -478,7 +488,11 @@ impl SocketFileServer {
             };
 
             let Some(write_half) = write_half else {
-                return; // Connection not found
+                debug!(
+                    "socket-file connection {} went away before its response could be written",
+                    connection_id
+                );
+                return;
             };
 
             // Format data for event parameter. Printable ASCII is passed through as text,
@@ -623,10 +637,26 @@ impl SocketFileServer {
                     };
 
                     if has_queued {
-                        log.debug(format!(
-                            "Processing queued data for socket file connection {connection_id}"
-                        ));
-                        // Loop continues to process queued data
+                        // Take the queue and make it the next iteration's payload.
+                        // Leaving it in place re-sent the SAME bytes to the model on
+                        // every pass and never emptied the queue: one response per
+                        // iteration, forever, for a single line of input.
+                        let queued = {
+                            let mut conns = connections.lock().await;
+                            match conns.get_mut(&connection_id) {
+                                Some(conn) => std::mem::take(&mut conn.queued_data),
+                                None => return,
+                            }
+                        };
+                        if queued.is_empty() {
+                            connections
+                                .lock()
+                                .await
+                                .entry(connection_id)
+                                .and_modify(|conn| conn.state = ConnectionState::Idle);
+                            return;
+                        }
+                        all_data = Bytes::from(queued);
                     } else {
                         // Go to Idle state
                         connections

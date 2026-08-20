@@ -9,7 +9,6 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use anyhow::Context;
 use base64::Engine;
 use bytes::Bytes;
 use http_body_util::Full;
@@ -253,8 +252,7 @@ async fn handle_npm_request(
         }),
     );
 
-    Log::new(Some(&status_tx))
-        .debug(format!("Calling LLM for NPM request: {} {}", method, path));
+    Log::new(Some(&status_tx)).debug(format!("Calling LLM for NPM request: {} {}", method, path));
 
     // Call LLM
     let llm_result = call_llm(
@@ -295,7 +293,7 @@ async fn handle_npm_request(
             // HTTP connection continues.
             Log::new(Some(&status_tx)).warn(format!("NPM LLM call failed: {}", e));
             let error_response = json!({
-                "error": format!("LLM error: {}", e)
+                "error": crate::utils::WireFailure::classify(&e).text()
             });
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -304,6 +302,30 @@ async fn handle_npm_request(
                 .unwrap())
         }
     }
+}
+
+/// A 500 for an answer the model gave that this server cannot turn into a response.
+///
+/// Every branch below used to `.unwrap()` on the field it needed. A missing field is
+/// the model's mistake, and `.unwrap()` inside a per-connection tokio task is the
+/// worst possible response to it: the panic is swallowed, the server keeps reporting
+/// `Running`, and the client hangs until its own timeout with nothing in the log
+/// connecting the two. An explicit 500 tells the client *and* the operator.
+///
+/// `reason` names action fields and this server's own expectations of them, so it goes
+/// to the operator only — the peer gets a category. See `crate::utils::wire_failure`.
+fn npm_server_error(
+    status_tx: &mpsc::UnboundedSender<String>,
+    reason: &str,
+) -> Response<Full<Bytes>> {
+    Log::new(Some(status_tx)).error(format!("NPM: could not build a response — {}", reason));
+    Response::builder()
+        .status(StatusCode::INTERNAL_SERVER_ERROR)
+        .header("Content-Type", "application/json")
+        .body(Full::new(Bytes::from(
+            json!({ "error": crate::utils::WireFailure::Unavailable.prefixed_text() }).to_string(),
+        )))
+        .unwrap()
 }
 
 /// Process LLM action result and build HTTP response
@@ -323,10 +345,16 @@ async fn process_npm_action_result(
         ActionResult::Custom { name, data } => {
             match name.as_str() {
                 "npm_package_metadata" => {
-                    let metadata = data
-                        .get("metadata")
-                        .context("Missing metadata in npm_package_metadata")
-                        .unwrap();
+                    // `.unwrap()` here used to panic the connection task, which
+                    // tokio::spawn swallows: the server kept reporting Running while
+                    // the client hung forever. A missing field is the model's mistake,
+                    // not ours — answer it.
+                    let Some(metadata) = data.get("metadata") else {
+                        return Some(npm_server_error(
+                            status_tx,
+                            "npm_package_metadata carried no 'metadata' field",
+                        ));
+                    };
 
                     // FileOnly: the npm_package_metadata action's own log_template already
                     // reports "-> NPM package metadata" to the TUI at INFO.
@@ -340,21 +368,52 @@ async fn process_npm_action_result(
                     )
                 }
                 "npm_package_tarball" => {
-                    let tarball_data = data
-                        .get("tarball_data")
-                        .and_then(|v| v.as_str())
-                        .context("Missing tarball_data in npm_package_tarball")
-                        .unwrap();
+                    let Some(tarball_data) = data.get("tarball_data").and_then(|v| v.as_str())
+                    else {
+                        return Some(npm_server_error(
+                            status_tx,
+                            "npm_package_tarball carried no 'tarball_data' string",
+                        ));
+                    };
 
-                    // Decode base64
-                    let decoded = base64::engine::general_purpose::STANDARD
-                        .decode(tarball_data)
-                        .unwrap_or_default();
+                    // Fail closed on undecodable base64. This was
+                    // `.unwrap_or_default()`, which turned a malformed answer into
+                    // **HTTP 200 with a zero-byte body** — `npm install` then failed
+                    // deep inside tar extraction with nothing pointing back here, and
+                    // an empty package was indistinguishable from a real one. The
+                    // action's own example made it likely rather than theoretical: it
+                    // showed an elided `"H4sIAAAAAAAAA..."`, which does not decode.
+                    let decoded =
+                        match base64::engine::general_purpose::STANDARD.decode(tarball_data) {
+                            Ok(bytes) => bytes,
+                            Err(e) => {
+                                return Some(npm_server_error(
+                                    status_tx,
+                                    &format!(
+                                        "tarball_data is not valid base64 ({}). A tarball is \
+                                     binary, so base64 is the only faithful form; send \
+                                     the whole encoded string, never an abbreviation \
+                                     ending in \"...\"",
+                                        e
+                                    ),
+                                ));
+                            }
+                        };
+
+                    if decoded.is_empty() {
+                        return Some(npm_server_error(
+                            status_tx,
+                            "tarball_data decoded to zero bytes; an empty .tgz is not a \
+                             package npm can install",
+                        ));
+                    }
 
                     // FileOnly: the npm_package_tarball action's own log_template already
                     // reports "-> NPM tarball (...)" to the TUI at INFO.
-                    Log::new(Some(status_tx))
-                        .debug(format!("NPM package tarball response: {} bytes", decoded.len()));
+                    Log::new(Some(status_tx)).debug(format!(
+                        "NPM package tarball response: {} bytes",
+                        decoded.len()
+                    ));
                     Some(
                         Response::builder()
                             .status(StatusCode::OK)
@@ -364,10 +423,12 @@ async fn process_npm_action_result(
                     )
                 }
                 "npm_package_list" => {
-                    let packages = data
-                        .get("packages")
-                        .context("Missing packages in npm_package_list")
-                        .unwrap();
+                    let Some(packages) = data.get("packages") else {
+                        return Some(npm_server_error(
+                            status_tx,
+                            "npm_package_list carried no 'packages' field",
+                        ));
+                    };
 
                     // FileOnly: the npm_package_list action's own log_template already
                     // reports "-> NPM package list" to the TUI at INFO.
@@ -381,10 +442,12 @@ async fn process_npm_action_result(
                     )
                 }
                 "npm_package_search" => {
-                    let results = data
-                        .get("results")
-                        .context("Missing results in npm_package_search")
-                        .unwrap();
+                    let Some(results) = data.get("results") else {
+                        return Some(npm_server_error(
+                            status_tx,
+                            "npm_package_search carried no 'results' field",
+                        ));
+                    };
 
                     // FileOnly: the npm_package_search action's own log_template already
                     // reports "-> NPM search results" to the TUI at INFO.

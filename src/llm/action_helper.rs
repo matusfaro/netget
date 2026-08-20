@@ -173,7 +173,12 @@ pub async fn call_llm_with_actions(
         rate_limiter,
         crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
-    .with_native_tools(&advertised_actions)
+    // Deliberately NO `.with_native_tools(...)`; guarded by
+    // tests/llm_native_tools_test.rs, which explains why in full.
+    // Short version: native schemas gave the model a second way to answer
+    // alongside the JSON action envelope this prompt teaches, and it took it —
+    // 6 of 6 failing protocol cases pass once they are removed. Tools still work
+    // through the JSON envelope and the tool loop; only the schema channel is gone.
     .with_tracking(
         state.clone(),
         crate::state::app_state::ConversationSource::Network {
@@ -342,7 +347,7 @@ async fn record_event_access_log(
 
     state
         .record_access_log(
-            server_id.as_u32(),
+            crate::state::AccessLogOwner::Server(server_id.as_u32()),
             protocol.protocol_name(),
             connection_id.map(|c| c.as_u32()),
             event.id(),
@@ -352,7 +357,60 @@ async fn record_event_access_log(
         .await;
 }
 
+/// Record a request whose handling failed, so it is still visible.
+///
+/// The response slot carries the error rather than actions. Without this an
+/// unreachable model, a timeout or a failed action made the request vanish
+/// from `list_access_logs` — the request pane went empty precisely when
+/// something had gone wrong.
+async fn record_failed_event_access_log(
+    state: &AppState,
+    server_id: ServerId,
+    connection_id: Option<crate::server::connection::ConnectionId>,
+    protocol: &dyn Server,
+    event: &Event,
+    error: &anyhow::Error,
+) {
+    state
+        .record_access_log(
+            crate::state::AccessLogOwner::Server(server_id.as_u32()),
+            protocol.protocol_name(),
+            connection_id.map(|c| c.as_u32()),
+            event.id(),
+            event.data.clone(),
+            vec![serde_json::json!({
+                "type": format!("FAILED: {}", event.id()),
+                "error": error.to_string(),
+            })],
+        )
+        .await;
+}
+
 pub async fn call_llm(
+    llm_client: &OllamaClient,
+    state: &AppState,
+    server_id: ServerId,
+    connection_id: Option<crate::server::connection::ConnectionId>,
+    event: &Event,
+    protocol: &dyn Server,
+) -> Result<ExecutionResult> {
+    let outcome = call_llm_inner(
+        llm_client,
+        state,
+        server_id,
+        connection_id,
+        event,
+        protocol,
+    )
+    .await;
+    if let Err(e) = &outcome {
+        record_failed_event_access_log(state, server_id, connection_id, protocol, event, e).await;
+    }
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn call_llm_inner(
     llm_client: &OllamaClient,
     state: &AppState,
     server_id: ServerId,
@@ -557,7 +615,12 @@ pub async fn call_llm(
         rate_limiter,
         crate::llm::RequestSource::Network, // Network events are discarded if rate limited
     )
-    .with_native_tools(&advertised_actions)
+    // Deliberately NO `.with_native_tools(...)`; guarded by
+    // tests/llm_native_tools_test.rs, which explains why in full.
+    // Short version: native schemas gave the model a second way to answer
+    // alongside the JSON action envelope this prompt teaches, and it took it —
+    // 6 of 6 failing protocol cases pass once they are removed. Tools still work
+    // through the JSON envelope and the tool loop; only the schema channel is gone.
     .with_tracking(
         state.clone(),
         crate::state::app_state::ConversationSource::Network {
@@ -646,6 +709,19 @@ pub async fn call_llm_for_client(
     let mut all_actions =
         crate::llm::actions::client_trait::client_llm_action_set(protocol, state, event);
 
+    // A client has a memory — `ClientInstance::memory`, prefixed to every message below — but
+    // no way to write it, so anything it learned across events was lost. Both actions are in
+    // `CLIENT_COMMON_ACTION_NAMES`, so they are executed here rather than handed to a
+    // `Client::execute_action` that has never heard of them.
+    all_actions.push(crate::llm::actions::common::set_memory_action());
+    all_actions.push(crate::llm::actions::common::append_memory_action());
+
+    // A client's only way to say anything to the user. Without it, a model that had nothing
+    // to send on the wire but something to report had no action it was allowed to use, and
+    // reaching for `show_message` — the most obvious name there is — cost two retries and
+    // then failed the whole event.
+    all_actions.push(crate::llm::actions::common::show_message_action());
+
     // Add provide_feedback action only if client has feedback_instructions configured
     // Parse client_id from string format "client-123"
     if let Some(cid) = crate::state::ClientId::from_string(&client_id) {
@@ -711,7 +787,10 @@ pub async fn call_llm_for_client(
         rate_limiter,
         crate::llm::RequestSource::Network, // Client calls are network-initiated, discarded if rate limited
     )
-    .with_native_tools(&all_actions)
+    // Same reasoning as the two server network-event paths above, and the same
+    // construction — see tests/llm_native_tools_test.rs. Not separately measured:
+    // the 6/6 evidence comes from server protocols, and this is inferred from the
+    // paths being identical rather than from a client A/B.
     .with_status_tx(status_tx.clone());
 
     // Add user message
@@ -740,6 +819,18 @@ pub async fn call_llm_for_client(
     // `CommonAction::from_json` before the protocol. Clients never reach that executor, so the
     // split happens here — in the one place that advertises the action.
     let (common_actions, protocol_actions) = split_client_common_actions(actions);
+
+    // `show_message` is emitted here rather than by the executor, whose match arm for it is a
+    // deliberate no-op ("handled by the caller, to avoid duplicate output"). Accepting the
+    // action without this loop would take the model's message and drop it, which is the same
+    // advertise-a-no-op shape as rejecting it outright — just quieter.
+    for action in &common_actions {
+        if action.get("type").and_then(|t| t.as_str()) == Some("show_message") {
+            if let Some(message) = action.get("message").and_then(|m| m.as_str()) {
+                let _ = status_tx.send(format!("[CLIENT] {}", message));
+            }
+        }
+    }
 
     if !common_actions.is_empty() {
         match crate::state::ClientId::from_string(&client_id) {
@@ -781,10 +872,23 @@ pub async fn call_llm_for_client(
 
 /// Actions `call_llm_for_client` advertises but no `Client::execute_action` implements.
 ///
-/// Exactly one today. Keep this list and the injection sites above in step: an entry here with
-/// no injection is dead, and an injection with no entry is a tool the model is punished for
-/// using. `tests/client_provide_feedback_test.rs` asserts both directions.
-pub const CLIENT_COMMON_ACTION_NAMES: &[&str] = &["provide_feedback"];
+/// Keep this list and the injection sites above in step: an entry here with no injection is
+/// dead, and an injection with no entry is a tool the model is punished for using.
+/// `tests/client_provide_feedback_test.rs` asserts both directions.
+///
+/// `set_memory` and `append_memory` are here because a client has a memory — `ClientInstance`
+/// carries one and `call_llm_for_client` prefixes it to every message — but had no way to
+/// write it. A model told "remember what you learned" could only answer with a protocol
+/// action, and if it reached for `set_memory` anyway the name was rejected as unknown and the
+/// call retried. The executor half of this was worse: with no `server_id`, `SetMemory` fell
+/// through to `get_first_server_id_sync()` and wrote the client's note into whichever *server*
+/// happened to be first.
+pub const CLIENT_COMMON_ACTION_NAMES: &[&str] = &[
+    "provide_feedback",
+    "set_memory",
+    "append_memory",
+    "show_message",
+];
 
 /// Split a client model's actions into the common ones this module executes itself and the
 /// protocol ones the calling client hands to `Client::execute_action`.

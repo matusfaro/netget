@@ -79,10 +79,14 @@ impl ImapProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'tag' field in send_imap_response (use 'response' field for untagged responses)")?;
 
+        // Required, never defaulted. RFC 3501 §7.1 gives a tagged response no default
+        // condition, and the one this used to assume was `OK` - so a model that emitted a
+        // `tag` and omitted `status` produced `A001 OK`, which `handle_auth` reads as a
+        // successful LOGIN. A forgotten field is not an authentication decision.
         let status = action
             .get("status")
             .and_then(|v| v.as_str())
-            .unwrap_or("OK");
+            .context("Missing 'status' field in send_imap_response: a tagged response must say OK, NO or BAD explicitly")?;
 
         let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -759,11 +763,13 @@ fn send_imap_untagged_action() -> ActionDefinition {
 fn send_imap_capability_action() -> ActionDefinition {
     ActionDefinition {
         name: "send_imap_capability".to_string(),
-        description: "Send IMAP CAPABILITY response".to_string(),
+        description: "Send the UNTAGGED '* CAPABILITY ...' line. RFC 3501 6.1.1                       requires exactly this line in answer to a CAPABILITY command,                       with IMAP4rev1 among the capabilities listed. It does NOT                       complete the command: follow it with a send_imap_response                       carrying the client's own tag (e.g. tag 'a1' -> 'a1 OK                       CAPABILITY completed'), because a client reads until it sees                       its tag and blocks on untagged data alone."
+            .to_string(),
         parameters: vec![Parameter {
             name: "capabilities".to_string(),
             type_hint: "array".to_string(),
-            description: "Array of capability strings".to_string(),
+            description: "Capability names, one per array entry (not one space-joined                           string). IMAP4rev1 must be one of them."
+                .to_string(),
             required: false,
         }],
         example: json!({

@@ -196,17 +196,29 @@ server `Stopped` rather than removing it — left the entry in `AppState` foreve
 ## Access Logs
 
 Every network event a protocol server handles is recorded as an `AccessLogEntry`
-in a bounded ring buffer on `AppState` (last 200, oldest dropped). The **request**
+in a bounded ring buffer on `AppState` (last **1000**, oldest dropped). The **request**
 is the structured event data (e.g. HTTP method/path/headers); the **response** is
 the action JSON the LLM produced (e.g. `send_http_response`). Recording happens
 centrally in `action_helper::call_llm` after the event is handled, so it works for
 every protocol without per-protocol wiring.
 
-- `list_access_logs { limit? }` — newest-first summaries (id, age, server, protocol, request→response).
+- `list_access_logs { limit? }` — newest-first summaries (id, age, owner, protocol, request→response).
 - `get_access_log { id }` — full request and response JSON for one entry.
 
-Limitation: only successfully-handled events are logged; a request whose LLM call
-errors out does not produce an entry.
+**Clients record too, and entries carry an owner.** `AccessLogEntry` has
+`server_id: Option<u32>` and `client_id: Option<u32>`, exactly one set, both
+`skip_serializing_if = "Option::is_none"` — so a server entry's JSON is
+byte-identical to what it always was and existing consumers are unaffected.
+`AppState::list_access_logs_for(owner, limit)` filters per instance (what the
+dashboard's per-band request panes use). Client entries come from
+`llm_budget::call_llm_for_client` and from injected `send_to_client` actions
+(event type `injected_action`).
+
+Two limitations worth knowing: only successfully-handled events are logged — a
+request whose LLM call errors out produces no entry; and a **client** entry records
+the actions that were *produced*, not executed, because execution happens later
+inside the client's own connection loop, which does not report back. The
+`send_to_client` path is honest about outcomes via `ClientSendOutcome`.
 
 ## Startup configuration
 

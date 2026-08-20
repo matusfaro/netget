@@ -49,8 +49,7 @@ impl StunServer {
         let accept_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 2048]; // STUN messages are typically < 2KB
 
-            Log::new(Some(&status_tx))
-                .debug("STUN receive loop started, waiting for packets...");
+            Log::new(Some(&status_tx)).debug("STUN receive loop started, waiting for packets...");
 
             loop {
                 debug!("STUN calling recv_from...");

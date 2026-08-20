@@ -311,6 +311,16 @@ fn push_resource_action() -> ActionDefinition {
                 description: "Resource path to push (e.g., /style.css)".to_string(),
                 required: true,
             },
+            // Read by the executor and forwarded in the push directive, but declared nowhere,
+            // so every push was a GET whatever the model intended.
+            Parameter {
+                name: "method".to_string(),
+                type_hint: "string".to_string(),
+                description: "Method for the pushed request (default: GET). RFC 7540 §8.2 \
+                    allows only safe, cacheable methods - GET or HEAD."
+                    .to_string(),
+                required: false,
+            },
             Parameter {
                 name: "status".to_string(),
                 type_hint: "number".to_string(),

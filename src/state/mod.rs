@@ -4,15 +4,18 @@
 
 pub mod app_state;
 pub mod client;
+pub mod client_handles;
 pub mod easy;
+pub mod intercepts;
 pub mod machine;
 pub mod server;
 pub mod server_handles;
 pub mod sqlite;
 pub mod task;
 
-pub use app_state::AppState;
+pub use app_state::{AccessLogOwner, AppState};
 pub use client::{ClientConnectionState, ClientId, ClientInstance, ClientStatus};
+pub use client_handles::{ClientCommand, ClientHandle, ClientSendOutcome};
 pub use easy::{EasyId, EasyInstance, EasyStatus};
 pub use machine::StateMachine;
 pub use server::{

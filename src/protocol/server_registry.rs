@@ -949,6 +949,37 @@ impl ServerRegistry {
         excluded
     }
 
+    /// Protocols whose *default* port needs privilege this process does not have.
+    ///
+    /// These are **not** excluded — they run on any unprivileged port, and that is
+    /// the whole point of listing them separately. Returns protocol name -> default
+    /// port, so a caller can say "DNS defaults to 53; use 5353" instead of dropping
+    /// DNS from the catalogue, which is what used to happen.
+    ///
+    /// Empty when the process can bind privileged ports (root, or CAP_NET_BIND_SERVICE).
+    pub fn privileged_default_ports(
+        &self,
+        caps: &crate::privilege::SystemCapabilities,
+    ) -> Vec<(String, u16)> {
+        if caps.can_bind_privileged_ports {
+            return Vec::new();
+        }
+        let mut out: Vec<(String, u16)> = self
+            .protocols
+            .iter()
+            .filter_map(
+                |(name, protocol)| match protocol.metadata().privilege_requirement {
+                    crate::protocol::metadata::PrivilegeRequirement::PrivilegedPort(port) => {
+                        Some((name.clone(), port))
+                    }
+                    _ => None,
+                },
+            )
+            .collect();
+        out.sort();
+        out
+    }
+
     /// Get protocols that are available (have all dependencies met)
     ///
     /// Returns a list of protocol names that can be used
@@ -990,7 +1021,7 @@ impl ServerRegistry {
 /// per CLAUDE.md's decentralization policy (it plays the same role as the
 /// `register()` calls themselves) — when adding a new protocol, add its
 /// (canonical name, feature) pair here too.
-const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
+pub(crate) const ALL_KNOWN_PROTOCOLS: &[(&str, &str)] = &[
     ("TCP", "tcp"),
     ("SOCKET_FILE", "socket_file"),
     ("HTTP", "http"),

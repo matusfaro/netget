@@ -908,7 +908,9 @@ fn ospf_response_actions() -> Vec<ActionDefinition> {
 pub static OSPF_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ospf_hello",
-        "OSPF Hello packet received from neighbor",
+        "OSPF Hello received. Answer with send_hello listing this neighbour in your own \
+         neighbor list — until your Hello names it back, the neighbour stays in Init and the \
+         adjacency never forms (RFC 2328 §10.5).",
         json!({
             "type": "send_hello",
             "router_id": "1.1.1.1",
@@ -935,7 +937,9 @@ pub static OSPF_HELLO_EVENT: LazyLock<EventType> = LazyLock::new(|| {
 pub static OSPF_DATABASE_DESCRIPTION_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ospf_database_description",
-        "OSPF Database Description packet received (adjacency Exchange phase)",
+        "OSPF Database Description received (adjacency Exchange phase). Answer with \
+         send_database_description to continue the exchange; silence leaves both routers in \
+         ExStart retransmitting their DD packets.",
         json!({
             "type": "send_database_description",
             "router_id": "1.1.1.1",
@@ -962,7 +966,10 @@ pub static OSPF_DATABASE_DESCRIPTION_EVENT: LazyLock<EventType> = LazyLock::new(
 pub static OSPF_LINK_STATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ospf_link_state_request",
-        "OSPF Link State Request packet received - neighbor is asking for LSAs",
+        "OSPF Link State Request received: the neighbor is asking for LSAs it does not have. \
+         Answer with send_link_state_update carrying them — a request left unanswered stalls \
+         the adjacency in Loading and it never reaches Full (RFC 2328 §10.9). Describing what \
+         you would send is not sending it: only the action puts a packet on the wire.",
         json!({
             "type": "send_link_state_update",
             "router_id": "1.1.1.1",
@@ -982,7 +989,10 @@ pub static OSPF_LINK_STATE_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(||
 pub static OSPF_LINK_STATE_UPDATE_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "ospf_link_state_update",
-        "OSPF Link State Update packet received - neighbor is flooding LSAs",
+        "OSPF Link State Update received: the neighbor is flooding LSAs. Answer with \
+         send_link_state_ack — every LSA must be acknowledged or the neighbor retransmits it \
+         every RxmtInterval until the adjacency fails (RFC 2328 §13.5). Describing the \
+         acknowledgement is not sending it: only the action puts a packet on the wire.",
         json!({
             "type": "send_link_state_ack",
             "router_id": "1.1.1.1",

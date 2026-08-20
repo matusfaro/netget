@@ -1,6 +1,6 @@
 //! Server instance management
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -207,6 +207,42 @@ pub struct ConnectionState {
     pub protocol_info: ProtocolConnectionInfo,
 }
 
+/// How many closed connections a server remembers for the "recently
+/// connected" view. Live connections are reaped ~10s after closing (see the
+/// cleanup reapers in `app_state.rs`), so without this history they vanish
+/// without a trace.
+pub const RECENT_CONNECTION_CAPACITY: usize = 50;
+
+/// Summary of a connection that has closed and been removed from
+/// [`ServerInstance::connections`]. Wall-clock timestamps (not `Instant`) so
+/// the struct is serializable and meaningful across a UI session.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ClosedConnectionSummary {
+    /// The connection's id while it was live ("conn-N").
+    pub id: u32,
+    pub remote_addr: String,
+    /// None when the connection was inserted without passing through
+    /// `add_connection` (direct map writes bypass the opened-at bookkeeping).
+    pub opened_unix_ms: Option<u64>,
+    pub closed_unix_ms: u64,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub packets_sent: u64,
+    pub packets_received: u64,
+    /// Snapshot of the protocol-specific display info at close time.
+    pub protocol_info: serde_json::Value,
+}
+
+/// Wall-clock milliseconds for a past `Instant` (the `SystemTime::now() -
+/// elapsed` idiom used elsewhere in this file for log naming).
+fn instant_to_unix_ms(at: Instant) -> u64 {
+    let system_time = std::time::SystemTime::now() - at.elapsed();
+    system_time
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// A server instance with its own connections, state, and configuration
 ///
 /// `Clone` is derived. It used to hold a `JoinHandle` — which is not `Clone` — so every
@@ -256,6 +292,16 @@ pub struct ServerInstance {
     pub feedback_buffer: Vec<serde_json::Value>,
     /// Last time feedback was processed (for debouncing)
     pub last_feedback_processed: Option<Instant>,
+    /// Recently closed connections, newest first, capped at
+    /// [`RECENT_CONNECTION_CAPACITY`].
+    pub recent_connections: VecDeque<ClosedConnectionSummary>,
+    /// When each live connection was added, for
+    /// [`ClosedConnectionSummary::opened_unix_ms`]. `ConnectionState` itself
+    /// is built as a struct literal in ~117 protocol call sites, so the
+    /// open-time lives here instead of as a new field there. Public only
+    /// because `ServerInstance` is built as a struct literal in a few places;
+    /// treat it as `add_connection`/`remove_connection` bookkeeping.
+    pub connection_opened_at: HashMap<ConnectionId, Instant>,
 }
 
 impl ServerInstance {
@@ -280,6 +326,8 @@ impl ServerInstance {
             feedback_instructions: None,
             feedback_buffer: Vec::new(),
             last_feedback_processed: None,
+            recent_connections: VecDeque::new(),
+            connection_opened_at: HashMap::new(),
         }
     }
 
@@ -356,12 +404,38 @@ impl ServerInstance {
 
     /// Add a connection to this server
     pub fn add_connection(&mut self, state: ConnectionState) {
+        self.connection_opened_at.insert(state.id, Instant::now());
         self.connections.insert(state.id, state);
     }
 
-    /// Remove a connection from this server
+    /// Remove a connection from this server, remembering it in
+    /// [`Self::recent_connections`].
     pub fn remove_connection(&mut self, id: ConnectionId) -> Option<ConnectionState> {
-        self.connections.remove(&id)
+        let removed = self.connections.remove(&id);
+        if let Some(state) = &removed {
+            self.record_closed_connection(state);
+        }
+        removed
+    }
+
+    /// Push a closed-connection summary, newest first, trimming to capacity.
+    fn record_closed_connection(&mut self, state: &ConnectionState) {
+        let opened_unix_ms = self
+            .connection_opened_at
+            .remove(&state.id)
+            .map(instant_to_unix_ms);
+        self.recent_connections.push_front(ClosedConnectionSummary {
+            id: state.id.as_u32(),
+            remote_addr: state.remote_addr.to_string(),
+            opened_unix_ms,
+            closed_unix_ms: instant_to_unix_ms(state.status_changed_at),
+            bytes_sent: state.bytes_sent,
+            bytes_received: state.bytes_received,
+            packets_sent: state.packets_sent,
+            packets_received: state.packets_received,
+            protocol_info: state.protocol_info.data.clone(),
+        });
+        self.recent_connections.truncate(RECENT_CONNECTION_CAPACITY);
     }
 
     /// Get a connection by ID
@@ -382,7 +456,14 @@ impl ServerInstance {
     /// Clean up old connectionless protocol entries (UDP, DNS, etc.)
     pub fn cleanup_old_connections(&mut self, max_age_secs: u64) {
         let now = Instant::now();
-        self.connections
-            .retain(|_, state| now.duration_since(state.last_activity).as_secs() < max_age_secs);
+        let stale: Vec<ConnectionId> = self
+            .connections
+            .values()
+            .filter(|state| now.duration_since(state.last_activity).as_secs() >= max_age_secs)
+            .map(|state| state.id)
+            .collect();
+        for id in stale {
+            self.remove_connection(id);
+        }
     }
 }
