@@ -24,6 +24,7 @@ pub mod render;
 pub mod theme;
 pub mod tree;
 pub mod uimsg;
+pub mod wireshark;
 
 use std::sync::Arc;
 

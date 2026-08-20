@@ -314,6 +314,7 @@ async fn handle_rail_key(
         | KeyCode::Char('d')
         | KeyCode::Char('n')
         | KeyCode::Char('c')
+        | KeyCode::Char('w')
         | KeyCode::Char('a') => {
             handle_band_shortcut(app, key.code, owner, state).await;
         }
@@ -403,6 +404,7 @@ async fn activate_row(
                 }
             }
             RowAction::Stop => stop_instance(app, k, state).await,
+            RowAction::Wireshark => open_wireshark(app, k),
         },
         NodeId::Intercept(k, intercept_id) => open_intercept(app, k, intercept_id, state),
         NodeId::RoutingFallback(_) | NodeId::RequestDetail(..) => {}
@@ -565,8 +567,57 @@ async fn handle_band_shortcut(
                 open_composer(app, id, None, state).await;
             }
         }
+        KeyCode::Char('w') => {
+            if let Some(band_key) = key {
+                open_wireshark(app, band_key);
+            }
+        }
         _ => {}
     }
+}
+
+/// Open the Wireshark recipe for a running instance, from the snapshot.
+///
+/// A server's bind host comes from its bound address (the real one, port 0
+/// resolved) and the interface from its startup params, where the raw-socket
+/// protocols keep it; a client contributes the address it dials.
+fn open_wireshark(app: &mut DashboardApp, key: UiKey) {
+    use crate::tui::wireshark::{CapturePlan, CaptureTarget, Platform, Role};
+
+    let target = match key {
+        UiKey::Server(id) => {
+            let Some(row) = app.snapshot.servers.iter().find(|s| s.id == id) else {
+                return;
+            };
+            let bound: Option<std::net::SocketAddr> =
+                row.local_addr.as_deref().and_then(|a| a.parse().ok());
+            let param = |name: &str| -> Option<String> {
+                row.startup_params
+                    .as_ref()
+                    .and_then(|p| p.get(name))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string)
+            };
+            CaptureTarget {
+                protocol: row.protocol.clone(),
+                role: Role::Server,
+                host: bound.map(|a| a.ip().to_string()).or_else(|| param("host")),
+                port: bound.map(|a| a.port()).or(Some(row.port)),
+                interface: param("interface"),
+            }
+        }
+        UiKey::Client(id) => {
+            let Some(row) = app.snapshot.clients.iter().find(|c| c.id == id) else {
+                return;
+            };
+            CaptureTarget::client(&row.protocol, Some(&row.remote_addr))
+        }
+    };
+    let plan = CapturePlan::build(target, Platform::current());
+    app.modals.push(Modal::Wireshark {
+        plan: Box::new(plan),
+        scroll: 0,
+    });
 }
 
 /// Open the protocol picker for a section. `prefill_remote` aims a new client
@@ -1039,6 +1090,18 @@ async fn run_form_action(
     match action {
         ModalAction::FormCancel => {
             app.modals.pop();
+        }
+        ModalAction::FormWireshark => {
+            // Stacked over the form, so Esc returns to it with nothing lost —
+            // the point is to start the capture, then come back and Apply.
+            let plan = crate::tui::wireshark::CapturePlan::build(
+                form.capture_target(),
+                crate::tui::wireshark::Platform::current(),
+            );
+            app.modals.push(Modal::Wireshark {
+                plan: Box::new(plan),
+                scroll: 0,
+            });
         }
         ModalAction::FormApply => {
             if form.busy {
@@ -1695,7 +1758,7 @@ pub async fn run_modal_action(
 ) -> Outcome {
     use crate::tui::hit::ModalAction;
     match action {
-        ModalAction::FormApply | ModalAction::FormCancel => {
+        ModalAction::FormApply | ModalAction::FormCancel | ModalAction::FormWireshark => {
             run_form_action(app, action, state).await
         }
         ModalAction::DraftSave => {

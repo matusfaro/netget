@@ -52,6 +52,13 @@ pub enum Modal {
     },
     /// Read-only detail of a band's full config.
     BandDetail { key: UiKey, scroll: u16 },
+    /// The Wireshark / tshark command and filters that capture one instance's
+    /// traffic — reachable from a running instance's row and from the
+    /// create/edit form, so the capture can start before the instance does.
+    Wireshark {
+        plan: Box<crate::tui::wireshark::CapturePlan>,
+        scroll: u16,
+    },
     /// Choose a protocol for a new server/client.
     ProtocolPicker {
         section: Section,
@@ -89,6 +96,7 @@ impl Modal {
                 UiKey::Server(id) => format!("Server #{}", id.as_u32()),
                 UiKey::Client(id) => format!("Client #{}", id.as_u32()),
             },
+            Modal::Wireshark { plan, .. } => format!("View in Wireshark — {}", plan.target.protocol),
             Modal::ProtocolPicker { section, .. } => match section {
                 Section::Servers => "New server — pick a protocol".to_string(),
                 Section::Clients => "New client — pick a protocol".to_string(),
@@ -137,6 +145,7 @@ impl Modal {
         match self {
             Modal::Help { .. } => "↑/↓ scroll · Esc close",
             Modal::RequestDetail { .. } | Modal::BandDetail { .. } => "↑/↓ scroll · Esc close",
+            Modal::Wireshark { .. } => "Ctrl-T frees the mouse to select text · ↑/↓ scroll · Esc close",
             Modal::Confirm { .. } => "y confirm · n/Esc cancel",
             Modal::WebApproval { .. } => "y allow once · a always · n/Esc deny",
             Modal::ProtocolPicker { .. } => {
@@ -190,7 +199,8 @@ impl Modal {
         let slot = match self {
             Modal::Help { scroll }
             | Modal::RequestDetail { scroll, .. }
-            | Modal::BandDetail { scroll, .. } => scroll,
+            | Modal::BandDetail { scroll, .. }
+            | Modal::Wireshark { scroll, .. } => scroll,
             _ => return,
         };
         *slot = if delta < 0 {

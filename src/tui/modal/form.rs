@@ -290,7 +290,48 @@ impl FormModel {
     /// Buttons, in Tab order after the fields.
     pub fn buttons(&self) -> Vec<crate::tui::hit::ModalAction> {
         use crate::tui::hit::ModalAction::*;
-        vec![FormApply, FormCancel]
+        vec![FormApply, FormWireshark, FormCancel]
+    }
+
+    /// What Wireshark would need to watch the instance this form describes,
+    /// read from the fields **as they currently are** (an in-progress edit
+    /// included) — not from the changed-only view `apply` uses, because the
+    /// capture needs the whole address whether or not it changed.
+    pub fn capture_target(&self) -> crate::tui::wireshark::CaptureTarget {
+        use crate::tui::wireshark::{CaptureTarget, Role};
+        let current = |target: &FieldTarget| -> Option<String> {
+            let field = self.fields.iter().find(|f| &f.target == target)?;
+            let value = match (&self.editing, self.selected == self.position_of(target)) {
+                (Some(buffer), true) => buffer.trim().to_string(),
+                _ => field.value.trim().to_string(),
+            };
+            (!value.is_empty()).then_some(value)
+        };
+        let section = match &self.mode {
+            FormMode::Create(section) => *section,
+            FormMode::Edit(UiKey::Server(_)) => Section::Servers,
+            FormMode::Edit(UiKey::Client(_)) => Section::Clients,
+        };
+        match section {
+            Section::Servers => CaptureTarget {
+                protocol: self.protocol.clone(),
+                role: Role::Server,
+                host: current(&FieldTarget::Host),
+                port: current(&FieldTarget::Port).and_then(|p| p.parse().ok()),
+                interface: current(&FieldTarget::Interface),
+            },
+            Section::Clients => CaptureTarget::client(
+                &self.protocol,
+                current(&FieldTarget::RemoteAddr).as_deref(),
+            ),
+        }
+    }
+
+    fn position_of(&self, target: &FieldTarget) -> usize {
+        self.fields
+            .iter()
+            .position(|f| &f.target == target)
+            .unwrap_or(usize::MAX)
     }
 
     pub fn focused_action(&self) -> Option<crate::tui::hit::ModalAction> {
