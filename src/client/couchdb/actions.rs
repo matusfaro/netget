@@ -438,6 +438,20 @@ impl Protocol for CouchDbClientProtocol {
                 }),
                 log_template: None,
             },
+            // Declared, not just accepted. The executor took any name at all, so this appeared
+            // to work while being advertised nowhere - the model could only reach it by
+            // guessing, and every other guess was swallowed just as silently.
+            ActionDefinition {
+                name: "wait_for_more".to_string(),
+                description: "Do nothing and wait for the next response. Correct when the \
+                    previous operation needs no follow-up."
+                    .to_string(),
+                parameters: vec![],
+                example: json!({
+                    "type": "wait_for_more"
+                }),
+                log_template: None,
+            },
         ]
     }
 
@@ -609,8 +623,35 @@ impl Client for CouchDbClientProtocol {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing action type"))?;
 
-        // Convert all actions to Custom result with the action data
-        // The actual execution happens in the read loop in mod.rs
+        // Execution happens in the read loop in mod.rs, which dispatches on this name - so an
+        // unrecognised one is passed on and quietly ignored there. Validating here instead
+        // means a typo, an action from another protocol, or a common action this client cannot
+        // run is reported to the model, which then gets a chance to correct it. Returning Ok
+        // for everything also stopped the repair loop from ever firing.
+        const COUCHDB_CLIENT_ACTIONS: &[&str] = &[
+            "create_database",
+            "delete_database",
+            "list_databases",
+            "create_document",
+            "get_document",
+            "update_document",
+            "delete_document",
+            "list_documents",
+            "bulk_docs",
+            "query_view",
+            "watch_changes",
+            "disconnect",
+            "wait_for_more",
+        ];
+
+        if !COUCHDB_CLIENT_ACTIONS.contains(&action_type) {
+            return Err(anyhow::anyhow!(
+                "Unknown CouchDB client action '{}'. Valid actions: {}",
+                action_type,
+                COUCHDB_CLIENT_ACTIONS.join(", ")
+            ));
+        }
+
         Ok(ClientActionResult::Custom {
             name: action_type.to_string(),
             data: action,

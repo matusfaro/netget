@@ -541,11 +541,18 @@ pub static SEND_ANNOUNCE_RESPONSE_ACTION: LazyLock<ActionDefinition> = LazyLock:
             },
             Parameter {
                 name: "compact".to_string(),
-                type_hint: "boolean".to_string(),
+                // Not "boolean". The documented usage is to interpolate `{{event.compact}}`,
+                // and the event declares that field a number because clients send
+                // `compact=1` in the query string - so declaring boolean here told the model
+                // to convert the one value it is being instructed to pass through verbatim.
+                // `is_compact` accepts both spellings (and the string forms), so the union is
+                // what the executor actually implements.
+                type_hint: "boolean|number".to_string(),
                 description: "Encode peers in BEP 23 compact form (4-byte IPv4 + 2-byte \
                               port). Pass the request's own `compact` value through as \
-                              \"{{event.compact}}\"; most real clients require it. \
-                              Compact form carries no peer_id and IPv6 peers are dropped."
+                              \"{{event.compact}}\" (it arrives as 1 or 0); `true`/`false` \
+                              also work. Most real clients require compact form, which \
+                              carries no peer_id and drops IPv6 peers."
                     .to_string(),
                 required: false,
             },

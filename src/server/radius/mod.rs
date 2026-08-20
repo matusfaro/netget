@@ -331,7 +331,8 @@ impl RadiusServer {
                 );
             }
             Err(e) => {
-                Log::new(Some(&status_tx)).error(format!("RADIUS failed to reply to {}: {}", peer_addr, e));
+                Log::new(Some(&status_tx))
+                    .error(format!("RADIUS failed to reply to {}: {}", peer_addr, e));
             }
         }
     }

@@ -83,10 +83,8 @@ impl KubernetesClient {
         app_state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
-        Log::new(Some(&status_tx)).info(format!(
-            "Kubernetes client {} ready for cluster",
-            client_id
-        ));
+        Log::new(Some(&status_tx))
+            .info(format!("Kubernetes client {} ready for cluster", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         // Spawn a background task to monitor for client disconnection

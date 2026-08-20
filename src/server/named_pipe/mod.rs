@@ -283,7 +283,10 @@ impl NamedPipeServer {
                 Ok(()) => {
                     // FileOnly: the write_named_pipe_data action's own log_template already
                     // reports "-> FIFO {data_len}B" to the TUI at INFO.
-                    log.debug(format!("Named pipe wrote {} bytes to response FIFO", bytes.len()));
+                    log.debug(format!(
+                        "Named pipe wrote {} bytes to response FIFO",
+                        bytes.len()
+                    ));
                 }
                 Err(e) => {
                     log.error(format!("Named pipe response write error: {}", e));

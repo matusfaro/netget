@@ -54,7 +54,11 @@ use tracing::{debug, info, warn};
 /// the request holding the permit cannot itself run longer than that, so a
 /// shorter wait would reject requests that were about to be served, and a longer
 /// one would keep queueing behind a backlog the backend is not draining.
-pub const DEFAULT_QUEUE_TIMEOUT_SECS: u64 = 120;
+///
+/// *Derived* from it rather than restated, because the equality is load-bearing and a
+/// hand-copied `120` silently stopped being equal the moment the request timeout moved.
+pub const DEFAULT_QUEUE_TIMEOUT_SECS: u64 =
+    crate::llm::ollama_client::DEFAULT_REQUEST_TIMEOUT.as_secs();
 
 /// Default bound on how many network-sourced requests may wait for a permit at
 /// once. Beyond this the limiter fails fast rather than growing the queue.

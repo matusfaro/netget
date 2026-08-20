@@ -459,7 +459,17 @@ impl TlsServer {
             if let Some(conn_data) = conns.get(&connection_id) {
                 conn_data.state.clone()
             } else {
-                return; // Connection not found
+                // Never silent. A miss here means the connection was torn down between the
+                // read and this lookup (peer reset, or close_this_connection on another
+                // task) - legitimate, but indistinguishable from a registration race, which
+                // is exactly what made the bitcoin accept-order bug so hard to find: the
+                // read loop logged "received N bytes" and then nothing at all.
+                debug!(
+                    "TLS connection {} is no longer registered; dropping {} received bytes",
+                    connection_id,
+                    data.len()
+                );
+                return;
             }
         };
 
@@ -506,7 +516,11 @@ impl TlsServer {
             };
 
             let Some(write_half) = write_half else {
-                return; // Connection not found
+                debug!(
+                    "TLS connection {} went away before its response could be written",
+                    connection_id
+                );
+                return;
             };
 
             // Format data for event parameter. The encoding is reported

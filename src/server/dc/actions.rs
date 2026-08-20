@@ -159,6 +159,8 @@ impl Protocol for DcProtocol {
             send_dc_kick_action(),
             send_dc_redirect_action(),
             send_dc_raw_action(),
+            wait_for_more_action(),
+            close_connection_action(),
         ]
     }
     fn protocol_name(&self) -> &'static str {
@@ -450,6 +452,8 @@ pub static DC_COMMAND_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         send_dc_kick_action(),
         send_dc_redirect_action(),
         send_dc_raw_action(),
+        wait_for_more_action(),
+        close_connection_action(),
     ])
     .with_parameters(vec![
         Parameter {
@@ -735,6 +739,34 @@ fn send_dc_redirect_action() -> ActionDefinition {
                 .with_info("-> DC $ForceMove {address}")
                 .with_debug("DC send_dc_redirect: address={address}"),
         ),
+    }
+}
+
+/// Declared, not merely executable.
+///
+/// `execute_action` has always handled `wait_for_more` and `close_connection`, and the
+/// protocol's CLAUDE.md lists both as available actions - but neither was in
+/// `get_sync_actions()` or on any event, so `call_llm` never offered them and the model could
+/// only reach them by guessing a name it had not been shown.
+fn wait_for_more_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "wait_for_more".to_string(),
+        description: "Send nothing and wait for the client to finish. Correct when the command \
+            received so far is incomplete."
+            .to_string(),
+        parameters: vec![],
+        example: json!({"type": "wait_for_more"}),
+        log_template: None,
+    }
+}
+
+fn close_connection_action() -> ActionDefinition {
+    ActionDefinition {
+        name: "close_connection".to_string(),
+        description: "Disconnect this client without sending anything further.".to_string(),
+        parameters: vec![],
+        example: json!({"type": "close_connection"}),
+        log_template: None,
     }
 }
 

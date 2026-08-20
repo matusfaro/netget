@@ -128,8 +128,8 @@ async fn tcp_connection_opened_sends_a_banner() -> E2EResult<()> {
     let mut session = server.tcp_session().await?;
     let greeting = session.read("connect-time banner").await?;
 
-    let result = expect_contains(&greeting, "NETGET-BANNER-7431")
-        .and(server.expect_llm_answered().await);
+    let result =
+        expect_contains(&greeting, "NETGET-BANNER-7431").and(server.expect_llm_answered().await);
 
     server.finish().await?;
     result

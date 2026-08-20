@@ -428,6 +428,11 @@ async fn handle_generate_v2(
                 }
             }
 
+            // A deliberate refusal is not the same as no answer.
+            if let Some(refusal) = model_error_response(&llm_result.raw_actions) {
+                return Ok(refusal);
+            }
+
             // No valid action, return error
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -563,6 +568,11 @@ async fn handle_chat_v2(
                 }
             }
 
+            // A deliberate refusal is not the same as no answer.
+            if let Some(refusal) = model_error_response(&llm_result.raw_actions) {
+                return Ok(refusal);
+            }
+
             // No valid action
             Ok(Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
@@ -581,6 +591,52 @@ async fn handle_chat_v2(
                 .unwrap())
         }
     }
+}
+
+/// The HTTP reply for an `ollama_error_response` action, if the model produced one.
+///
+/// `ollama_error_response` is declared, offered on every event and named in the event
+/// descriptions ("or refuse with ollama_error_response") — but nothing read it. Its executor
+/// returns a bare acknowledgement, and both request handlers scanned `raw_actions` only for
+/// their own success action, so a model's deliberate refusal was dropped and the client got
+/// the identical generic 500 `{"error": "No response from LLM"}` that a model saying nothing
+/// produces. That is the one distinction that has to survive: a refusal and an outage must
+/// not be diagnosed as each other.
+///
+/// The status defaults to 400 rather than 500 because the refusal is a statement about the
+/// request, not about this server; `status_code` lets the model pick the Ollama-accurate one
+/// (404 for an unknown model).
+fn model_error_response(raw_actions: &[serde_json::Value]) -> Option<Response<Full<Bytes>>> {
+    let action = raw_actions.iter().find(|action| {
+        action.get("type").and_then(|v| v.as_str()) == Some("ollama_error_response")
+    })?;
+
+    let error_message = action
+        .get("error_message")
+        .and_then(|v| v.as_str())
+        .unwrap_or("request refused");
+
+    let status = action
+        .get("status_code")
+        .and_then(|v| v.as_u64())
+        .and_then(|code| StatusCode::from_u16(code as u16).ok())
+        .unwrap_or(StatusCode::BAD_REQUEST);
+
+    let body = json!({ "error": error_message }).to_string();
+
+    Some(
+        Response::builder()
+            .status(status)
+            .header("Content-Type", "application/json")
+            .body(Full::new(Bytes::from(body.clone())))
+            .unwrap_or_else(|_| {
+                // Never fall back to a 2xx: `Response::new` is 200, which would turn the
+                // model's refusal into a success.
+                let mut response = Response::new(Full::new(Bytes::from(body)));
+                *response.status_mut() = StatusCode::BAD_REQUEST;
+                response
+            }),
+    )
 }
 
 /// Build streaming generate response (NDJSON format, all sent at once)

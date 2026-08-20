@@ -468,7 +468,7 @@ impl<R: tokio::io::AsyncRead + Unpin, W: tokio::io::AsyncWrite + Unpin> ImapSess
         for action_result in &result.protocol_results {
             if let ActionResult::Output(data) = action_result {
                 let response = String::from_utf8_lossy(&data);
-                if response.contains(&format!("{} OK", tag)) {
+                if tagged_ok_for(&response, tag) {
                     auth_success = true;
                 }
                 self.send_response(&data).await?;
@@ -612,6 +612,22 @@ fn imap_failure_code(err: &anyhow::Error) -> (&'static str, String) {
         "SERVERBUG"
     };
     (code, failure.prefixed_text().to_string())
+}
+
+/// Does this payload contain the tagged `OK` completion for `tag`?
+///
+/// Used to decide whether a LOGIN succeeded, which makes it an authentication check, so it
+/// parses rather than pattern-matches. The previous `response.contains("{tag} OK")` searched
+/// the whole payload for that text anywhere: a refusal whose human-readable message quoted
+/// the phrase - `A001 NO LOGIN failed, expected A001 OK` - authenticated the session, and so
+/// did an untagged line that happened to contain it. RFC 3501 §7.1 puts the condition in the
+/// second field of a line whose first field is the tag, and nowhere else.
+#[cfg(feature = "imap")]
+fn tagged_ok_for(payload: &str, tag: &str) -> bool {
+    payload.lines().any(|line| {
+        let mut fields = line.trim().split_whitespace();
+        fields.next() == Some(tag) && fields.next().is_some_and(|status| status == "OK")
+    })
 }
 
 /// Parse IMAP command line into (tag, command, args)

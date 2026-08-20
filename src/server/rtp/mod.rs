@@ -155,7 +155,11 @@ impl RtpServer {
             };
             Log::new(Some(status_tx)).trace(format!(
                 "RTP in: pt={} seq={} ts={} ssrc={:08x} len={}",
-                parsed.payload_type, parsed.sequence, parsed.timestamp, parsed.ssrc, parsed.payload_len
+                parsed.payload_type,
+                parsed.sequence,
+                parsed.timestamp,
+                parsed.ssrc,
+                parsed.payload_len
             ));
             let mut d = base;
             d["payload_type"] = serde_json::json!(parsed.payload_type);

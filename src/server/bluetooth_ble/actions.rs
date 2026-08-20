@@ -480,16 +480,32 @@ fn start_advertising_action() -> ActionDefinition {
     ActionDefinition {
         name: "start_advertising".to_string(),
         description: "Start BLE advertising to make the device discoverable".to_string(),
-        parameters: vec![Parameter {
-            name: "device_name".to_string(),
-            type_hint: "string".to_string(),
-            description:
-                "Device name to advertise (optional, uses server default if not specified)"
+        parameters: vec![
+            Parameter {
+                name: "device_name".to_string(),
+                type_hint: "string".to_string(),
+                description:
+                    "Device name to advertise (optional, uses server default if not specified)"
+                        .to_string(),
+                required: false,
+            },
+            // Read by execute_start_advertising and passed to the radio, but never declared,
+            // so the model could not advertise which services this device offers - the field
+            // centrals filter their scans on.
+            Parameter {
+                name: "service_uuids".to_string(),
+                type_hint: "array".to_string(),
+                description: "Service UUIDs to advertise, so centrals scanning for a service \
+                    can find this device. 16-bit shorthand (\"180D\") or full 128-bit form. \
+                    Defaults to advertising the name only."
                     .to_string(),
-            required: false,
-        }],
+                required: false,
+            },
+        ],
         example: json!({
-            "type": "start_advertising"
+            "type": "start_advertising",
+            "device_name": "NetGet-HR",
+            "service_uuids": ["180D"]
         }),
         log_template: Some(LogTemplate::new().with_info("-> BLE start advertising")),
     }

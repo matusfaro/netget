@@ -102,7 +102,19 @@ impl Protocol for AmqpClientProtocol {
     }
 
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
-        vec![]
+        // Declared, not just accepted. `execute_action` now rejects unknown names, so anything
+        // it can run has to be advertised or the model can only reach it by guessing.
+        vec![ActionDefinition {
+            name: "wait_for_more".to_string(),
+            description: "Do nothing and wait for the next AMQP frame. Correct when what \
+                arrived needs no reply."
+                .to_string(),
+            parameters: vec![],
+            example: json!({
+                "type": "wait_for_more"
+            }),
+            log_template: None,
+        }]
     }
 
     fn protocol_name(&self) -> &'static str {
@@ -232,7 +244,17 @@ impl Client for AmqpClientProtocol {
                 data: json!({}),
             }),
             "disconnect" => Ok(ClientActionResult::Disconnect),
-            _ => Ok(ClientActionResult::WaitForMore),
+            "wait_for_more" => Ok(ClientActionResult::WaitForMore),
+            // Reject rather than swallow. This used to be `_ => WaitForMore`, so *any* name -
+            // a typo, an action from another protocol, or a common action this client cannot
+            // run - was silently turned into "wait", and the model was told nothing. Returning
+            // Ok also stops the repair loop from ever firing, so the mistake could not be
+            // corrected; the client simply waited forever for a message it never asked for.
+            other => Err(anyhow::anyhow!(
+                "Unknown AMQP client action '{}'. Valid actions: open_channel, disconnect, \
+                 wait_for_more",
+                other
+            )),
         }
     }
 }

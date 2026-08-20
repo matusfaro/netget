@@ -95,7 +95,9 @@ fn every_log_pattern_matches_a_real_log_line() {
         };
         let Some(open) = tail.find('"') else { continue };
         let after = &tail[open + 1..];
-        let Some(close) = after.find('"') else { continue };
+        let Some(close) = after.find('"') else {
+            continue;
+        };
         constants.push((name.trim().to_string(), after[..close].to_string()));
     }
 
@@ -109,8 +111,8 @@ fn every_log_pattern_matches_a_real_log_line() {
     let stale: Vec<String> = constants
         .iter()
         .filter(|(name, value)| {
-            let spelled_out = haystack.contains(value.as_str())
-                || collapsed.contains(value.as_str());
+            let spelled_out =
+                haystack.contains(value.as_str()) || collapsed.contains(value.as_str());
             let referenced = haystack.contains(&format!("patterns::{}", name));
             !spelled_out && !referenced
         })

@@ -79,10 +79,14 @@ impl ImapProtocol {
             .and_then(|v| v.as_str())
             .context("Missing 'tag' field in send_imap_response (use 'response' field for untagged responses)")?;
 
+        // Required, never defaulted. RFC 3501 §7.1 gives a tagged response no default
+        // condition, and the one this used to assume was `OK` - so a model that emitted a
+        // `tag` and omitted `status` produced `A001 OK`, which `handle_auth` reads as a
+        // successful LOGIN. A forgotten field is not an authentication decision.
         let status = action
             .get("status")
             .and_then(|v| v.as_str())
-            .unwrap_or("OK");
+            .context("Missing 'status' field in send_imap_response: a tagged response must say OK, NO or BAD explicitly")?;
 
         let message = action.get("message").and_then(|v| v.as_str()).unwrap_or("");
 

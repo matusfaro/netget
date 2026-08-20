@@ -466,7 +466,8 @@ impl OpenvpnServer {
         .to_vec();
 
         if let Err(e) = self.socket.send_to(&reply, peer_addr).await {
-            Log::new(Some(status_tx)).error(format!("OpenVPN: reply to {} failed: {}", peer_addr, e));
+            Log::new(Some(status_tx))
+                .error(format!("OpenVPN: reply to {} failed: {}", peer_addr, e));
             return;
         }
 

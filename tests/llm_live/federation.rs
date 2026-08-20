@@ -174,11 +174,9 @@ async fn saml_idp_metadata_is_an_entity_descriptor() -> E2EResult<()> {
                 ));
             }
             if !s.contains("IDPSSODescriptor") {
-                return Err(
-                    "an identity provider publishes an <IDPSSODescriptor>; an \
+                return Err("an identity provider publishes an <IDPSSODescriptor>; an \
                      SPSSODescriptor would describe the other side of the federation"
-                        .to_string(),
-                );
+                    .to_string());
             }
             Ok(())
         },

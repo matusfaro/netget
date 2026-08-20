@@ -48,10 +48,12 @@ fn a_privileged_default_port_does_not_exclude_the_protocol() {
                 PrivilegeRequirement::PrivilegedPort(_)
             ) && excluded.contains_key(name)
         })
-        .map(|(name, protocol)| match protocol.metadata().privilege_requirement {
-            PrivilegeRequirement::PrivilegedPort(p) => format!("{} (default port {})", name, p),
-            _ => name,
-        })
+        .map(
+            |(name, protocol)| match protocol.metadata().privilege_requirement {
+                PrivilegeRequirement::PrivilegedPort(p) => format!("{} (default port {})", name, p),
+                _ => name,
+            },
+        )
         .collect();
 
     assert!(
@@ -106,7 +108,8 @@ fn privileged_defaults_are_reported_as_advice() {
     // Every protocol declaring a privileged default port should appear, so `/env`
     // can name the port instead of silently dropping the protocol.
     for (name, protocol) in registry().all_protocols() {
-        if let PrivilegeRequirement::PrivilegedPort(port) = protocol.metadata().privilege_requirement
+        if let PrivilegeRequirement::PrivilegedPort(port) =
+            protocol.metadata().privilege_requirement
         {
             assert!(
                 advisory.iter().any(|(n, p)| *n == name && *p == port),

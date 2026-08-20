@@ -365,7 +365,24 @@ impl SmbClient {
 
                         debug!("SMB client {} writing file: {}", client_id, path);
 
-                        let content_bytes = content.as_bytes();
+                        // `smb_file_read` emits binary as `base64:<encoded>`, so write must
+                        // understand the same sentinel or the round trip is broken: reading a
+                        // binary file and writing it back wrote the literal string
+                        // "base64:iVBORw0KG..." to the share. The prefix is the marker the
+                        // read side already chose; this is the other half of it.
+                        let content_bytes = match content.strip_prefix("base64:") {
+                            Some(encoded) => {
+                                use base64::{engine::general_purpose, Engine as _};
+                                general_purpose::STANDARD.decode(encoded.trim()).context(
+                                    "content began with \"base64:\" but the rest is not valid \
+                                     base64. Binary content must be base64 exactly as \
+                                     smb_file_read reports it; text content must not start \
+                                     with \"base64:\".",
+                                )?
+                            }
+                            None => content.as_bytes().to_vec(),
+                        };
+                        let content_bytes = content_bytes.as_slice();
 
                         // Open file for writing and immediately write contents
                         // We need to close the file before any await (SmbFile contains raw pointer, not Send)

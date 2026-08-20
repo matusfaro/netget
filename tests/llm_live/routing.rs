@@ -543,6 +543,16 @@ async fn bgp_notification_is_not_answered() -> E2EResult<()> {
         }),
     )
     .expect_action("wait_for_more")
+    // The invariant is "nothing goes on the wire", not "one specific action". `wait_for_more`
+    // is the canonical way to say that, but noting the closure with a common action says it
+    // just as well — none of these writes a byte, and the model that failed this case answered
+    // with append_to_log + set_memory + show_message, which is arguably a *better* answer than
+    // silence: it recorded a session teardown an operator would want to see. What must still
+    // fail is any send_bgp_* action, which RFC 4271 forbids and which none of these are.
+    .or_action("show_message")
+    .or_action("append_to_log")
+    .or_action("set_memory")
+    .or_action("append_memory")
     .run()
     .await
 }

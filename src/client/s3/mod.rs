@@ -401,11 +401,34 @@ impl S3Client {
         let body = data["body"].as_str().context("Missing body")?;
         let content_type = data["content_type"].as_str();
 
+        // The `body` parameter was documented as "text or base64 for binary" while this did
+        // `body.as_bytes()`, so a model following the documentation stored the literal base64
+        // ASCII in the object. Sniffing is not an option - a string can be valid text and
+        // valid base64 at once, and only the sender knows which it means - so the encoding is
+        // explicit, exactly as `send_tcp_data` was fixed.
+        let body_bytes = match data["encoding"].as_str().unwrap_or("utf8") {
+            "utf8" => body.as_bytes().to_vec(),
+            "base64" => {
+                use base64::Engine as _;
+                base64::engine::general_purpose::STANDARD
+                    .decode(body)
+                    .context(
+                        "put_object was given encoding=\"base64\" but `body` is not valid \
+                         base64. Send the bytes as base64, or set encoding=\"utf8\" to store \
+                         the text as written.",
+                    )?
+            }
+            other => anyhow::bail!(
+                "Unknown encoding {:?} for put_object; use \"utf8\" (default) or \"base64\"",
+                other
+            ),
+        };
+
         let mut request = client
             .put_object()
             .bucket(bucket)
             .key(key)
-            .body(body.as_bytes().to_vec().into());
+            .body(body_bytes.into());
 
         if let Some(ct) = content_type {
             request = request.content_type(ct);
@@ -448,14 +471,29 @@ impl S3Client {
             .context("Failed to read object body")?
             .into_bytes();
 
-        let body_text = String::from_utf8_lossy(&body_bytes).to_string();
+        // Report which of the two `body` is, rather than lossily rendering bytes into
+        // U+FFFD and losing them. That made the round trip impossible in both directions:
+        // binary read back could not be written anywhere, and the model had no way to tell a
+        // file containing a replacement character from one that had been mangled.
+        let (body, body_encoding) = match std::str::from_utf8(&body_bytes) {
+            Ok(text) => (text.to_string(), "utf8"),
+            Err(_) => {
+                use base64::Engine as _;
+                (
+                    base64::engine::general_purpose::STANDARD.encode(&body_bytes),
+                    "base64",
+                )
+            }
+        };
 
         Ok(serde_json::json!({
             "bucket": bucket,
             "key": key,
             "content_type": content_type,
             "content_length": content_length,
-            "body": body_text,
+            "body": body,
+            // Feed straight back into put_object's `encoding` to copy an object verbatim.
+            "body_encoding": body_encoding,
         }))
     }
 

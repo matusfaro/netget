@@ -134,10 +134,8 @@ impl OpenIdConnectClient {
                 .await
                 .context("Failed to discover OIDC provider metadata")?;
 
-        Log::new(Some(status_tx)).info(format!(
-            "Discovered OIDC provider: {}",
-            issuer_url.as_str()
-        ));
+        Log::new(Some(status_tx))
+            .info(format!("Discovered OIDC provider: {}", issuer_url.as_str()));
 
         // Store provider metadata
         app_state
@@ -589,10 +587,7 @@ impl OpenIdConnectClient {
             .and_then(|v| v.as_str())
             .unwrap_or("Bearer");
 
-        Log::new(Some(status_tx)).info(format!(
-            "Received tokens (expires_in: {:?}s)",
-            expires_in
-        ));
+        Log::new(Some(status_tx)).info(format!("Received tokens (expires_in: {:?}s)", expires_in));
 
         // Store tokens
         app_state
@@ -1333,10 +1328,7 @@ impl OpenIdConnectClient {
         let expires_in = token_response.expires_in().map(|d| d.as_secs());
         let token_type = token_response.token_type().as_ref();
 
-        Log::new(Some(status_tx)).info(format!(
-            "Received tokens (expires_in: {:?}s)",
-            expires_in
-        ));
+        Log::new(Some(status_tx)).info(format!("Received tokens (expires_in: {:?}s)", expires_in));
 
         // Store tokens
         app_state

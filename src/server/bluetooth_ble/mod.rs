@@ -86,6 +86,40 @@ struct ServerData {
 ///
 /// `pub` so `tests/` can exercise it directly — CLAUDE.md forbids unit-test
 /// modules in `src/`, so an internal helper has to be reachable to be tested.
+/// The ATT Write Response a `respond_to_write` action asks for.
+///
+/// `respond_to_write` has always declared a `status` of `'success'` or `'error'`, and nothing
+/// anywhere read it — both consumption sites skip the action as "handled inline" and the
+/// inline handler answered `Success` unconditionally. So a model rejecting a write (value out
+/// of range, wrong length, characteristic not writable in this state) had its decision
+/// discarded and the central was told the write had been accepted. The ATT Write Response is
+/// the only signal the central gets.
+///
+/// Silence still means success: most writes are accepted, and a handler that answers a
+/// `bluetooth_write_request` without naming a status has consented to it. Only an explicit
+/// `'error'` refuses. An LLM *failure* is handled separately by the caller and stays
+/// distinct — that path logs `the handler failed` where this one logs `model_reject`.
+///
+/// `pub` so `tests/` can exercise it without a Bluetooth adapter.
+#[cfg(feature = "bluetooth-ble")]
+pub fn write_response_status(raw_actions: &[serde_json::Value]) -> RequestResponse {
+    let refused = raw_actions.iter().any(|action| {
+        matches!(
+            action.get("type").and_then(|v| v.as_str()),
+            Some("respond_to_write") | Some("send_write_response")
+        ) && action
+            .get("status")
+            .and_then(|v| v.as_str())
+            .is_some_and(|status| status.eq_ignore_ascii_case("error"))
+    });
+
+    if refused {
+        RequestResponse::UnlikelyError
+    } else {
+        RequestResponse::Success
+    }
+}
+
 #[cfg(feature = "bluetooth-ble")]
 pub fn parse_ble_uuid(s: &str) -> Result<Uuid> {
     let t = s.trim();
@@ -1056,10 +1090,23 @@ impl BluetoothBle {
                             )
                             .await
                             {
-                                Ok(_) => {
-                                    let _ = responder.send(WriteRequestResponse {
-                                        response: RequestResponse::Success,
-                                    });
+                                Ok(llm_result) => {
+                                    // `respond_to_write` declares a `status` of 'success' or
+                                    // 'error', and nothing read it: every answered write was
+                                    // acknowledged Success, so a model rejecting a value -
+                                    // out of range, wrong length, not writable right now -
+                                    // was told the peer it had been accepted. The ATT Write
+                                    // Response is the only signal the central gets.
+                                    let response = write_response_status(&llm_result.raw_actions);
+                                    if matches!(response, RequestResponse::UnlikelyError) {
+                                        Log::new(Some(&status_tx)).info(format!(
+                                            "BLE write to {} rejected by handler \
+                                             (decision=model_reject); replying ATT Unlikely \
+                                             Error (0x0E)",
+                                            char_uuid_str
+                                        ));
+                                    }
+                                    let _ = responder.send(WriteRequestResponse { response });
                                 }
                                 Err(e) => {
                                     // Fail closed: the central must be told the write did not

@@ -597,7 +597,8 @@ impl UsbSmartCardServer {
                     Ok(atr) => {
                         let atr_hex = hex::encode_upper(&atr);
                         lock_card(card).atr = atr;
-                        Log::new(Some(status_tx)).info(format!("USB smart card ATR set: {atr_hex}"));
+                        Log::new(Some(status_tx))
+                            .info(format!("USB smart card ATR set: {atr_hex}"));
                     }
                     Err(e) => {
                         console_error!(status_tx, "USB smart card set_atr rejected: {}", e);

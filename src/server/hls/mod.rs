@@ -99,8 +99,7 @@ impl HlsServer {
                             )
                             .await
                             {
-                                Log::new(Some(&stx))
-                                    .debug(format!("HLS connection ended: {}", e));
+                                Log::new(Some(&stx)).debug(format!("HLS connection ended: {}", e));
                             }
                         });
                     }

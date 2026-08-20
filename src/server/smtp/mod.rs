@@ -11,11 +11,11 @@ use crate::console_debug;
 #[cfg(feature = "smtp")]
 use crate::llm::action_helper::call_llm;
 #[cfg(feature = "smtp")]
-use crate::logging::emit::Log;
-#[cfg(feature = "smtp")]
 use crate::llm::ollama_client::OllamaClient;
 #[cfg(feature = "smtp")]
 use crate::llm::ActionResult;
+#[cfg(feature = "smtp")]
+use crate::logging::emit::Log;
 #[cfg(feature = "smtp")]
 use crate::protocol::Event;
 #[cfg(feature = "smtp")]

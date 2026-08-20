@@ -123,6 +123,28 @@ impl BitcoinServer {
                             .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+                        // Register the connection *before* either task is spawned.
+                        //
+                        // This used to happen inside `handle_connection_opened`, which runs in
+                        // its own task alongside the reader task below — so a peer that sent
+                        // its first message promptly raced the insert. `handle_data_with_actions`
+                        // finds no entry, returns at its "connection not found" guard, and the
+                        // bytes are dropped with no event, no queue and no log line: the read
+                        // loop reports "received N bytes" and nothing further ever happens.
+                        //
+                        // A Bitcoin peer sends `version` immediately on connect, so this was hit
+                        // constantly — three E2E tests waited out their 120s read timeouts, and
+                        // flakily, since it is a race.
+                        connections.lock().await.insert(
+                            connection_id,
+                            ConnectionData {
+                                state: ConnectionState::Idle,
+                                queued_data: Vec::new(),
+                                write_half: write_half_arc.clone(),
+                                handshake_complete: false,
+                            },
+                        );
+
                         // Handle connection opened event
                         let llm_client_clone = llm_client.clone();
                         let app_state_clone = app_state.clone();
@@ -253,16 +275,11 @@ impl BitcoinServer {
         protocol: Arc<BitcoinProtocol>,
         magic: Magic,
     ) {
-        // Add connection to tracking
-        connections.lock().await.insert(
-            connection_id,
-            ConnectionData {
-                state: ConnectionState::Idle,
-                queued_data: Vec::new(),
-                write_half: write_half.clone(),
-                handshake_complete: false,
-            },
-        );
+        // The connection is registered by the accept loop before this task and the reader task
+        // are spawned — inserting it here raced the reader and silently dropped whatever the
+        // peer sent first. Deliberately not re-inserted: doing so would reset the state machine
+        // and discard any bytes the reader has already queued. (`connections` is still used
+        // below, to remove the entry when the model closes the connection.)
 
         // Create connection opened event
         let event = Event::new(&BITCOIN_CONNECTION_OPENED_EVENT, serde_json::json!({}));
@@ -339,7 +356,17 @@ impl BitcoinServer {
             if let Some(conn_data) = conns.get(&connection_id) {
                 conn_data.state.clone()
             } else {
-                return; // Connection not found
+                // Never silent. A miss here means the connection was torn down between the
+                // read and this lookup (peer reset, or close_this_connection on another
+                // task) - legitimate, but indistinguishable from a registration race, which
+                // is exactly what made the bitcoin accept-order bug so hard to find: the
+                // read loop logged "received N bytes" and then nothing at all.
+                debug!(
+                    "Bitcoin connection {} is no longer registered; dropping {} received bytes",
+                    connection_id,
+                    data.len()
+                );
+                return;
             }
         };
 

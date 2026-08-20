@@ -255,11 +255,7 @@ async fn sip_invite_declined_is_a_failure_status() -> E2EResult<()> {
     let response = as_text(&server.udp_roundtrip(request.as_bytes()).await?);
 
     let result = (|| -> E2EResult<()> {
-        let status = response
-            .split_whitespace()
-            .nth(1)
-            .unwrap_or("")
-            .to_string();
+        let status = response.split_whitespace().nth(1).unwrap_or("").to_string();
         // 486 Busy Here is the exact answer; 603 Decline is the other final
         // refusal a UA renders the same way.
         if status != "486" && status != "603" {
@@ -335,11 +331,7 @@ async fn sip_cancel_confirms_the_cancellation() -> E2EResult<()> {
 
     let result = (|| -> E2EResult<()> {
         if !response.starts_with("SIP/2.0 200") {
-            return Err(format!(
-                "CANCEL is confirmed with 200; got {:?}",
-                response
-            )
-            .into());
+            return Err(format!("CANCEL is confirmed with 200; got {:?}", response).into());
         }
         echoes_correlation(&response, call_id, 5, "CANCEL")
     })()

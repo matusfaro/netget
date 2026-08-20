@@ -21,12 +21,21 @@ impl SipProtocol {
 
 // Implement Protocol trait (common functionality)
 impl Protocol for SipProtocol {
+    /// None. SIP has no user-triggered action that does anything.
+    ///
+    /// `send_sip_invite`, `send_sip_bye` and `update_registration` used to be advertised
+    /// here. All three were `Ok(ActionResult::NoAction)` stubs — every parameter they
+    /// declared (`to`, `from`, `sdp`, `call_id`, `bindings`) was read by nothing, and neither
+    /// the action names nor those fields appear anywhere in `mod.rs`. So a user asking to
+    /// place or end a call got silence, and the model was told the capability existed.
+    ///
+    /// Implementing them needs outbound dialog state this server does not keep (it answers
+    /// requests; it does not originate them) and a registration database that outlives a
+    /// request. Removed rather than left advertised, as the proxy's six configuration actions
+    /// and `ssh_agent/modify_instruction` were: an action that silently does nothing is worse
+    /// than an absent one, because the model will choose it.
     fn get_async_actions(&self, _state: &AppState) -> Vec<ActionDefinition> {
-        vec![
-            send_sip_invite_action(),
-            send_sip_bye_action(),
-            update_registration_action(),
-        ]
+        vec![]
     }
     fn get_sync_actions(&self) -> Vec<ActionDefinition> {
         vec![
@@ -180,9 +189,6 @@ impl Server for SipProtocol {
             "sip_ack" => Ok(ActionResult::NoAction), // ACK doesn't require response
             "sip_options" => self.execute_sip_options(action),
             "sip_cancel" => self.execute_sip_cancel(action),
-            "send_sip_invite" => self.execute_send_invite(action),
-            "send_sip_bye" => self.execute_send_bye(action),
-            "update_registration" => self.execute_update_registration(action),
             _ => Err(anyhow::anyhow!("Unknown SIP action: {}", action_type)),
         }
     }
@@ -213,25 +219,6 @@ impl SipProtocol {
 
     /// Execute SIP CANCEL action (network event)
     fn execute_sip_cancel(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        Ok(ActionResult::NoAction)
-    }
-
-    /// Execute send SIP INVITE action (user-triggered)
-    fn execute_send_invite(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        // This would trigger an outbound INVITE
-        // For now, return NoAction as it requires server-side state
-        Ok(ActionResult::NoAction)
-    }
-
-    /// Execute send SIP BYE action (user-triggered)
-    fn execute_send_bye(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        // This would trigger an outbound BYE
-        Ok(ActionResult::NoAction)
-    }
-
-    /// Execute update registration action (user-triggered)
-    fn execute_update_registration(&self, _action: serde_json::Value) -> Result<ActionResult> {
-        // This would update the registration database
         Ok(ActionResult::NoAction)
     }
 }
@@ -547,87 +534,3 @@ fn sip_cancel_action() -> ActionDefinition {
 }
 
 // User-triggered actions
-fn send_sip_invite_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "send_sip_invite".to_string(),
-        description: "Send SIP INVITE to initiate outbound call".to_string(),
-        parameters: vec![
-            Parameter {
-                name: "to".to_string(),
-                type_hint: "string".to_string(),
-                description: "SIP URI of recipient (e.g., sip:bob@example.com)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "from".to_string(),
-                type_hint: "string".to_string(),
-                description: "SIP URI of caller".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "sdp".to_string(),
-                type_hint: "string".to_string(),
-                description: "Session Description Protocol body".to_string(),
-                required: true,
-            },
-        ],
-        example: json!({
-            "type": "send_sip_invite",
-            "to": "sip:bob@example.com",
-            "from": "sip:alice@example.com",
-            "sdp": "v=0\no=- 0 0 IN IP4 127.0.0.1\n..."
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> SIP INVITE {from} -> {to}")
-                .with_debug("SIP send_sip_invite: from={from}, to={to}"),
-        ),
-    }
-}
-
-fn send_sip_bye_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "send_sip_bye".to_string(),
-        description: "Send SIP BYE to terminate active session".to_string(),
-        parameters: vec![Parameter {
-            name: "call_id".to_string(),
-            type_hint: "string".to_string(),
-            description: "Call-ID of session to terminate".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "send_sip_bye",
-            "call_id": "call-123@example.com"
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> SIP BYE call={call_id}")
-                .with_debug("SIP send_sip_bye: call_id={call_id}"),
-        ),
-    }
-}
-
-fn update_registration_action() -> ActionDefinition {
-    ActionDefinition {
-        name: "update_registration".to_string(),
-        description: "Update registration database bindings".to_string(),
-        parameters: vec![Parameter {
-            name: "bindings".to_string(),
-            type_hint: "object".to_string(),
-            description: "Object mapping username to contact URI".to_string(),
-            required: true,
-        }],
-        example: json!({
-            "type": "update_registration",
-            "bindings": {
-                "alice@localhost": "sip:alice@192.168.1.10:5060",
-                "bob@localhost": "sip:bob@192.168.1.11:5060"
-            }
-        }),
-        log_template: Some(
-            LogTemplate::new()
-                .with_info("-> SIP registration updated")
-                .with_debug("SIP update_registration: bindings updated"),
-        ),
-    }
-}

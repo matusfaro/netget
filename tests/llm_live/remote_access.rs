@@ -136,9 +136,11 @@ async fn vnc_first_frame_draws_the_whole_screen() -> E2EResult<()> {
         if has_bg {
             Ok(())
         } else {
-            Err("the framebuffer is redrawn from scratch, so a full-screen render must \
+            Err(
+                "the framebuffer is redrawn from scratch, so a full-screen render must \
                  lay down a background first"
-                .to_string())
+                    .to_string(),
+            )
         }
     })
     .run()

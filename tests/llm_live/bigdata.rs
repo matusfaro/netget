@@ -92,7 +92,10 @@ async fn grpc_unary_response_matches_the_declared_schema() -> E2EResult<()> {
                 .map(|i| i.as_i64() == Some(42) || i.as_str() == Some("42"))
                 .unwrap_or(false);
             if !id_ok {
-                return Err(format!("the request asked for user 42, got id {:?}", obj["id"]));
+                return Err(format!(
+                    "the request asked for user 42, got id {:?}",
+                    obj["id"]
+                ));
             }
             if obj.get("active").map(|a| a.is_boolean()) != Some(true) {
                 return Err(format!(
@@ -252,7 +255,10 @@ async fn snowflake_query_rows_match_their_columns() -> E2EResult<()> {
         }
         for (i, row) in rows.iter().enumerate() {
             let cells = row.as_array().ok_or_else(|| {
-                format!("row {} must be an array of cells in column order, got {}", i, row)
+                format!(
+                    "row {} must be an array of cells in column order, got {}",
+                    i, row
+                )
             })?;
             if cells.len() != cols {
                 return Err(format!(
@@ -462,7 +468,10 @@ async fn yarn_apps_use_state_and_final_status_correctly() -> E2EResult<()> {
                 .as_array()
                 .ok_or_else(|| format!("apps must be an array, got {}", v))?;
             if arr.len() != 1 {
-                return Err(format!("exactly one application has run; got {}", arr.len()));
+                return Err(format!(
+                    "exactly one application has run; got {}",
+                    arr.len()
+                ));
             }
             let app = &arr[0];
             let state = app
@@ -604,9 +613,7 @@ async fn yarn_cluster_metrics_is_an_object_of_counters() -> E2EResult<()> {
             ] {
                 match num(field) {
                     Some(v) if (v - expected).abs() < f64::EPSILON => {}
-                    Some(v) => {
-                        return Err(format!("{} should be {}, got {}", field, expected, v))
-                    }
+                    Some(v) => return Err(format!("{} should be {}, got {}", field, expected, v)),
                     None => {
                         return Err(format!(
                             "clusterMetrics is missing the numeric field {:?}; present: {:?}",

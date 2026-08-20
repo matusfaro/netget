@@ -150,10 +150,8 @@ impl StdioServer {
                             (hex::encode(data), "hex")
                         };
 
-                        Log::new(Some(&status_tx)).debug(format!(
-                            "stdio read {} bytes from stdin ({})",
-                            n, encoding
-                        ));
+                        Log::new(Some(&status_tx))
+                            .debug(format!("stdio read {} bytes from stdin ({})", n, encoding));
 
                         let event = Event::new(
                             &STDIO_INPUT_RECEIVED_EVENT,

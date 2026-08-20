@@ -29,8 +29,7 @@ pub static TFTP_READ_REQUEST_EVENT: LazyLock<EventType> = LazyLock::new(|| {
         json!({
             "type": "send_tftp_data",
             "block_number": 1,
-            "data_hex": "48656c6c6f20544654502100",
-            "is_final": true
+            "data_hex": "48656c6c6f20544654502100"
         }),
     )
     // Per-event narrowing: an RRQ is answered with data or an error, never with an ACK (the
@@ -131,13 +130,13 @@ pub static TFTP_ACK_RECEIVED_EVENT: LazyLock<EventType> = LazyLock::new(|| {
     EventType::new(
         "tftp_ack_received",
         "The client acknowledged a block of a download. Send the next block with send_tftp_data \
-         (set is_final on the last one), or abort with send_tftp_error. Returning no action ends \
+         (a block shorter than 512 bytes is what ends the transfer, per RFC 1350 - so send a \
+         short or empty final block), or abort with send_tftp_error. Returning no action ends \
          the transfer.",
         json!({
             "type": "send_tftp_data",
             "block_number": 2,
-            "data_hex": "",
-            "is_final": true
+            "data_hex": ""
         }),
     )
     .with_actions(vec![send_tftp_data_action(), send_tftp_error_action()])
@@ -229,7 +228,7 @@ data = json.load(sys.stdin)
 event = data["event"]
 if data["event_type_id"] == "tftp_read_request":
     actions = [{"type": "send_tftp_data", "block_number": 1,
-                "data_hex": "48656c6c6f0a", "is_final": True}]
+                "data_hex": "48656c6c6f0a"}]
 else:
     actions = []
 print(json.dumps({"actions": actions}))"#;
@@ -407,26 +406,23 @@ fn send_tftp_data_action() -> ActionDefinition {
             Parameter {
                 name: "data_hex".to_string(),
                 type_hint: "string".to_string(),
-                description: "Data as hex string (max 512 bytes)".to_string(),
-                required: true,
-            },
-            Parameter {
-                name: "is_final".to_string(),
-                type_hint: "boolean".to_string(),
-                description: "True if this is the final block (< 512 bytes, optional)".to_string(),
+                description: "Data as hex string, max 512 bytes. The length is what ends the \
+                    transfer: exactly 512 means more blocks follow, anything shorter (including \
+                    empty) is the final block, per RFC 1350. Send an empty final block when the \
+                    file is an exact multiple of 512 bytes."
+                    .to_string(),
                 required: true,
             },
         ],
         example: json!({
             "type": "send_tftp_data",
             "block_number": 1,
-            "data_hex": "48656c6c6f20544654502100",
-            "is_final": true
+            "data_hex": "48656c6c6f20544654502100"
         }),
         log_template: Some(
             LogTemplate::new()
                 .with_info("-> TFTP DATA #{block_number}")
-                .with_debug("TFTP send_tftp_data: block={block_number} is_final={is_final}"),
+                .with_debug("TFTP send_tftp_data: block={block_number} bytes={data_hex}"),
         ),
     }
 }

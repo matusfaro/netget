@@ -313,7 +313,10 @@ async fn handle_couchdb_request_with_llm(
                             return Ok(builder
                                 .body(Full::new(Bytes::from(body.to_string())))
                                 .unwrap_or_else(|_| {
-                                    Response::new(Full::new(Bytes::from(r#"{"ok":true}"#)))
+                                    couchdb_infallible_error(
+                                        hyper::StatusCode::INTERNAL_SERVER_ERROR,
+                                        r#"{"error":"internal_server_error","reason":"netget: the response headers chosen for this reply could not be encoded"}"#,
+                                    )
                                 }));
                         }
                     }
@@ -323,16 +326,35 @@ async fn handle_couchdb_request_with_llm(
                 }
             }
 
-            // No CouchDB response found, return default OK
-            debug!("No CouchDB response from LLM, returning 200 OK with default response");
-            let default_response = serde_json::json!({
-                "ok": true
+            // The handler ran and produced no CouchDB response. This used to answer
+            // 200 `{"ok": true}`, which is the exact claim the `Err` branch below refuses to
+            // make: on a PUT it tells the client the document was written, on a `_session`
+            // request it tells the client the login succeeded. Nothing here knows either.
+            //
+            // `no_response` is deliberately a different `error` string from the backend-failure
+            // branch's `internal_server_error`, so a handler that stayed silent and a backend
+            // that fell over are distinguishable in the client's error and in the log rather
+            // than both reading as a generic 500.
+            let kind = "no_response";
+            Log::new(Some(&status_tx)).warn(
+                "CouchDB handler produced no response for this request; answering 500 \
+                 (decision=no_response) rather than a success it cannot vouch for"
+                    .to_string(),
+            );
+            let error_response = serde_json::json!({
+                "error": kind,
+                "reason": "netget: the handler returned no CouchDB response for this request"
             })
             .to_string();
 
-            Ok(couchdb_response_builder(200)
-                .body(Full::new(Bytes::from(default_response)))
-                .unwrap_or_else(|_| Response::new(Full::new(Bytes::from(r#"{"ok":true}"#)))))
+            Ok(couchdb_response_builder(500)
+                .body(Full::new(Bytes::from(error_response)))
+                .unwrap_or_else(|_| {
+                    couchdb_infallible_error(
+                        hyper::StatusCode::INTERNAL_SERVER_ERROR,
+                        r#"{"error":"no_response","reason":"netget: the handler returned no CouchDB response for this request"}"#,
+                    )
+                }))
         }
         Err(e) => {
             // CouchDB reports errors as `{"error": ..., "reason": ...}` with a matching HTTP
@@ -360,9 +382,28 @@ async fn handle_couchdb_request_with_llm(
 
             Ok(couchdb_response_builder(status)
                 .body(Full::new(Bytes::from(error_response)))
-                .unwrap_or_else(|_| Response::new(Full::new(Bytes::from(r#"{"ok":false}"#)))))
+                .unwrap_or_else(|_| {
+                    couchdb_infallible_error(
+                        hyper::StatusCode::INTERNAL_SERVER_ERROR,
+                        r#"{"error":"internal_server_error","reason":"netget: no response could be obtained"}"#,
+                    )
+                }))
         }
     }
+}
+
+/// A CouchDB error response that cannot itself fail to build.
+///
+/// Every `.body()` above can fail - it surfaces an invalid header value assembled earlier in
+/// the builder - and every fallback for that used to be `Response::new(...)`, which is
+/// **200 OK**. So a model answering `401` with a malformed `WWW-Authenticate` had its refusal
+/// turned into a success, and the LLM-error branch answered 2xx in defiance of its own comment
+/// that it never may. Setting the status on an already-constructed response leaves no builder
+/// to fail, so a non-2xx here is guaranteed rather than hoped for.
+fn couchdb_infallible_error(status: hyper::StatusCode, body: &str) -> Response<Full<Bytes>> {
+    let mut response = Response::new(Full::new(Bytes::from(body.to_string())));
+    *response.status_mut() = status;
+    response
 }
 
 /// Start a CouchDB response with the standard headers and a validated status.
