@@ -196,6 +196,7 @@ jobs:
             --test protocol_dependencies_test \
             --test privilege_requirement_test \
             --test protocol_startup_smoke_test \
+            --test connectionless_audit_test \
             -- --test-threads=100 --nocapture
 
   test:
