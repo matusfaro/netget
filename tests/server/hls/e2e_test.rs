@@ -113,3 +113,127 @@ async fn test_hls_playlist_and_segment() -> E2EResult<()> {
     test_state.stop().await?;
     Ok(())
 }
+
+/// Connection stats are recorded on a one-shot HLS request, with **zero LLM calls** (a `*` static
+/// handler answers). HLS is HTTP-style request/response — one read, one write, then the connection
+/// returns and closes (`Connection: close`) — so it deliberately registers no peer handle: the
+/// dashboard's "message this peer" / "disconnect this peer" would have no live window to fire, and
+/// `execute_action` needs no `close_connection` arm. What it must still do is refresh
+/// `update_connection_stats`, so the rail shows real `↓ ↑` byte counts and a fresh `last_activity`
+/// rather than `↓0 ↑0`.
+///
+/// In-process (uses `netget::` APIs directly), so it can inspect the server's live connection state
+/// after the request completes.
+#[tokio::test]
+async fn hls_connection_stats_are_recorded() {
+    use ::netget::cli::management::ServerForm;
+    use ::netget::state::app_state::AppState;
+    use tokio::sync::mpsc;
+
+    // AppState whose LLM points nowhere; the static handler means nothing here needs a model.
+    let state = AppState::new_with_options(false, false, "http://127.0.0.1:1".to_string());
+    state
+        .set_llm_client(::netget::llm::OllamaClient::new(
+            "http://127.0.0.1:1".to_string(),
+        ))
+        .await;
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+
+    // HLS server that statically answers every playlist request, so no LLM call fires.
+    let server_form = ServerForm {
+        protocol: "hls".to_string(),
+        port: Some(0),
+        event_handlers: Some(vec![serde_json::json!({
+            "event_pattern": "*",
+            "handler": {
+                "type": "static",
+                "actions": [{
+                    "type": "hls_playlist_response",
+                    "target_duration": 6,
+                    "segments": [
+                        {"uri": "seg0.ts", "duration": 6.0},
+                        {"uri": "seg1.ts", "duration": 6.0}
+                    ]
+                }]
+            }
+        })]),
+        ..Default::default()
+    };
+    let server_id = server_form
+        .create(&state, tx.clone())
+        .await
+        .expect("create hls server");
+
+    // Wait for the listener to bind.
+    let mut port = 0u16;
+    for _ in 0..100 {
+        if let Some(s) = state.get_server(server_id).await {
+            if let Some(addr) = s.local_addr {
+                port = addr.port();
+                break;
+            }
+            if s.port != 0 {
+                port = s.port;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert_ne!(port, 0, "server never bound a port");
+
+    // Raw HTTP playlist request over a plain tokio socket.
+    let mut stream = TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect");
+    let request =
+        "GET /stream.m3u8 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n".to_string();
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("write request");
+
+    // Read the whole response (server half-closes / returns after writing).
+    let mut response = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response)).await;
+    assert!(!response.is_empty(), "server sent no response");
+    assert!(
+        response.starts_with(b"HTTP/1.1 200"),
+        "expected HTTP 200, got: {}",
+        String::from_utf8_lossy(&response[..response.len().min(40)])
+    );
+
+    // The connection's stats must reflect the one read and one write.
+    let mut got_stats = false;
+    for _ in 0..100 {
+        if let Some(s) = state.get_server(server_id).await {
+            if let Some(conn) = s.connections.values().next() {
+                if conn.bytes_received > 0 && conn.bytes_sent > 0 {
+                    assert!(
+                        conn.bytes_received as usize >= request.len(),
+                        "bytes_received ({}) < request len ({})",
+                        conn.bytes_received,
+                        request.len()
+                    );
+                    assert!(conn.packets_received >= 1 && conn.packets_sent >= 1);
+                    got_stats = true;
+                    break;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert!(
+        got_stats,
+        "connection stats never showed both bytes_received and bytes_sent > 0"
+    );
+
+    // No peer handle: HLS deliberately does not adopt it (one-shot HTTP request/response).
+    if let Some(s) = state.get_server(server_id).await {
+        if let Some((conn_id, _)) = s.connections.iter().next() {
+            assert!(
+                !state.has_peer_handle(server_id, conn_id.as_u32()).await,
+                "hls should register no peer handle for one-shot HTTP"
+            );
+        }
+    }
+}

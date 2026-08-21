@@ -47,3 +47,17 @@ Default `Content-Type: video/mp2t`.
 ## Fail-closed
 
 On LLM failure: HTTP 503, no fabricated playlist or segment; logged on both channels.
+
+## Dashboard injection: connection stats yes, peer handle no
+
+HLS is one-shot HTTP request/response — one read of the request, one write of the response, then
+`handle_connection` returns and the socket closes (`Connection: close`). So it deliberately
+registers **no** `peer_support` handle: the dashboard's `[ message this peer ]` /
+`[ disconnect this peer ]` would have no live connection window to fire, and `execute_action`
+needs no `close_connection` arm. The rail shows the dim "cannot message or disconnect a peer from
+here yet" row for HLS connections, which is correct.
+
+What it does do is refresh `AppState::update_connection_stats` on the single read and the single
+write, so the rail shows real `↓ ↑` byte/packet counts and a fresh `last_activity` rather than
+`↓0 ↑0`. Covered by the zero-LLM in-process test `hls_connection_stats_are_recorded`
+(`tests/server/hls/e2e_test.rs`), which also asserts no peer handle is registered.

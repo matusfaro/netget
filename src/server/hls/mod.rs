@@ -147,6 +147,21 @@ impl HlsServer {
         };
         console_trace!(status_tx, "HLS {} {}", method, path);
 
+        // Refresh connection stats (bytes/packets in) so the dashboard rail shows real traffic
+        // and a fresh last_activity rather than ↓0 ↑0. This is a one-shot HTTP request/response
+        // connection (`Connection: close`): exactly one read of the request, one write of the
+        // response, then the connection returns and closes.
+        state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                Some(buffer.len() as u64),
+                None,
+                Some(1),
+                None,
+            )
+            .await;
+
         let is_playlist = path.contains(".m3u8");
         let base = serde_json::json!({
             "peer_addr": remote_addr.to_string(),
@@ -200,12 +215,14 @@ impl HlsServer {
         write_half.flush().await?;
 
         state
-            .with_server_mut(server_id, |s| {
-                if let Some(c) = s.connections.get_mut(&connection_id) {
-                    c.bytes_sent += response.len() as u64;
-                    c.packets_sent += 1;
-                }
-            })
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                None,
+                Some(response.len() as u64),
+                None,
+                Some(1),
+            )
             .await;
         let _ = status_tx.send(format!("→ HLS {} {} ({} bytes)", status, path, body.len()));
         Ok(())
