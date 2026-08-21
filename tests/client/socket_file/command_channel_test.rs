@@ -71,7 +71,7 @@ async fn injected_socket_file_data_reaches_the_unix_socket() {
     });
 
     let client_id = ClientForm {
-        protocol: "socket_file".to_string(),
+        protocol: "SocketFile".to_string(),
         remote_addr: Some(socket_path.to_string_lossy().to_string()),
         instruction: Some("test client".to_string()),
         ..Default::default()

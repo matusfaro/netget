@@ -81,7 +81,7 @@ async fn injected_http_proxy_actions_reach_the_proxy_socket() {
     let port = listener.local_addr().unwrap().port();
 
     let client_id = ClientForm {
-        protocol: "http_proxy".to_string(),
+        protocol: "HTTP Proxy".to_string(),
         remote_addr: Some(format!("127.0.0.1:{port}")),
         instruction: Some("test client".to_string()),
         ..Default::default()
