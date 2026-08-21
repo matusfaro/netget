@@ -57,10 +57,22 @@ mailbox_read_only: bool
 
 ### Connection Management
 
-- Connections tracked in `AppState` with full statistics
+- Connections tracked in `AppState` with full statistics; `update_connection_stats` fires on
+  every read and every write, so the dashboard's `↓ ↑` counters and `last_activity` stay live
 - Each connection spawns independent async task
 - Write operations use `Arc<Mutex<WriteHalf>>` for safe concurrent access
 - Read operations use `BufReader` for line-based parsing
+
+### Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+Every connection registers a peer handle (`server::peer_support`) in the accept loop, right
+after it is tracked and *before* the greeting event, so a manual `*` rule parking the greeting
+still leaves the operator able to reach the connection while it waits. `AppState::send_to_peer`
+runs the action through the same executor as the LLM path; every IMAP wire verb returns
+`ActionResult::Output` and `close_connection` half-closes, so there is no `Custom` gap. The
+handle is removed on every exit path (EOF, read error, refused greeting, LOGOUT) through the
+single cleanup after `session.handle()` returns, and again idempotently by the peer task itself
+on an injected close. Test: `tests/server/imap/peer_inject_test.rs` (zero LLM calls).
 
 ### Response Actions
 

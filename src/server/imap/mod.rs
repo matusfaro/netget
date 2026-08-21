@@ -107,6 +107,31 @@ impl ImapServer {
                             )
                             .await;
 
+                        // Peer messaging: the dashboard's "message this peer" /
+                        // "disconnect this peer" inject actions into THIS connection through
+                        // the same executor the LLM path uses. Registered before the greeting
+                        // event, because a manual `*` rule can park that greeting for minutes
+                        // and the operator must still be able to reach the connection while it
+                        // waits. Every IMAP wire verb returns `ActionResult::Output` (and
+                        // `close_connection` half-closes), so the generic task covers the whole
+                        // vocabulary with no `Custom` gap.
+                        let peer_rx = crate::server::peer_support::register_peer_channel(
+                            &app_state,
+                            server_id,
+                            connection_id.as_u32(),
+                        )
+                        .await;
+                        crate::server::peer_support::spawn_peer_command_task(
+                            peer_rx,
+                            protocol.clone(),
+                            app_state.clone(),
+                            server_id,
+                            connection_id.as_u32(),
+                            write_half_arc.clone(),
+                            status_tx.clone(),
+                        );
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -132,6 +157,14 @@ impl ImapServer {
                                 Log::new(Some(&status_clone))
                                     .error(format!("IMAP session {} error: {}", connection_id, e));
                             }
+
+                            // Every exit path of `handle()` - EOF, read error, refused
+                            // greeting, LOGOUT - lands here, so this single cleanup removes the
+                            // peer handle no matter how the session ended (idempotent with the
+                            // peer task's own removal on an injected close).
+                            state_clone
+                                .remove_peer_handle(server_id, connection_id.as_u32())
+                                .await;
 
                             // Mark connection as closed
                             state_clone
