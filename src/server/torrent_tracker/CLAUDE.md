@@ -259,20 +259,6 @@ generic `serde_json::Value` wrapper (`state/server.rs`), not the per-protocol en
 versions of this file described; there is no `TorrentTracker` variant and no
 `recent_requests` list. Each announce or scrape is a separate short-lived connection.
 
-### Dashboard injection — stats yes, peer handle intentionally no
-
-`handle_connection` now calls `AppState::update_connection_stats` on the single read and on
-every write path (LLM response, `400 Bad Request`, `500`), so the dashboard rail shows real
-`↓ ↑` byte counts and a fresh `last_activity` instead of `↓0 ↑0`.
-
-It does **not** register a `peer_support` handle, so the rail offers no
-"message this peer" / "disconnect this peer" affordance. That is deliberate: the tracker is
-HTTP-style one-shot — one read, one write, then the connection returns and closes — so there
-is no live window in which an injected `send_announce_response` or `close_connection` could
-reach the peer. Wiring a handle would register it and immediately drop it; the honest
-rendering is the dim "cannot message a peer from here yet" row. (Because there is no peer
-handle, `execute_action` also needs no `close_connection` arm.)
-
 ## Limitations
 
 0. **No UDP tracker, no IPv6 compact peers, no `min interval`, no `tracker id`.** Compact
