@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 
 pub struct WhoisServer;
 
@@ -104,8 +104,39 @@ impl WhoisServer {
     }
 }
 
+/// Write one reply to the peer and count it. The guard is dropped before the
+/// stats update so nothing awaits while holding the write half.
+async fn write_counted<W>(
+    write_half: &Arc<Mutex<W>>,
+    data: &[u8],
+    app_state: &AppState,
+    server_id: crate::state::ServerId,
+    connection_id: ConnectionId,
+) -> std::io::Result<()>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    {
+        let mut writer = write_half.lock().await;
+        writer.write_all(data).await?;
+        writer.flush().await?;
+    }
+    app_state
+        .update_connection_stats(
+            server_id,
+            connection_id,
+            None,
+            Some(data.len() as u64),
+            None,
+            Some(1),
+        )
+        .await;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn handle_whois_connection(
-    mut socket: tokio::net::TcpStream,
+    socket: tokio::net::TcpStream,
     peer_addr: SocketAddr,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
@@ -114,21 +145,80 @@ async fn handle_whois_connection(
     protocol: Arc<actions::WhoisProtocol>,
     connection_id: ConnectionId,
 ) {
-    let (mut reader, mut writer) = tokio::io::split(&mut socket);
+    let (reader, write_half) = tokio::io::split(socket);
+    let write_half = Arc::new(Mutex::new(write_half));
+
+    // Peer messaging: the dashboard's "message this peer" / "disconnect this peer" inject
+    // actions into THIS connection through the same executor the LLM path uses. Registered
+    // before the first read, because a WHOIS server says nothing until the client speaks
+    // and a manual `*` rule can then park the query for minutes - the operator must be
+    // able to reach the connection while it waits.
+    let peer_rx = crate::server::peer_support::register_peer_channel(
+        &app_state,
+        server_id,
+        connection_id.as_u32(),
+    )
+    .await;
+    crate::server::peer_support::spawn_peer_command_task(
+        peer_rx,
+        protocol.clone(),
+        app_state.clone(),
+        server_id,
+        connection_id.as_u32(),
+        write_half.clone(),
+        status_tx.clone(),
+    );
+
+    run_whois_session(
+        reader,
+        &write_half,
+        peer_addr,
+        &llm_client,
+        &app_state,
+        &status_tx,
+        server_id,
+        &protocol,
+        connection_id,
+    )
+    .await;
+
+    // Every exit path - EOF, read error, write error, close_connection, LLM failure - lands
+    // here. Dropping the handle also ends the peer command task, which releases its clone of
+    // the write half; the explicit shutdown makes the FIN immediate rather than waiting on it.
+    app_state
+        .remove_peer_handle(server_id, connection_id.as_u32())
+        .await;
+    let _ = write_half.lock().await.shutdown().await;
+
+    use crate::state::server::ConnectionStatus;
+    app_state
+        .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
+        .await;
+    let _ = status_tx.send("__UPDATE_UI__".to_string());
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_whois_session<R, W>(
+    mut reader: R,
+    write_half: &Arc<Mutex<W>>,
+    peer_addr: SocketAddr,
+    llm_client: &OllamaClient,
+    app_state: &Arc<AppState>,
+    status_tx: &mpsc::UnboundedSender<String>,
+    server_id: crate::state::ServerId,
+    protocol: &Arc<actions::WhoisProtocol>,
+    connection_id: ConnectionId,
+) where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
     let mut buffer = vec![0u8; 4096];
-    let log = Log::new(Some(&status_tx));
+    let log = Log::new(Some(status_tx));
 
     loop {
         match reader.read(&mut buffer).await {
             Ok(0) => {
                 log.info(format!("WHOIS client {} disconnected", peer_addr));
-
-                // Update connection status
-                use crate::state::server::ConnectionStatus;
-                app_state
-                    .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
-                    .await;
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
                 break;
             }
             Ok(n) => {
@@ -167,8 +257,8 @@ async fn handle_whois_connection(
 
                 // Call LLM
                 match call_llm(
-                    &llm_client,
-                    &app_state,
+                    llm_client,
+                    app_state,
                     server_id,
                     Some(connection_id),
                     &event,
@@ -199,23 +289,19 @@ async fn handle_whois_connection(
                         for protocol_result in execution_result.protocol_results {
                             match protocol_result {
                                 crate::llm::actions::protocol_trait::ActionResult::Output(output_data) => {
-                                    if let Err(e) = writer.write_all(&output_data).await {
+                                    if let Err(e) = write_counted(
+                                        write_half,
+                                        &output_data,
+                                        app_state,
+                                        server_id,
+                                        connection_id,
+                                    )
+                                    .await
+                                    {
                                         log.error(format!("WHOIS write error: {}", e));
                                         return;
                                     }
                                     wrote_output = true;
-
-                                    // Update connection stats
-                                    app_state
-                                        .update_connection_stats(
-                                            server_id,
-                                            connection_id,
-                                            None,
-                                            Some(output_data.len() as u64),
-                                            None,
-                                            Some(1),
-                                        )
-                                        .await;
 
                                     // Summary + payload FileOnly; access line below on TUI.
                                     log.debug(format!(
@@ -254,10 +340,18 @@ async fn handle_whois_connection(
                                 execution_result.failures.len()
                             ));
                             let notice = b"% netget: no data was produced for this query\r\n";
-                            if writer.write_all(notice).await.is_err() {
+                            if write_counted(
+                                write_half,
+                                notice,
+                                app_state,
+                                server_id,
+                                connection_id,
+                            )
+                            .await
+                            .is_err()
+                            {
                                 return;
                             }
-                            let _ = writer.flush().await;
                         }
 
                         // Break loop if LLM requested connection close
@@ -270,8 +364,9 @@ async fn handle_whois_connection(
                         // response it will otherwise never get.
                         log.warn(format!("WHOIS LLM call failed: {}", e));
                         let notice = b"% netget: the query could not be answered\r\n";
-                        let _ = writer.write_all(notice).await;
-                        let _ = writer.flush().await;
+                        let _ =
+                            write_counted(write_half, notice, app_state, server_id, connection_id)
+                                .await;
                         break;
                     }
                 }
@@ -282,11 +377,4 @@ async fn handle_whois_connection(
             }
         }
     }
-
-    // Update connection status to closed
-    use crate::state::server::ConnectionStatus;
-    app_state
-        .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
-        .await;
-    let _ = status_tx.send("__UPDATE_UI__".to_string());
 }

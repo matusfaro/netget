@@ -94,6 +94,24 @@ Unlike TCP/HTTP clients, WHOIS has no ongoing state:
     - Sent from `query_whois` action
     - Triggers query transmission
 
+### Dashboard injection (command channel)
+
+The client registers a command channel (`client::command_support`) before the
+connected-event LLM call, so `[ query_whois ]` and `[ disconnect ]` work while a
+manual rule parks that event, and also after an LLM failure (the client now stays
+connected in that case instead of dying). Commands are drained by a separate task
+(shape 2 of the playbook) that shares the `Arc<Mutex<WriteHalf>>`; because
+`query_whois` yields `ClientActionResult::Custom { "whois_query" }` the generic arm
+cannot run it, so the task routes it through the same `apply_action` the LLM path
+uses, records an `injected_action` access-log entry and replies `Sent{bytes}`.
+The session reads until EOF with a cancellation-safe `read()` loop and raises
+`whois_response_received` with whichever query actually went on the wire (model's
+or injected; the first one wins, since RFC 3912 is one query per connection — a
+second injected query is written but most servers ignore it). The handle is
+removed when the session ends or on an injected disconnect, so the rail stops
+offering `[ send ]` on a dead client. `tests/client/whois/command_channel_test.rs`
+proves the path with zero LLM calls.
+
 ## Response Parsing
 
 WHOIS responses are **unstructured text**. Format varies by registry:

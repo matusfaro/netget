@@ -43,6 +43,20 @@ forever. Answer with `close_connection` as well. The two `send_*` action
 descriptions say so, and `tests/server/whois/e2e_test.rs` proves the real client
 is satisfied when they are paired.
 
+### Dashboard injection (peer handle)
+
+Every connection registers a peer handle (`server::peer_support`) before its first
+read — a WHOIS server says nothing until asked, and a manual `*` rule can park the
+query, so the operator must be able to reach the connection while it waits. The
+write half is an `Arc<Mutex<WriteHalf>>` shared by the session and the peer command
+task; `[ message this peer ]` executes any of the actions above through the same
+executor the model's go through (all wire verbs return `ActionResult::Output`, so
+no Custom-result gap), and `[ disconnect this peer ]` is `close_connection`. The
+handle is removed on every exit path, and `bytes_*`/`packets_*` are updated on
+every read and on every write the session itself makes; bytes written by the
+generic peer task are not counted (that is in `peer_support.rs`, not here).
+`tests/server/whois/peer_inject_test.rs` proves it with zero LLM calls.
+
 ### Failure behavior
 
 An LLM or handler failure breaks the loop and closes the connection with nothing
