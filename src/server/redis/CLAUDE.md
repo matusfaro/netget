@@ -1,8 +1,9 @@
 # Redis Protocol Implementation
 
 RESP2 server. `redis-protocol` v6.0 parses inbound frames; responses are encoded
-by hand in `mod.rs`. The LLM owns every reply — there is no key space, no
-storage, and no command dispatch table in Rust.
+by hand in `actions.rs` (`encode_*`, the single source of truth — each reply verb's
+executor returns the encoded bytes as `ActionResult::Output`). The LLM owns every
+reply — there is no key space, no storage, and no command dispatch table in Rust.
 
 **State**: Experimental — LLM-authored, not human-reviewed. Verified against
 `redis-cli` for the array/bulk/integer/nil encodings.
@@ -33,7 +34,7 @@ indistinguishable from two arguments.
 | `redis_null` | — | `$-1\r\n` |
 | `close_this_connection` | — | flushes pending output, then closes |
 
-`redis_array` element mapping, exactly as implemented in `encode_array`:
+`redis_array` element mapping, exactly as implemented in `actions.rs::encode_array`:
 
 | JSON element | RESP2 |
 |---|---|
@@ -53,8 +54,10 @@ Verified with `redis-cli --no-raw`: `["k1", 42, true, null, {"a":1}]` returns
   is strictly request/response; staying silent would hang the client until its
   own timeout.)
 - **LLM call fails** → `-ERR LLM error: …`.
-- **Action result the encoder does not recognise** → logged at WARN and skipped;
-  if nothing else was produced the no-response error above is sent.
+- **Action result that is `Custom` rather than `Output`** → logged at WARN and
+  skipped (no Redis action returns `Custom` any more; the arm exists so a
+  regression is loud); if nothing else was produced the no-response error above
+  is sent.
 - **Undecodable RESP** → the connection is closed.
 - **Incomplete frame larger than 64 MB** (`MAX_PENDING_FRAME_BYTES`) → an error
   is sent and the connection closed. Without this cap a client announcing
@@ -73,6 +76,11 @@ Verified with `redis-cli --no-raw`: `["k1", 42, true, null, {"a":1}]` returns
 - Read into a `Vec`, `decode()` frames off the front, drain what was consumed.
   Multiple pipelined frames in one read are processed in order, each with its own
   LLM call.
+- Reply verbs are encoded in `execute_action` (`actions.rs`), which returns the
+  RESP bytes as `ActionResult::Output`. The read loop only concatenates `Output`
+  bytes (flattening `Multiple`) and writes them; it encodes nothing itself except
+  the three errors it synthesises (frame cap, LLM failure, no-response), which
+  call the same `actions::encode_error`.
 - Responses for one command are accumulated into a single buffer and written
   once, so a `close_this_connection` issued alongside a reply still flushes.
 - No per-connection state machine: commands on one connection are handled
@@ -87,15 +95,21 @@ with the generic peer command task; the handle is removed on every exit path thr
 single cleanup in `handle_connection`. Counters (`update_connection_stats`) move on every
 read and every write, including the frame-cap error.
 
-**Custom-result gap.** All six reply verbs (`redis_simple_string`, `redis_bulk_string`,
-`redis_array`, `redis_integer`, `redis_error`, `redis_null`) return `ActionResult::Custom`
-and are encoded by the `match` in `run()`, not by `execute_action`. The generic peer task
-writes only `ActionResult::Output`, so an injected reply verb is reported as `Executed`
-and **nothing reaches the socket**. Only `close_connection` (what "disconnect this peer"
-sends; an explicit arm in `execute_action`, not offered to the model — its verb is
-`close_this_connection`) has wire effect: it half-closes and the client reads EOF. Closing
-the gap means moving the RESP encoding into `execute_action` so the verbs return
-`Output`; until then `tests/server/redis/peer_inject_test.rs` pins the `Executed` outcome.
+**The whole vocabulary is injectable.** All six reply verbs (`redis_simple_string`,
+`redis_bulk_string`, `redis_array`, `redis_integer`, `redis_error`, `redis_null`) are
+RESP-encoded inside `execute_action` and return `ActionResult::Output`, which the generic
+peer task writes to the connection's write half — so an injected reply verb puts exactly
+the same bytes on the wire as the read-loop path (they share the `encode_*` functions in
+`actions.rs`). `close_connection` (what "disconnect this peer" sends; an explicit arm in
+`execute_action`, not offered to the model — its verb is `close_this_connection`)
+half-closes and the client reads EOF. This used to be the "Custom-result gap": the verbs
+returned `Custom` and only the read loop could encode them, so injection reported
+`Executed` without writing. `tests/server/redis/peer_inject_test.rs` pins the fixed
+behavior (`Sent`, bytes at the client socket, counters moved).
+
+Injected replies are unsolicited from the client's point of view: `redis-cli` sitting at
+its prompt will parse the frame as the reply to its *next* command. That is inherent to
+injecting into a strictly request/response protocol, not a NetGet bug.
 
 ## Not implemented
 

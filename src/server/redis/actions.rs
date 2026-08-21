@@ -220,6 +220,11 @@ impl Server for RedisProtocol {
 }
 
 impl RedisProtocol {
+    /// Every reply verb returns `ActionResult::Output` with the RESP2 bytes already
+    /// encoded, so the same executor serves both the connection's read loop and the
+    /// dashboard's "message this peer" injection (`server::peer_support` writes
+    /// `Output` bytes; a `Custom` result would be reported as executed without
+    /// touching the wire — the gap this refactor closed).
     fn execute_redis_simple_string(&self, action: serde_json::Value) -> Result<ActionResult> {
         let value = action
             .get("value")
@@ -231,12 +236,7 @@ impl RedisProtocol {
             .status_tx
             .send(format!("[DEBUG] Redis → Simple string: {}", value));
 
-        Ok(ActionResult::Custom {
-            name: "redis_simple_string".to_string(),
-            data: json!({
-                "value": value
-            }),
-        })
+        Ok(ActionResult::Output(encode_simple_string(value)))
     }
 
     fn execute_redis_bulk_string(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -260,14 +260,10 @@ impl RedisProtocol {
             result.as_ref().map(|v| v.len()).unwrap_or(0)
         ));
 
-        Ok(ActionResult::Custom {
-            name: "redis_bulk_string".to_string(),
-            data: json!({
-                "value": result.as_ref().map(|v| serde_json::Value::String(
-                    String::from_utf8_lossy(v).to_string()
-                ))
-            }),
-        })
+        Ok(ActionResult::Output(match result {
+            Some(bytes) => encode_bulk_string(&bytes),
+            None => encode_null(),
+        }))
     }
 
     fn execute_redis_array(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -281,12 +277,7 @@ impl RedisProtocol {
             .status_tx
             .send(format!("[DEBUG] Redis → Array: {} elements", values.len()));
 
-        Ok(ActionResult::Custom {
-            name: "redis_array".to_string(),
-            data: json!({
-                "values": values
-            }),
-        })
+        Ok(ActionResult::Output(encode_array(values)))
     }
 
     fn execute_redis_integer(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -300,12 +291,7 @@ impl RedisProtocol {
             .status_tx
             .send(format!("[DEBUG] Redis → Integer: {}", value));
 
-        Ok(ActionResult::Custom {
-            name: "redis_integer".to_string(),
-            data: json!({
-                "value": value
-            }),
-        })
+        Ok(ActionResult::Output(encode_integer(value)))
     }
 
     fn execute_redis_error(&self, action: serde_json::Value) -> Result<ActionResult> {
@@ -319,23 +305,93 @@ impl RedisProtocol {
             .status_tx
             .send(format!("[DEBUG] Redis ✗ Error: {}", message));
 
-        Ok(ActionResult::Custom {
-            name: "redis_error".to_string(),
-            data: json!({
-                "message": message
-            }),
-        })
+        Ok(ActionResult::Output(encode_error(message)))
     }
 
     fn execute_redis_null(&self, _action: serde_json::Value) -> Result<ActionResult> {
         debug!("Redis null response");
         let _ = self.status_tx.send("[DEBUG] Redis → Null".to_string());
 
-        Ok(ActionResult::Custom {
-            name: "redis_null".to_string(),
-            data: json!(null),
-        })
+        Ok(ActionResult::Output(encode_null()))
     }
+}
+
+// ============================================================================
+// RESP2 encoding — single source of truth
+// ============================================================================
+//
+// Called by the executors above (so the LLM path, script/static handlers and
+// dashboard peer injection all produce identical bytes) and by `mod.rs` for the
+// replies the loop synthesises itself (frame-cap error, LLM-failure error,
+// no-response error).
+
+/// Encode a simple string response ("+OK\r\n")
+pub fn encode_simple_string(s: &str) -> Vec<u8> {
+    format!("+{}\r\n", s).into_bytes()
+}
+
+/// Encode a bulk string response ("$5\r\nhello\r\n")
+pub fn encode_bulk_string(bytes: &[u8]) -> Vec<u8> {
+    let mut result = format!("${}\r\n", bytes.len()).into_bytes();
+    result.extend_from_slice(bytes);
+    result.extend_from_slice(b"\r\n");
+    result
+}
+
+/// Encode a null bulk string ("$-1\r\n")
+pub fn encode_null() -> Vec<u8> {
+    b"$-1\r\n".to_vec()
+}
+
+/// Encode an integer response (":42\r\n")
+pub fn encode_integer(i: i64) -> Vec<u8> {
+    format!(":{}\r\n", i).into_bytes()
+}
+
+/// Encode an error response ("-ERR message\r\n")
+pub fn encode_error(msg: &str) -> Vec<u8> {
+    format!("-{}\r\n", msg).into_bytes()
+}
+
+/// Encode an array response.
+///
+/// The element mapping is part of the `redis_array` action contract documented to the LLM:
+/// strings become bulk strings, integers become RESP integers, booleans become the bulk
+/// strings `"1"`/`"0"`, null becomes a nil bulk string, and nested arrays/objects are
+/// serialized to JSON and sent as a bulk string (RESP2 has no JSON type).
+pub fn encode_array(values: &[serde_json::Value]) -> Vec<u8> {
+    let mut result = format!("*{}\r\n", values.len()).into_bytes();
+
+    for value in values {
+        match value {
+            serde_json::Value::String(s) => {
+                result.extend_from_slice(&encode_bulk_string(s.as_bytes()));
+            }
+            serde_json::Value::Number(n) => {
+                if let Some(i) = n.as_i64() {
+                    result.extend_from_slice(&encode_integer(i));
+                } else {
+                    // Encode as bulk string
+                    let s = n.to_string();
+                    result.extend_from_slice(&encode_bulk_string(s.as_bytes()));
+                }
+            }
+            serde_json::Value::Bool(b) => {
+                let s = if *b { "1" } else { "0" };
+                result.extend_from_slice(&encode_bulk_string(s.as_bytes()));
+            }
+            serde_json::Value::Null => {
+                result.extend_from_slice(&encode_null());
+            }
+            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
+                // Nested arrays/objects - encode as bulk string JSON
+                let s = value.to_string();
+                result.extend_from_slice(&encode_bulk_string(s.as_bytes()));
+            }
+        }
+    }
+
+    result
 }
 
 /// Action definition: Send Redis simple string response
