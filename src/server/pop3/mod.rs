@@ -70,6 +70,8 @@ impl Pop3Server {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await,
                         );
+                        // Captured before a TLS handshake could consume the TcpStream.
+                        let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         console_debug!(
                             status_tx,
                             "POP3 connection {} from {}",
@@ -99,6 +101,8 @@ impl Pop3Server {
                                         if let Err(e) = Pop3Session::handle_session(
                                             tls_stream,
                                             connection_id,
+                                            remote_addr,
+                                            local_addr_conn,
                                             server_id,
                                             llm_clone,
                                             state_clone,
@@ -125,6 +129,8 @@ impl Pop3Server {
                                 if let Err(e) = Pop3Session::handle_session(
                                     stream,
                                     connection_id,
+                                    remote_addr,
+                                    local_addr_conn,
                                     server_id,
                                     llm_clone,
                                     state_clone,
@@ -174,9 +180,12 @@ impl Pop3Session {
     /// Generic over the transport so the plain TCP and POP3S (implicit TLS) paths share a
     /// single implementation - they were previously duplicated verbatim, which is how the
     /// two drifted.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_session<S>(
         stream: S,
         connection_id: crate::server::connection::ConnectionId,
+        remote_addr: SocketAddr,
+        local_addr: SocketAddr,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
@@ -184,13 +193,95 @@ impl Pop3Session {
         protocol: Arc<Pop3Protocol>,
     ) -> Result<()>
     where
-        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
 
         let (read_half, write_half) = tokio::io::split(stream);
-        let mut reader = BufReader::new(read_half);
+        let reader = tokio::io::BufReader::new(read_half);
         let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
+
+        // Track the connection so the dashboard lists it with live counters.
+        let now = std::time::Instant::now();
+        app_state
+            .add_connection_to_server(
+                server_id,
+                ConnectionState {
+                    id: connection_id,
+                    remote_addr,
+                    local_addr,
+                    bytes_sent: 0,
+                    bytes_received: 0,
+                    packets_sent: 0,
+                    packets_received: 0,
+                    last_activity: now,
+                    status: ConnectionStatus::Active,
+                    status_changed_at: now,
+                    protocol_info: ProtocolConnectionInfo::empty(),
+                },
+            )
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Peer messaging: the dashboard's "message this peer" / "disconnect this peer" inject
+        // actions into THIS connection through the same executor the LLM path uses. Registered
+        // before the greeting, because a manual `*` rule can park that greeting for minutes and
+        // the operator must be able to reach the connection while it waits.
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &app_state,
+            server_id,
+            connection_id.as_u32(),
+        )
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            protocol.clone(),
+            app_state.clone(),
+            server_id,
+            connection_id.as_u32(),
+            write_half.clone(),
+            status_tx.clone(),
+        );
+
+        let result = Self::run_session(
+            reader,
+            &write_half,
+            connection_id,
+            server_id,
+            &llm_client,
+            &app_state,
+            &status_tx,
+            &protocol,
+        )
+        .await;
+
+        // Every exit path - EOF, read error, close_connection, refused greeting - lands here.
+        app_state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
+        app_state
+            .close_connection_on_server(server_id, connection_id)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_session<R, W>(
+        mut reader: tokio::io::BufReader<R>,
+        write_half: &Arc<tokio::sync::Mutex<W>>,
+        connection_id: crate::server::connection::ConnectionId,
+        server_id: crate::state::ServerId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: &Arc<Pop3Protocol>,
+    ) -> Result<()>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 
         // Send initial greeting
         let greeting_event = Event::new(
@@ -203,13 +294,13 @@ impl Pop3Session {
 
         match Self::process_command(
             &greeting_event,
-            &llm_client,
-            &app_state,
-            &status_tx,
-            &protocol,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
             server_id,
             connection_id,
-            &write_half,
+            write_half,
         )
         .await
         {
@@ -232,6 +323,17 @@ impl Pop3Session {
                 let mut writer = write_half.lock().await;
                 let _ = writer.write_all(reply.as_bytes()).await;
                 let _ = writer.flush().await;
+                drop(writer);
+                app_state
+                    .update_connection_stats(
+                        server_id,
+                        connection_id,
+                        None,
+                        Some(reply.len() as u64),
+                        None,
+                        Some(1),
+                    )
+                    .await;
                 return Ok(());
             }
         }
@@ -245,7 +347,17 @@ impl Pop3Session {
                     debug!("POP3 connection {} closed by client", connection_id);
                     break;
                 }
-                Ok(_) => {
+                Ok(n) => {
+                    app_state
+                        .update_connection_stats(
+                            server_id,
+                            connection_id,
+                            Some(n as u64),
+                            None,
+                            Some(1),
+                            None,
+                        )
+                        .await;
                     let command = line.trim().to_string();
                     if command.is_empty() {
                         continue;
@@ -268,13 +380,13 @@ impl Pop3Session {
 
                     match Self::process_command(
                         &event,
-                        &llm_client,
-                        &app_state,
-                        &status_tx,
-                        &protocol,
+                        llm_client,
+                        app_state,
+                        status_tx,
+                        protocol,
                         server_id,
                         connection_id,
-                        &write_half,
+                        write_half,
                     )
                     .await
                     {
@@ -302,6 +414,17 @@ impl Pop3Session {
                             let mut writer = write_half.lock().await;
                             let _ = writer.write_all(reply.as_bytes()).await;
                             let _ = writer.flush().await;
+                            drop(writer);
+                            app_state
+                                .update_connection_stats(
+                                    server_id,
+                                    connection_id,
+                                    None,
+                                    Some(reply.len() as u64),
+                                    None,
+                                    Some(1),
+                                )
+                                .await;
                             break;
                         }
                     }
@@ -354,6 +477,16 @@ impl Pop3Session {
                     writer.write_all(&data).await?;
                     writer.flush().await?;
                     drop(writer);
+                    app_state
+                        .update_connection_stats(
+                            server_id,
+                            connection_id,
+                            None,
+                            Some(data.len() as u64),
+                            None,
+                            Some(1),
+                        )
+                        .await;
 
                     console_debug!(
                         status_tx,

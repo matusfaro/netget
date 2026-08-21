@@ -155,6 +155,19 @@ Pop3Client::connect_with_llm_actions(
 - Port 995 (default)
 - Certificate validation enabled
 
+### Dashboard injection (`[ send_pop3_command ]`, `[ disconnect ]`)
+
+`connect_plain` registers a command channel (`client::command_support::register_command_channel`)
+*before* the read-loop task and therefore before the `pop3_connected` LLM call, which a manual
+rule can park. Because `read_line` is not cancellation-safe, commands are drained by a separate
+`command_loop` task (registered with `register_client_task`) that shares the write half, not by
+a `select!` arm. `send_pop3_command` yields `ClientActionResult::Custom`, which the generic
+`handle_stream_client_command` cannot write, so `command_loop` routes the result through
+`apply_action` — the one function the LLM path also uses to encode commands — then records an
+`injected_action` access-log entry and replies with `ClientSendOutcome`. An injected
+`disconnect` writes `QUIT`, half-closes, and the read loop sees EOF. Test:
+`tests/client/pop3/command_channel_test.rs` (zero LLM calls).
+
 ### Read Loop
 
 - State machine: Idle → Processing → Idle

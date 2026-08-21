@@ -100,10 +100,23 @@ length of what gets written.
 
 ## Connection Management
 
-- Connections tracked in `AppState` (bytes sent/received, packet counts)
+- Connections tracked in `AppState` (bytes sent/received, packet counts): `handle_session`
+  calls `add_connection_to_server` and `update_connection_stats` on every read and write, so
+  the dashboard's `↓ ↑` counters and `last_activity` are live
 - Each connection spawns independent async task
-- Write operations use `AsyncWriteExt` directly on split write half
+- Write operations go through a shared `Arc<Mutex<WriteHalf>>`; the guard is dropped before
+  any LLM call
 - Read operations use `BufReader` for line-based parsing
+
+### Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+Every connection registers a peer handle (`server::peer_support`) right after it is tracked
+and *before* the greeting event, so a manual `*` rule parking the greeting still leaves the
+operator able to reach the connection. `AppState::send_to_peer` runs the action through the
+same executor as the LLM path; every wire verb here returns `ActionResult::Output` and
+`close_connection` half-closes, so there is no `Custom` gap. The handle is removed on every
+exit path (EOF, read error, `close_connection`, refused greeting) through the single cleanup in
+`handle_session`. Test: `tests/server/pop3/peer_inject_test.rs` (zero LLM calls).
 
 ## State Management
 

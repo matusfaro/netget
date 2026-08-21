@@ -59,6 +59,31 @@ impl Pop3Client {
 
         let protocol = Arc::new(Pop3ClientProtocol);
 
+        // Command channel for injected actions (the dashboard's [ send_pop3_command ]).
+        // Registered BEFORE the connected-event LLM call, which a manual `*` rule can park
+        // for minutes - the operator must be able to reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // `read_line` is not cancellation-safe, so the commands are drained by their own task
+        // rather than a `select!` arm in the read loop. Both tasks share the write half.
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_write = write_half.clone();
+        let cmd_protocol = protocol.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx,
+                cmd_protocol,
+                cmd_write,
+                client_id,
+                cmd_state,
+                cmd_tx,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn read loop
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
@@ -84,6 +109,79 @@ impl Pop3Client {
             .await;
 
         Ok(local_addr)
+    }
+
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot run this client's
+    /// vocabulary because `send_pop3_command` yields `ClientActionResult::Custom`, so the
+    /// action goes through [`Self::apply_action`] - the same function the LLM path uses -
+    /// and the outcome is recorded and replied exactly the way the generic arm does it.
+    async fn command_loop<W>(
+        mut command_rx: tokio::sync::mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        protocol: Arc<Pop3ClientProtocol>,
+        write_half: Arc<tokio::sync::Mutex<W>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) where
+        W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.as_ref().execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(result, &write_half, client_id)
+                    .await
+                    .map(|applied| match applied {
+                        Applied::Disconnect => ClientSendOutcome::Disconnected,
+                        Applied::Sent(0) => ClientSendOutcome::Executed {
+                            detail: "executed (nothing to write)".to_string(),
+                        },
+                        Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                    }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("POP3 client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // QUIT is already on the wire; half-close so the server reads EOF and the
+                // read loop runs its normal disconnect path.
+                let _ = write_half.lock().await.shutdown().await;
+                break;
+            }
+        }
     }
 
     async fn read_loop<R, W>(
@@ -248,8 +346,6 @@ impl Pop3Client {
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
-        use crate::llm::actions::client_trait::ClientActionResult;
-
         // Call LLM
         let llm_result = call_llm_for_client(
             llm_client,
@@ -275,39 +371,63 @@ impl Pop3Client {
         // Execute actions
         for action in llm_result.actions {
             let action_result = protocol.as_ref().execute_action(action)?;
-
-            match action_result {
-                ClientActionResult::Custom { name, data } => {
-                    if name == "pop3_command" {
-                        let command = data["command"]
-                            .as_str()
-                            .ok_or_else(|| anyhow::anyhow!("Missing command in action data"))?;
-
-                        debug!("POP3 client {} sending command: {}", client_id, command);
-
-                        let mut writer = write_half.lock().await;
-                        writer.write_all(command.as_bytes()).await?;
-                        writer.write_all(b"\r\n").await?;
-                        writer.flush().await?;
-                    }
-                }
-                ClientActionResult::Disconnect => {
-                    debug!("POP3 client {} disconnecting", client_id);
-                    // Send QUIT command before closing
-                    let mut writer = write_half.lock().await;
-                    writer.write_all(b"QUIT\r\n").await?;
-                    writer.flush().await?;
-                    return Ok(());
-                }
-                ClientActionResult::WaitForMore => {
-                    // Do nothing, wait for next response
-                }
-                _ => {
-                    // Unknown action
-                }
+            if let Applied::Disconnect =
+                Self::apply_action(action_result, write_half, client_id).await?
+            {
+                return Ok(());
             }
         }
 
         Ok(())
     }
+
+    /// Put one executed action on the wire. Shared by the LLM path and injected commands so
+    /// the encoding of `send_pop3_command` exists exactly once.
+    async fn apply_action<W>(
+        action_result: crate::llm::actions::client_trait::ClientActionResult,
+        write_half: &Arc<tokio::sync::Mutex<W>>,
+        client_id: ClientId,
+    ) -> Result<Applied>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use crate::llm::actions::client_trait::ClientActionResult;
+
+        match action_result {
+            ClientActionResult::Custom { name, data } => {
+                if name != "pop3_command" {
+                    return Ok(Applied::Sent(0));
+                }
+                let command = data["command"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("Missing command in action data"))?;
+
+                debug!("POP3 client {} sending command: {}", client_id, command);
+
+                let mut writer = write_half.lock().await;
+                writer.write_all(command.as_bytes()).await?;
+                writer.write_all(b"\r\n").await?;
+                writer.flush().await?;
+                Ok(Applied::Sent(command.len() + 2))
+            }
+            ClientActionResult::Disconnect => {
+                debug!("POP3 client {} disconnecting", client_id);
+                // Send QUIT command before closing
+                let mut writer = write_half.lock().await;
+                writer.write_all(b"QUIT\r\n").await?;
+                writer.flush().await?;
+                Ok(Applied::Disconnect)
+            }
+            // WaitForMore, NoAction, SendData (unused by this vocabulary), nested Multiple.
+            _ => Ok(Applied::Sent(0)),
+        }
+    }
+}
+
+/// What [`Pop3Client::apply_action`] did with one action.
+enum Applied {
+    /// Bytes written (0 when the action produced no wire output).
+    Sent(usize),
+    /// QUIT was written and the session should end.
+    Disconnect,
 }
