@@ -120,6 +120,26 @@ with `wire::encode_intent(&intent, peer_asn4)`. Validating in the action rather 
 time means a malformed action is reported as a failed action naming the field, instead of
 silently producing nothing.
 
+## Dashboard injection: peer handle and counters
+
+Every session registers a peer handle (`peer_support::register_peer_channel`) before its first
+read, so `[ message this peer ]` / `[ disconnect this peer ]` work even while a manual rule parks
+`bgp_open`, and removes it on every exit path (one cleanup point in `run_session`). Byte and
+packet counters are updated on every framed read and in the writer task, which sees every
+outbound message — keepalives, NOTIFICATIONs and injected ones included.
+
+The generic `spawn_peer_command_task` is **not** used, because every BGP wire verb returns
+`ActionResult::Custom { "bgp_message" }` rather than bytes: the generic task would report it as
+executed and write nothing. `spawn_peer_command_task` in `mod.rs` mirrors it instead — same
+central executor, same `injected_action` access-log entry, same reply — and encodes the intent
+through `wire::encode_intent` at the width the session negotiated (an `AtomicBool` mirror of
+`peer_asn4`), then pushes the bytes down the session's write channel. An executor-level
+rejection (bad prefix, AS 0, unknown verb) is reported as `Rejected` rather than swallowed.
+
+`close_connection` is accepted by `execute_action` (`ActionResult::CloseConnection`) but is not
+offered to the model; injected, it writes NOTIFICATION 6/2 (Cease / Administrative Shutdown)
+and raises the session's `Shutdown`, so the read loop exits even if the peer never speaks again.
+
 ## No RIB, by design
 
 The root CLAUDE.md forbids protocols from implementing storage, and a RIB is storage. Nothing is

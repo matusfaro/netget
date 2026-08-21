@@ -771,6 +771,10 @@ impl Server for BgpProtocol {
             "send_bgp_update" => self.execute_send_bgp_update(action),
             "send_bgp_notification" => self.execute_send_bgp_notification(action),
             "wait_for_more" => Ok(ActionResult::WaitForMore),
+            // Not offered to the model (refusing or ending a session is `send_bgp_notification`),
+            // but the dashboard's "disconnect this peer" injects it through the session's peer
+            // command task, which turns it into NOTIFICATION 6/2 followed by the close.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown BGP action type: {}", action_type)),
         }
     }

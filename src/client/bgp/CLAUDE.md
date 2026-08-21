@@ -81,6 +81,18 @@ waiting for the last `Arc` clone to drop, and marks the client `Disconnected`.
 (The root CLAUDE.md's blanket statement that a client's `JoinHandle` is never stored predates
 `register_client_task` and is not true of this client.)
 
+### Dashboard injection: command channel
+
+`command_support::register_command_channel` runs before the read loop is spawned — and so
+before the `bgp_connected` LLM call, which a manual `*` rule can park. `read_exact` is not
+cancellation-safe, so commands are drained by a separate task (registered with
+`register_client_task`, alongside the read loop and the timer task) that shares the write half.
+Every wire verb here yields `SendData` / `Disconnect`, so the generic
+`handle_stream_client_command` covers the whole vocabulary with no bespoke arm: an injected
+`disconnect` writes the Cease NOTIFICATION, then the task raises `Shutdown` and half-closes, and
+the read loop runs its normal teardown. That teardown calls `remove_client_handle` on every
+exit, so the rail stops offering `[ send ]` on a dead session.
+
 ### Negotiation
 
 - **Hold time**: `min(ours, theirs)`; zero on either side disables both timers. Keepalives go

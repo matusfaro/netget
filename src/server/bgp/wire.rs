@@ -93,8 +93,9 @@ pub const ERR_FSM: u8 = 5;
 pub const SUB_FSM_OPENSENT: u8 = 1;
 pub const SUB_FSM_OPENCONFIRM: u8 = 2;
 pub const SUB_FSM_ESTABLISHED: u8 = 3;
-// Cease (RFC 4271 section 6.7)
+// Cease (RFC 4271 section 6.7; subcodes from RFC 4486 section 3)
 pub const ERR_CEASE: u8 = 6;
+pub const SUB_CEASE_ADMIN_SHUTDOWN: u8 = 2;
 
 /// Why a 19-octet header was rejected, and the NOTIFICATION it earns.
 #[derive(Debug, Clone, PartialEq, Eq)]

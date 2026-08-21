@@ -290,6 +290,9 @@ struct BgpSession {
     hold_time: u16,
 
     out_tx: mpsc::UnboundedSender<Vec<u8>>,
+    /// `peer_asn4`, mirrored for the peer command task so an injected UPDATE is encoded at the
+    /// width this session negotiated.
+    peer_asn4_shared: Arc<AtomicBool>,
     /// Seconds since session start at which the last message arrived, for hold-timer expiry.
     last_received: Arc<AtomicU64>,
     started: std::time::Instant,
@@ -325,6 +328,10 @@ async fn run_session(
     let (mut reader, mut writer) = tokio::io::split(stream);
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
 
+    // Every byte that reaches the wire passes through here, so this is the one place the
+    // outbound counters (and `last_activity`) are kept — keepalives, NOTIFICATIONs and injected
+    // messages included.
+    let stats_state = app_state.clone();
     let writer_task = tokio::spawn(async move {
         while let Some(bytes) = out_rx.recv().await {
             if writer.write_all(&bytes).await.is_err() {
@@ -333,11 +340,47 @@ async fn run_session(
             if writer.flush().await.is_err() {
                 break;
             }
+            stats_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    None,
+                    Some(bytes.len() as u64),
+                    None,
+                    Some(1),
+                )
+                .await;
         }
         let _ = writer.shutdown().await;
     });
 
     let shutdown = Arc::new(Shutdown::default());
+    let peer_asn4_shared = Arc::new(AtomicBool::new(false));
+
+    // Dashboard injection ("message this peer" / "disconnect this peer"). Registered before
+    // the first read so the operator can reach the session even while a manual rule parks the
+    // `bgp_open` event. BGP's wire verbs yield `ActionResult::Custom` intents rather than
+    // bytes, so the generic `peer_support::spawn_peer_command_task` cannot encode them; this
+    // task runs the same central executor and then the same `wire::encode_intent` the session
+    // uses, with the negotiated AS width, and pushes the result down the same write channel.
+    let peer_rx = crate::server::peer_support::register_peer_channel(
+        &app_state,
+        server_id,
+        connection_id.as_u32(),
+    )
+    .await;
+    let peer_task = spawn_peer_command_task(
+        peer_rx,
+        protocol.clone(),
+        app_state.clone(),
+        server_id,
+        connection_id,
+        out_tx.clone(),
+        peer_asn4_shared.clone(),
+        shutdown.clone(),
+        status_tx.clone(),
+    );
+
     let mut session = BgpSession {
         connection_id,
         server_id,
@@ -353,12 +396,22 @@ async fn run_session(
         peer_asn4: false,
         hold_time: 0,
         out_tx,
+        peer_asn4_shared,
         last_received: Arc::new(AtomicU64::new(0)),
         started: std::time::Instant::now(),
     };
 
     let mut timer_task: Option<tokio::task::JoinHandle<()>> = None;
     let result = session.run(&mut reader, &shutdown, &mut timer_task).await;
+
+    // Every exit path of the session passes through here, so the peer handle is removed exactly
+    // once. The peer task holds a write-channel sender, so it must go before the writer task is
+    // awaited below.
+    session
+        .app_state
+        .remove_peer_handle(server_id, connection_id.as_u32())
+        .await;
+    peer_task.abort();
 
     // Drop the session (and with it the last non-timer sender) so the writer task drains what
     // is queued — in particular a final NOTIFICATION — and then closes the socket.
@@ -385,11 +438,23 @@ impl BgpSession {
             if shutdown.is_set() {
                 break;
             }
-            let incoming = tokio::select! {
+            let (incoming, bytes_in) = tokio::select! {
                 biased;
                 _ = shutdown.notify.notified() => break,
                 incoming = read_message(reader, self.peer_asn4) => incoming,
             };
+            if bytes_in > 0 {
+                self.app_state
+                    .update_connection_stats(
+                        self.server_id,
+                        self.connection_id,
+                        Some(bytes_in as u64),
+                        None,
+                        Some(1),
+                        None,
+                    )
+                    .await;
+            }
 
             match incoming {
                 Incoming::Eof => {
@@ -541,6 +606,8 @@ impl BgpSession {
             .capabilities()
             .into_iter()
             .any(|c| matches!(c, BgpCapability::FourOctetAs(_)));
+        self.peer_asn4_shared
+            .store(self.peer_asn4, Ordering::Relaxed);
 
         // Provisional negotiation against our configured proposal, so the model can see what
         // the session would settle on. It is recomputed below from the hold time actually put
@@ -967,24 +1034,26 @@ fn spawn_timers(
 ///
 /// Nothing is allocated before the length has been validated against \[19, 4096\], so a peer
 /// cannot make the server reserve an arbitrary buffer, and `len - 19` cannot underflow.
+///
+/// The second element is the number of octets consumed, for the connection's inbound counters.
 #[cfg(feature = "bgp")]
 async fn read_message(
     reader: &mut tokio::io::ReadHalf<tokio::net::TcpStream>,
     asn4: bool,
-) -> Incoming {
+) -> (Incoming, usize) {
     let mut header = [0u8; wire::BGP_HEADER_LEN];
     match reader.read_exact(&mut header).await {
         Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Incoming::Eof,
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return (Incoming::Eof, 0),
         Err(e) => {
             debug!("BGP read error: {e}");
-            return Incoming::Eof;
+            return (Incoming::Eof, 0);
         }
     }
 
     let (len, msg_type) = match wire::parse_header(&header) {
         Ok(v) => v,
-        Err(e) => return Incoming::HeaderError(e),
+        Err(e) => return (Incoming::HeaderError(e), wire::BGP_HEADER_LEN),
     };
 
     let mut full = vec![0u8; len];
@@ -992,14 +1061,189 @@ async fn read_message(
     if len > wire::BGP_HEADER_LEN {
         if let Err(e) = reader.read_exact(&mut full[wire::BGP_HEADER_LEN..]).await {
             debug!("BGP truncated message body: {e}");
-            return Incoming::Eof;
+            return (Incoming::Eof, wire::BGP_HEADER_LEN);
         }
     }
 
-    match wire::decode(&full, asn4) {
+    let incoming = match wire::decode(&full, asn4) {
         Ok(msg) => Incoming::Message(msg),
         Err(e) => Incoming::DecodeError(e, msg_type),
+    };
+    (incoming, len)
+}
+
+/// Drive one connection's injected-action channel (the dashboard's "message this peer" and
+/// "disconnect this peer") until the handle is removed or the session ends.
+///
+/// Mirrors `peer_support::handle_peer_command` — same central executor, same access-log entry,
+/// same reply — but encodes BGP's `Custom` message intents through `wire::encode_intent` at the
+/// negotiated AS width and pushes bytes down the session's write channel, so nothing is written
+/// that the model's own actions could not have produced. `close_connection` (not offered to the
+/// model) executes to `ActionResult::CloseConnection`, which here means what RFC 4271 says a
+/// deliberate teardown means: NOTIFICATION 6/2 (Cease / Administrative Shutdown) followed by the
+/// close, raised through the session's `Shutdown` so the read loop exits even if the peer never
+/// speaks again.
+#[cfg(feature = "bgp")]
+#[allow(clippy::too_many_arguments)]
+fn spawn_peer_command_task(
+    mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+    protocol: Arc<BgpProtocol>,
+    app_state: Arc<AppState>,
+    server_id: crate::state::ServerId,
+    connection_id: crate::server::connection::ConnectionId,
+    out_tx: mpsc::UnboundedSender<Vec<u8>>,
+    peer_asn4: Arc<AtomicBool>,
+    shutdown: Arc<Shutdown>,
+    status_tx: mpsc::UnboundedSender<String>,
+) -> tokio::task::JoinHandle<()> {
+    use crate::llm::actions::protocol_trait::Protocol;
+    use crate::state::client_handles::ClientSendOutcome;
+    use crate::state::AccessLogOwner;
+
+    tokio::spawn(async move {
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = execute_injected_action(
+                &action,
+                protocol.as_ref(),
+                &app_state,
+                server_id,
+                &out_tx,
+                peer_asn4.load(Ordering::Relaxed),
+                &shutdown,
+            )
+            .await;
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Server(server_id.as_u32()),
+                    protocol.protocol_name(),
+                    Some(connection_id.as_u32()),
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            match &outcome {
+                Err(e) => warn!(
+                    "BGP injected action on server #{} connection {} failed: {}",
+                    server_id.as_u32(),
+                    connection_id,
+                    e
+                ),
+                Ok(ClientSendOutcome::Disconnected) => {
+                    app_state
+                        .remove_peer_handle(server_id, connection_id.as_u32())
+                        .await;
+                    app_state
+                        .close_connection_on_server(server_id, connection_id)
+                        .await;
+                }
+                Ok(_) => {}
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            let _ = command.reply_tx.send(outcome);
+        }
+        debug!(
+            "BGP peer command task for server #{} connection {} ended",
+            server_id.as_u32(),
+            connection_id
+        );
+    })
+}
+
+/// Execute one injected action and queue whatever it encodes to.
+#[cfg(feature = "bgp")]
+async fn execute_injected_action(
+    action: &serde_json::Value,
+    protocol: &BgpProtocol,
+    app_state: &AppState,
+    server_id: crate::state::ServerId,
+    out_tx: &mpsc::UnboundedSender<Vec<u8>>,
+    peer_asn4: bool,
+    shutdown: &Arc<Shutdown>,
+) -> Result<crate::state::client_handles::ClientSendOutcome> {
+    use crate::state::client_handles::ClientSendOutcome;
+
+    let cease = |out_tx: &mpsc::UnboundedSender<Vec<u8>>| -> Result<()> {
+        let bytes =
+            wire::encode_notification(wire::ERR_CEASE, wire::SUB_CEASE_ADMIN_SHUTDOWN, &[])?;
+        out_tx
+            .send(bytes)
+            .map_err(|_| anyhow!("BGP session already closed"))?;
+        shutdown.set();
+        Ok(())
+    };
+
+    let result = crate::llm::actions::executor::execute_actions(
+        vec![action.clone()],
+        app_state,
+        Some(protocol),
+        Some(server_id),
+        None,
+    )
+    .await?;
+
+    // The executor records a protocol rejection (unknown verb, bad prefix, AS 0 ...) as a
+    // failure and carries on; surface it as such instead of "executed (nothing to write)".
+    if let Some(failure) = result.failures.first() {
+        return Ok(ClientSendOutcome::Rejected {
+            error: failure.error.clone(),
+        });
     }
+
+    let mut bytes_sent = 0usize;
+    let mut closed = false;
+    let mut details: Vec<String> = Vec::new();
+    let mut queue: Vec<ActionResult> = result.protocol_results;
+    queue.reverse();
+    while let Some(item) = queue.pop() {
+        match item {
+            ActionResult::Multiple(inner) => {
+                for item in inner.into_iter().rev() {
+                    queue.push(item);
+                }
+            }
+            ActionResult::Custom { name, data } if name == BGP_MESSAGE_INTENT => {
+                let bytes = wire::encode_intent(&data, peer_asn4)?;
+                bytes_sent += bytes.len();
+                out_tx
+                    .send(bytes)
+                    .map_err(|_| anyhow!("BGP session already closed"))?;
+            }
+            ActionResult::Output(bytes) => {
+                bytes_sent += bytes.len();
+                out_tx
+                    .send(bytes)
+                    .map_err(|_| anyhow!("BGP session already closed"))?;
+            }
+            ActionResult::CloseConnection => {
+                cease(out_tx)?;
+                closed = true;
+            }
+            ActionResult::WaitForMore | ActionResult::NoAction => {}
+            other => details.push(format!("{other:?}")),
+        }
+    }
+
+    Ok(if closed {
+        ClientSendOutcome::Disconnected
+    } else if bytes_sent > 0 {
+        ClientSendOutcome::Sent { bytes_sent }
+    } else if details.is_empty() {
+        ClientSendOutcome::Executed {
+            detail: "executed (nothing to write)".to_string(),
+        }
+    } else {
+        ClientSendOutcome::Executed {
+            detail: crate::utils::truncate_for_log(&details.join("; "), 160),
+        }
+    })
 }
 
 /// Recover the (code, subcode) pair from netgauze's typed NOTIFICATION so it can be reported

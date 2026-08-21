@@ -8,3 +8,6 @@ pub mod e2e_test;
 
 #[cfg(all(test, feature = "bgp"))]
 mod static_default_test;
+
+#[cfg(all(test, feature = "bgp"))]
+mod peer_inject_test;

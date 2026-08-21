@@ -239,6 +239,46 @@ impl BgpClient {
             "[CLIENT] BGP OPEN sent: AS={local_as}, hold_time={hold_time}s"
         ));
 
+        let shutdown = Arc::new(Shutdown::default());
+
+        // Command channel for injected actions (the dashboard's [ send_keepalive ] /
+        // [ send_notification ] / [ disconnect ] rows). Registered BEFORE the read loop — and
+        // so before the `bgp_connected` LLM call, which a manual `*` rule can park for minutes.
+        //
+        // `read_exact` is not cancellation-safe, so the commands are drained by their own task
+        // rather than a `select!` arm in the read loop; both share the write half. Every wire
+        // verb of this client yields `SendData` / `Disconnect`, so the generic arm covers the
+        // whole vocabulary. On an injected `disconnect` the Cease NOTIFICATION is already on
+        // the wire; the task raises `shutdown` so the read loop runs its normal teardown (which
+        // shuts the write half down) instead of waiting for the peer to notice.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_write = write_half_arc.clone();
+        let cmd_shutdown = shutdown.clone();
+        let cmd_task = tokio::spawn(async move {
+            while let Some(cmd) = command_rx.recv().await {
+                let disconnect = crate::client::command_support::handle_stream_client_command(
+                    &BgpClientProtocol::new(),
+                    &cmd_write,
+                    cmd,
+                    client_id,
+                    &cmd_state,
+                    &cmd_tx,
+                )
+                .await;
+                if disconnect {
+                    cmd_shutdown.set();
+                    let _ = cmd_write.lock().await.shutdown().await;
+                    break;
+                }
+            }
+        });
+        // Aborting the read-loop task does not abort tasks it spawned, and this one is a
+        // sibling anyway: register it so stop/remove aborts it too.
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn read loop
         let client_data_clone = client_data.clone();
         let write_half_clone = write_half_arc.clone();
@@ -258,6 +298,7 @@ impl BgpClient {
                 app_state_clone,
                 status_tx_clone,
                 client_data_clone,
+                shutdown,
             )
             .await
             {
@@ -281,8 +322,8 @@ impl BgpClient {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_data: Arc<Mutex<ClientData>>,
+        shutdown: Arc<Shutdown>,
     ) -> Result<()> {
-        let shutdown = Arc::new(Shutdown::default());
         let last_received = Arc::new(AtomicU64::new(0));
         let started = std::time::Instant::now();
 
@@ -311,6 +352,9 @@ impl BgpClient {
         }
         let _ = write_half.lock().await.shutdown().await;
 
+        // Every exit path of the read loop lands here: drop the command handle so the dashboard
+        // stops offering [ send ] on a dead session (a late send then fails fast).
+        app_state.remove_client_handle(client_id).await;
         app_state
             .update_client_status(client_id, ClientStatus::Disconnected)
             .await;
