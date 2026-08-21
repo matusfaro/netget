@@ -71,6 +71,8 @@ impl SmtpServer {
                         let connection_id = crate::server::connection::ConnectionId::new(
                             app_state.get_next_unified_id().await,
                         );
+                        // Captured before a TLS handshake could consume the TcpStream.
+                        let local_addr_conn = stream.local_addr().unwrap_or(local_addr);
                         console_debug!(
                             status_tx,
                             "SMTP connection {} from {}",
@@ -96,6 +98,8 @@ impl SmtpServer {
                                         if let Err(e) = SmtpSession::handle_session(
                                             tls_stream,
                                             connection_id,
+                                            remote_addr,
+                                            local_addr_conn,
                                             server_id,
                                             llm_clone,
                                             state_clone,
@@ -119,6 +123,8 @@ impl SmtpServer {
                                 if let Err(e) = SmtpSession::handle_session(
                                     stream,
                                     connection_id,
+                                    remote_addr,
+                                    local_addr_conn,
                                     server_id,
                                     llm_clone,
                                     state_clone,
@@ -158,9 +164,12 @@ impl SmtpSession {
     ///
     /// Generic over the transport: the plain and TLS paths were previously two verbatim
     /// copies of the same greeting-then-command-loop code.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_session<S>(
         stream: S,
         connection_id: crate::server::connection::ConnectionId,
+        remote_addr: SocketAddr,
+        local_addr: SocketAddr,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
@@ -168,22 +177,105 @@ impl SmtpSession {
         protocol: Arc<SmtpProtocol>,
     ) -> Result<()>
     where
-        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send,
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+        use crate::state::server::{ConnectionState, ConnectionStatus, ProtocolConnectionInfo};
 
-        let (read_half, mut write_half) = tokio::io::split(stream);
-        let mut reader = BufReader::new(read_half);
+        let (read_half, write_half) = tokio::io::split(stream);
+        let reader = tokio::io::BufReader::new(read_half);
+        let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
 
-        // Send initial greeting
-        Self::send_greeting(
-            &mut write_half,
+        // Track the connection so the dashboard lists it with live counters.
+        let now = std::time::Instant::now();
+        app_state
+            .add_connection_to_server(
+                server_id,
+                ConnectionState {
+                    id: connection_id,
+                    remote_addr,
+                    local_addr,
+                    bytes_sent: 0,
+                    bytes_received: 0,
+                    packets_sent: 0,
+                    packets_received: 0,
+                    last_activity: now,
+                    status: ConnectionStatus::Active,
+                    status_changed_at: now,
+                    protocol_info: ProtocolConnectionInfo::empty(),
+                },
+            )
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Peer messaging: the dashboard's "message this peer" / "disconnect this peer" inject
+        // actions into THIS connection through the same executor the LLM path uses. Registered
+        // before the greeting, because a manual `*` rule can park that greeting for minutes and
+        // the operator must be able to reach the connection while it waits.
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &app_state,
+            server_id,
+            connection_id.as_u32(),
+        )
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            protocol.clone(),
+            app_state.clone(),
+            server_id,
+            connection_id.as_u32(),
+            write_half.clone(),
+            status_tx.clone(),
+        );
+
+        let result = Self::run_session(
+            reader,
+            &write_half,
             connection_id,
             server_id,
             &llm_client,
             &app_state,
             &status_tx,
             &protocol,
+        )
+        .await;
+
+        // Every exit path - EOF, read error, close_connection, refused greeting - lands here.
+        app_state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
+        app_state
+            .close_connection_on_server(server_id, connection_id)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_session<R, W>(
+        mut reader: tokio::io::BufReader<R>,
+        write_half: &Arc<tokio::sync::Mutex<W>>,
+        connection_id: crate::server::connection::ConnectionId,
+        server_id: crate::state::ServerId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: &Arc<SmtpProtocol>,
+    ) -> Result<()>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+        // Send initial greeting
+        Self::send_greeting(
+            write_half,
+            connection_id,
+            server_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
         )
         .await?;
 
@@ -195,6 +287,16 @@ impl SmtpSession {
             if n == 0 {
                 break;
             }
+            app_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    Some(n as u64),
+                    None,
+                    Some(1),
+                    None,
+                )
+                .await;
 
             let command = line.trim();
             console_debug!(status_tx, "SMTP received: {}", command);
@@ -207,8 +309,8 @@ impl SmtpSession {
             );
 
             match call_llm(
-                &llm_client,
-                &app_state,
+                llm_client,
+                app_state,
                 server_id,
                 Some(connection_id),
                 &event,
@@ -222,8 +324,20 @@ impl SmtpSession {
                     for protocol_result in execution_result.protocol_results {
                         match protocol_result {
                             ActionResult::Output(data) => {
-                                write_half.write_all(&data).await?;
-                                write_half.flush().await?;
+                                let mut writer = write_half.lock().await;
+                                writer.write_all(&data).await?;
+                                writer.flush().await?;
+                                drop(writer);
+                                app_state
+                                    .update_connection_stats(
+                                        server_id,
+                                        connection_id,
+                                        None,
+                                        Some(data.len() as u64),
+                                        None,
+                                        Some(1),
+                                    )
+                                    .await;
 
                                 let response = String::from_utf8_lossy(&data);
                                 console_debug!(status_tx, "SMTP sent: {}", response.trim());
@@ -248,7 +362,7 @@ impl SmtpSession {
                     //
                     // It also fails closed: a 4xx is never mistaken for acceptance, so an
                     // outage cannot silently look like a delivered message.
-                    Log::new(Some(&status_tx)).error(format!(
+                    Log::new(Some(status_tx)).error(format!(
                         "SMTP connection {} got no response for {:?}: {:#}",
                         connection_id, command, e
                     ));
@@ -265,8 +379,20 @@ impl SmtpSession {
                     } else {
                         b"451 4.3.0 Temporary local error, try again later\r\n"
                     };
-                    write_half.write_all(reply).await?;
-                    write_half.flush().await?;
+                    let mut writer = write_half.lock().await;
+                    writer.write_all(reply).await?;
+                    writer.flush().await?;
+                    drop(writer);
+                    app_state
+                        .update_connection_stats(
+                            server_id,
+                            connection_id,
+                            None,
+                            Some(reply.len() as u64),
+                            None,
+                            Some(1),
+                        )
+                        .await;
                     console_debug!(
                         status_tx,
                         "SMTP sent: {}",
@@ -280,8 +406,8 @@ impl SmtpSession {
     }
 
     /// Send greeting for plain connection
-    async fn send_greeting<S>(
-        stream: &mut S,
+    async fn send_greeting<W>(
+        write_half: &Arc<tokio::sync::Mutex<W>>,
         connection_id: crate::server::connection::ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: &OllamaClient,
@@ -290,7 +416,7 @@ impl SmtpSession {
         protocol: &Arc<SmtpProtocol>,
     ) -> Result<()>
     where
-        S: tokio::io::AsyncWrite + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
     {
         use tokio::io::AsyncWriteExt;
 
@@ -314,8 +440,20 @@ impl SmtpSession {
             Ok(execution_result) => {
                 for protocol_result in execution_result.protocol_results {
                     if let ActionResult::Output(data) = protocol_result {
-                        stream.write_all(&data).await?;
-                        stream.flush().await?;
+                        let mut writer = write_half.lock().await;
+                        writer.write_all(&data).await?;
+                        writer.flush().await?;
+                        drop(writer);
+                        app_state
+                            .update_connection_stats(
+                                server_id,
+                                connection_id,
+                                None,
+                                Some(data.len() as u64),
+                                None,
+                                Some(1),
+                            )
+                            .await;
                     }
                 }
             }
@@ -338,8 +476,20 @@ impl SmtpSession {
                 } else {
                     b"421 4.3.0 Service not available, closing transmission channel\r\n"
                 };
-                stream.write_all(reply).await?;
-                stream.flush().await?;
+                let mut writer = write_half.lock().await;
+                writer.write_all(reply).await?;
+                writer.flush().await?;
+                drop(writer);
+                app_state
+                    .update_connection_stats(
+                        server_id,
+                        connection_id,
+                        None,
+                        Some(reply.len() as u64),
+                        None,
+                        Some(1),
+                    )
+                    .await;
                 let _ = status_tx.send(format!(
                     "→ SMTP {} to connection {}",
                     String::from_utf8_lossy(reply).trim(),
