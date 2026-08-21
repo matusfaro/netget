@@ -328,3 +328,34 @@ Connect to S3, list all objects in bucket "temp-bucket", delete all objects, the
 - `src/client/s3/mod.rs` - Core S3 client logic (this file's implementation)
 - `tests/client/s3/e2e_test.rs` - E2E tests with MinIO/LocalStack
 - `tests/client/s3/CLAUDE.md` - Test strategy and budget
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running S3 client.
+`connect_with_llm_actions` registers the channel (`command_support::register_command_channel`)
+**before** the connected-event LLM call and spawns a registered `command_loop` task; the loop
+also replaces the old 5s "has this client been removed yet" poll, because dropping the client
+drops the handle and `recv()` returns `None` immediately.
+
+Injected actions go through the same `S3Client::apply_action` the connected-event path uses, so
+the wire encoding of every verb exists exactly once. `execute_operation` returns the operation's
+own JSON result rather than `()` so the outcome can say what happened.
+
+Outcome semantics — the AWS SDK owns the socket and reports no wire byte count, so **`Sent` is
+never returned**; a fabricated byte count would be worse than an honest `Executed`:
+
+| Situation | `ClientSendOutcome` |
+|---|---|
+| `execute_action` refused it (unknown verb, missing field) | `Rejected { error }` |
+| Operation ran and the service answered | `Executed { detail: "s3_get_object completed: {…}" }` |
+| Operation ran and the service or the SDK failed | `Executed { detail: "s3_get_object failed: …" }` |
+| `disconnect` | `Disconnected` (loop ends, handle removed) |
+
+The S3 call itself is **awaited** in the loop, so the detail is a real result rather than
+"dispatched". The `s3_response_received` event that follows is raised from its own registered
+task: a dashboard-created client defaults to a `*` → manual rule, and awaiting a parked LLM call
+inside the loop would wedge it far past the dashboard's 30s send timeout on an action that in
+fact succeeded.
+
+Test: `tests/client/s3/command_channel_test.rs` (no LLM, no AWS — a loopback listener serving
+canned S3 XML is the endpoint).

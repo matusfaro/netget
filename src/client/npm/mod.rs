@@ -13,12 +13,42 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::client::npm::actions::{
     NPM_CLIENT_PACKAGE_INFO_RECEIVED_EVENT, NPM_CLIENT_SEARCH_RESULTS_RECEIVED_EVENT,
 };
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+
+/// One completed package-info fetch.
+///
+/// Split out of [`NpmClient::get_package_info`] so the injected-command loop can await the
+/// registry round-trip - and report a truthful outcome - without also awaiting the LLM call
+/// the `npm_package_info_received` event triggers.
+pub struct NpmPackageInfo {
+    pub package_name: String,
+    pub version: String,
+    pub description: String,
+    pub versions: Vec<String>,
+    pub dist: Option<serde_json::Value>,
+}
+
+/// One completed package search, split from its event for the same reason.
+pub struct NpmSearchResults {
+    pub query: String,
+    pub results: Vec<serde_json::Value>,
+    pub total: u64,
+}
+
+/// What one executed action did.
+enum Applied {
+    /// The action ran; `detail` says what it did.
+    Executed(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
 
 /// NPM Registry client that queries packages
 pub struct NpmClient;
@@ -27,7 +57,7 @@ impl NpmClient {
     /// Connect to NPM registry with integrated LLM actions
     pub async fn connect_with_llm_actions(
         remote_addr: String,
-        _llm_client: OllamaClient,
+        llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
@@ -73,21 +103,22 @@ impl NpmClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Spawn background task to monitor for disconnection
-        // Registered with AppState so stop_client can abort this task —
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // Registered as soon as the client is usable and *before* anything that can
+        // block for a human: a dashboard-created client defaults to a `*` -> manual
+        // routing rule, and [ send ] must work while such an event is parked.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // The command loop replaces the old 5s "is the client gone yet?" poll: when the
+        // client is removed its handle is dropped, the channel closes and `recv()`
+        // returns None, so the loop notices removal immediately instead of up to 5s later.
+        // Registered with AppState so stop_client can abort it —
         // dropping a JoinHandle only detaches it in Tokio.
         let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("NPM client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
+        let task_handle = tokio::spawn(Self::command_loop(
+            command_rx, client_id, app_state, llm_client, status_tx,
+        ));
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
@@ -96,7 +127,7 @@ impl NpmClient {
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Get information about a package
+    /// Get information about a package and hand it to the LLM.
     pub async fn get_package_info(
         client_id: ClientId,
         package_name: String,
@@ -105,6 +136,27 @@ impl NpmClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        let info = Self::perform_get_package_info(
+            client_id,
+            package_name,
+            version,
+            &app_state,
+            &status_tx,
+        )
+        .await?;
+        Self::notify_package_info(client_id, info, app_state, llm_client, status_tx).await;
+        Ok(())
+    }
+
+    /// Fetch package metadata only. No LLM involvement, so a caller can await this and
+    /// know exactly what the registry answered.
+    pub async fn perform_get_package_info(
+        client_id: ClientId,
+        package_name: String,
+        version: String,
+        app_state: &AppState,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<NpmPackageInfo> {
         // Get registry URL from client
         let registry_url = app_state
             .with_client_mut(client_id, |client| {
@@ -147,7 +199,7 @@ impl NpmClient {
                         .text()
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
-                    Log::new(Some(&status_tx)).error(format!(
+                    Log::new(Some(status_tx)).error(format!(
                         "NPM client {} failed to get package {}: {} - {}",
                         client_id, package_name, status, error_text
                     ));
@@ -169,13 +221,15 @@ impl NpmClient {
                 let description = package_data
                     .get("description")
                     .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                    .unwrap_or("")
+                    .to_string();
 
                 let dist_tags = package_data.get("dist-tags");
                 let latest_version = dist_tags
                     .and_then(|dt| dt.get("latest"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
+                    .unwrap_or("unknown")
+                    .to_string();
 
                 let versions = package_data
                     .get("versions")
@@ -198,63 +252,85 @@ impl NpmClient {
                     package_data.get("dist").cloned()
                 };
 
-                // Call LLM with package info
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::npm::actions::NpmClientProtocol::new());
-                    let event = Event::new(
-                        &NPM_CLIENT_PACKAGE_INFO_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "package_name": package_name,
-                            "version": if version == "latest" { latest_version } else { version.as_str() },
-                            "description": description,
-                            "versions": versions,
-                            "dist": dist,
-                        }),
-                    );
+                let resolved_version = if version == "latest" {
+                    latest_version
+                } else {
+                    version
+                };
 
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("LLM error for NPM client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                Ok(NpmPackageInfo {
+                    package_name,
+                    version: resolved_version,
+                    description,
+                    versions,
+                    dist,
+                })
             }
             Err(e) => {
-                Log::new(Some(&status_tx))
+                Log::new(Some(status_tx))
                     .error(format!("NPM client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
         }
     }
 
-    /// Search for packages
+    /// Raise `npm_package_info_received` for a completed fetch.
+    async fn notify_package_info(
+        client_id: ClientId,
+        info: NpmPackageInfo,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+
+        let protocol = Arc::new(crate::client::npm::actions::NpmClientProtocol::new());
+        let event = Event::new(
+            &NPM_CLIENT_PACKAGE_INFO_RECEIVED_EVENT,
+            serde_json::json!({
+                "package_name": info.package_name,
+                "version": info.version,
+                "description": info.description,
+                "versions": info.versions,
+                "dist": info.dist,
+            }),
+        );
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                // Update memory
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for NPM client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    /// Search for packages and hand the results to the LLM.
     pub async fn search_packages(
         client_id: ClientId,
         query: String,
@@ -263,6 +339,19 @@ impl NpmClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        let results = Self::perform_search_packages(client_id, query, limit, &status_tx).await?;
+        Self::notify_search_results(client_id, results, app_state, llm_client, status_tx).await;
+        Ok(())
+    }
+
+    /// Run the search only. No LLM involvement, so a caller can await this and know
+    /// exactly what the registry answered.
+    pub async fn perform_search_packages(
+        client_id: ClientId,
+        query: String,
+        limit: u64,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<NpmSearchResults> {
         // NPM search API endpoint
         let search_url = "https://registry.npmjs.org/-/v1/search";
 
@@ -295,7 +384,7 @@ impl NpmClient {
                         .text()
                         .await
                         .unwrap_or_else(|_| "Unknown error".to_string());
-                    Log::new(Some(&status_tx)).error(format!(
+                    Log::new(Some(status_tx)).error(format!(
                         "NPM client {} search failed: {} - {}",
                         client_id, status, error_text
                     ));
@@ -333,56 +422,70 @@ impl NpmClient {
                     results.len()
                 );
 
-                // Call LLM with search results
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(crate::client::npm::actions::NpmClientProtocol::new());
-                    let event = Event::new(
-                        &NPM_CLIENT_SEARCH_RESULTS_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "query": query,
-                            "results": results,
-                            "total": total,
-                        }),
-                    );
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("LLM error for NPM client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                Ok(NpmSearchResults {
+                    query,
+                    results,
+                    total,
+                })
             }
             Err(e) => {
-                Log::new(Some(&status_tx))
+                Log::new(Some(status_tx))
                     .error(format!("NPM client {} search failed: {}", client_id, e));
                 Err(e.into())
+            }
+        }
+    }
+
+    /// Raise `npm_search_results_received` for a completed search.
+    async fn notify_search_results(
+        client_id: ClientId,
+        results: NpmSearchResults,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+
+        let protocol = Arc::new(crate::client::npm::actions::NpmClientProtocol::new());
+        let event = Event::new(
+            &NPM_CLIENT_SEARCH_RESULTS_RECEIVED_EVENT,
+            serde_json::json!({
+                "query": results.query,
+                "results": results.results,
+                "total": results.total,
+            }),
+        );
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                // Update memory
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for NPM client {}: {}", client_id, e);
             }
         }
     }
@@ -471,5 +574,204 @@ impl NpmClient {
         ));
 
         Ok(())
+    }
+
+    /// Apply one already-parsed action against the live NPM client.
+    ///
+    /// The single place NPM actions are turned into registry traffic, so an action injected
+    /// from the dashboard behaves exactly like one the model produced.
+    ///
+    /// Only the **network** half is awaited. The response event - and the LLM call it makes -
+    /// is raised from its own registered task afterwards, so a `*` -> manual routing rule
+    /// parking that event cannot wedge the command loop for the length of a human's think
+    /// time. The outcome stays truthful because it describes what the registry actually
+    /// answered, which is known before the event is raised.
+    async fn apply_action(
+        client_id: ClientId,
+        result: ClientActionResult,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } => match name.as_str() {
+                "npm_get_package" => {
+                    let package_name = data["package_name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    let version = data["version"].as_str().unwrap_or("latest").to_string();
+                    let requested = format!("{package_name}@{version}");
+
+                    let info = Self::perform_get_package_info(
+                        client_id,
+                        package_name,
+                        version,
+                        app_state,
+                        status_tx,
+                    )
+                    .await?;
+                    let detail = format!(
+                        "get_package_info {requested} -> version {}, {} published version(s)",
+                        info.version,
+                        info.versions.len()
+                    );
+                    Self::spawn_notify(
+                        client_id,
+                        app_state,
+                        Self::notify_package_info(
+                            client_id,
+                            info,
+                            app_state.clone(),
+                            llm_client.clone(),
+                            status_tx.clone(),
+                        ),
+                    )
+                    .await;
+                    Ok(Applied::Executed(detail))
+                }
+                "npm_search" => {
+                    let query = data["query"].as_str().unwrap_or_default().to_string();
+                    let limit = data["limit"].as_u64().unwrap_or(20);
+                    let requested = query.clone();
+
+                    let results =
+                        Self::perform_search_packages(client_id, query, limit, status_tx).await?;
+                    let detail = format!(
+                        "search_packages {requested:?} -> {} result(s) of {} total",
+                        results.results.len(),
+                        results.total
+                    );
+                    Self::spawn_notify(
+                        client_id,
+                        app_state,
+                        Self::notify_search_results(
+                            client_id,
+                            results,
+                            app_state.clone(),
+                            llm_client.clone(),
+                            status_tx.clone(),
+                        ),
+                    )
+                    .await;
+                    Ok(Applied::Executed(detail))
+                }
+                "npm_download_tarball" => {
+                    // No split needed: download_tarball raises no event and makes no LLM
+                    // call, so awaiting it awaits nothing but the network and the write.
+                    let package_name = data["package_name"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
+                    let version = data["version"].as_str().unwrap_or("latest").to_string();
+                    let output_path = data["output_path"].as_str().unwrap_or_default().to_string();
+                    Self::download_tarball(
+                        client_id,
+                        package_name.clone(),
+                        version.clone(),
+                        output_path.clone(),
+                        app_state.clone(),
+                        status_tx.clone(),
+                    )
+                    .await?;
+                    Ok(Applied::Executed(format!(
+                        "download_tarball {package_name}@{version} written to {output_path}"
+                    )))
+                }
+                other => Ok(Applied::Executed(format!(
+                    "unknown NPM custom result '{other}' was not executed"
+                ))),
+            },
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            ClientActionResult::NoAction => Ok(Applied::Executed("no_action".to_string())),
+            ClientActionResult::WaitForMore => Ok(Applied::Executed("wait_for_more".to_string())),
+            ClientActionResult::SendData(_) => Ok(Applied::Executed(
+                "NPM owns no socket; raw send_data cannot be put on the wire".to_string(),
+            )),
+            ClientActionResult::Multiple(_) => Ok(Applied::Executed(
+                "NPM produces no Multiple results; nothing executed".to_string(),
+            )),
+        }
+    }
+
+    /// Raise a response event from its own task, registered so `stop_client` aborts it.
+    async fn spawn_notify(
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        notify: impl std::future::Future<Output = ()> + Send + 'static,
+    ) {
+        let handle = tokio::spawn(notify);
+        app_state.register_client_task(client_id, handle).await;
+    }
+
+    /// Serve injected commands until the client goes away.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        let protocol = crate::client::npm::actions::NpmClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                // Never `Sent`: reqwest owns the socket and does not report how many bytes
+                // the request serialised to, so a byte count here would be invented.
+                // `Executed` carries what the registry answered instead, which is both
+                // true and more useful.
+                Ok(result) => {
+                    match Self::apply_action(client_id, result, &app_state, &llm_client, &status_tx)
+                        .await
+                    {
+                        Ok(Applied::Executed(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                        Ok(Applied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                        Err(e) => Err(e),
+                    }
+                }
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("NPM client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
+            }
+        }
+
+        info!("NPM client {} command loop finished", client_id);
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 }

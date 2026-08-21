@@ -58,3 +58,22 @@ Where:
 - Facility: user (1)
 - Severity: notice (5)
 - PRI = (1 × 8) + 5 = 13
+
+## `command_channel_test.rs`
+
+Covers the dashboard's `[ send ]` path: `AppState::send_to_client` injects an action from
+outside the client's own loop and the wire effect is asserted.
+
+**LLM budget: 0 calls.** Every client event is routed to a `*` static handler that answers
+with no actions (`try_execute_client_event_handler` runs before the budget debit), and the
+client's LLM points at `http://127.0.0.1:1` as a second belt. No mock Ollama server is
+needed or started.
+
+`wait_for_client_handle` polls `AppState::has_client_handle` before the first send. That is
+the regression guard for "register the channel **before** the connected-event LLM call" — if
+registration moves after it, a parked connect event makes this poll time out.
+
+Two tests, one per transport, because the byte count differs: UDP reports the datagram, TCP
+reports the message **plus** its framing newline. The collectors are a plain `UdpSocket` and a
+plain `TcpListener`; both compare the reported `Sent { bytes_sent }` against what actually
+arrived and check the RFC 5424 PRI (`local0`/`info` = 134) and the message text.

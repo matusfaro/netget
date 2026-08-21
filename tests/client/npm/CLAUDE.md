@@ -215,3 +215,24 @@ Black-box E2E tests using the **public NPM registry** (registry.npmjs.org). Test
 4. **Rate Limit Handling**: Test client behavior under rate limits
 5. **Dependency Analysis**: Test following dependency chains
 6. **Publish Test**: Test package publishing (when implemented)
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+One test, **zero LLM calls**. The client's LLM points at `http://127.0.0.1:1`, so the
+connected-event call (where there is one) and every response-event call fail immediately;
+tolerating that failure is part of what the test verifies.
+
+The registry is a throwaway `TcpListener` on 127.0.0.1 that speaks just enough HTTP/1.1 and records the request lines it saw. **Nothing contacts registry.npmjs.org** — that is a hard project rule, and it is why `search_packages` and `download_tarball` are not exercised here: NPM's search endpoint is hardcoded to the public registry, and the tarball path follows a `dist.tarball` URL.
+
+What it asserts, in order:
+
+1. `wait_for_client_handle` — the regression guard for "register the channel before the
+   connected-event LLM call". Without it, a manual routing rule would leave `[ send ]` dead
+   for the length of the park.
+2. The injected action returns `Executed`, **not** `Sent` — `reqwest` reports no wire byte count, so a number would be invented.
+3. The stub registry really saw `GET /express`. Because `apply_action` awaits the request, the outcome cannot arrive before the bytes did.
+4. The client's access log gained an `injected_action` entry, so injected traffic shows up in
+   the request pane exactly like LLM-produced traffic.
+5. An unknown verb comes back `Rejected`, not silently swallowed.
+6. `disconnect` returns `Disconnected`, the command loop exits, the handle is dropped and the
+   client's status becomes `Disconnected`.

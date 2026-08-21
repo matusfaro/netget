@@ -185,3 +185,23 @@ dns-sd -B _services._dns-sd._udp  # macOS
 2. **Conditional skip**: Skip tests if no mDNS responder detected
 3. **Service registration test**: Once server supports registration
 4. **TXT property parsing**: Verify client can extract service metadata
+
+## `command_channel_test.rs`
+
+Covers the dashboard's `[ send ]` path: `AppState::send_to_client` injects an action from
+outside the client's own loop and the wire effect is asserted.
+
+**LLM budget: 0 calls.** Every client event is routed to a `*` static handler that answers
+with no actions (`try_execute_client_event_handler` runs before the budget debit), and the
+client's LLM points at `http://127.0.0.1:1` as a second belt. No mock Ollama server is
+needed or started.
+
+`wait_for_client_handle` polls `AppState::has_client_handle` before the first send. That is
+the regression guard for "register the channel **before** the connected-event LLM call" — if
+registration moves after it, a parked connect event makes this poll time out.
+
+**This test asserts `Executed`, not `Sent`, and that is the point.** `mdns-sd` owns the
+multicast socket and reports no byte count, so the client reports what the daemon was asked to
+do rather than inventing one. The test pins that: the `detail` must name `browse_service` and
+the service type. No mDNS responder is started — the assertion is on the outcome and the
+access-log entry, not on a discovered service.

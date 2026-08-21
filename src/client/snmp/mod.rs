@@ -21,7 +21,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 // SNMP protocol support
 use rasn::ber;
@@ -145,9 +146,45 @@ impl SnmpClient {
         let _ = status_tx.send(format!("[CLIENT] SNMP client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        let protocol = Arc::new(SnmpClientProtocol::new());
+        let socket = Arc::new(socket);
+        let config = Arc::new(config);
+
+        // Command channel: lets the dashboard (and any programmatic caller) inject
+        // actions into this client via AppState::send_to_client.
+        //
+        // Registered BEFORE the connected event is handled: a `manual` routing rule can
+        // park that event at the dashboard for minutes, and until registration the UI
+        // reports "no command channel" - reading as a protocol limitation when it is
+        // only a queue.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // SNMP has no standing read loop - each request awaits its own reply - so the
+        // commands are drained by a task of their own.
+        let cmd_protocol = protocol.clone();
+        let cmd_socket = socket.clone();
+        let cmd_config = config.clone();
+        let cmd_llm = llm_client.clone();
+        let cmd_state = app_state.clone();
+        let cmd_status = status_tx.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx,
+                cmd_protocol,
+                cmd_socket,
+                cmd_config,
+                client_id,
+                cmd_llm,
+                cmd_state,
+                cmd_status,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(SnmpClientProtocol::new());
             let event = Event::new(
                 &SNMP_CLIENT_CONNECTED_EVENT,
                 serde_json::json!({
@@ -164,9 +201,8 @@ impl SnmpClient {
             let state_clone = app_state.clone();
             let status_clone = status_tx.clone();
             let protocol_clone = protocol.clone();
-            let socket = Arc::new(socket);
             let socket_clone = socket.clone();
-            let config = Arc::new(config);
+            let config = config.clone();
 
             // Spawn initial LLM call
             // Registered with AppState so stop_client can abort this task —
@@ -238,17 +274,13 @@ impl SnmpClient {
 
         for action in actions {
             match protocol.execute_action(action) {
-                Ok(ClientActionResult::Custom { name, data }) => match name.as_str() {
-                    "snmp_get" => {
-                        if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
-                            let oid_strings: Vec<String> = oids
-                                .iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect();
-
-                            if let Err(e) = Self::send_get_request(
+                Ok(ClientActionResult::Custom { name, data }) => {
+                    match Self::build_request(&name, &data, config) {
+                        Ok((request_bytes, request_type)) => {
+                            if let Err(e) = Self::send_request_and_handle_response(
                                 socket,
-                                &oid_strings,
+                                &request_bytes,
+                                request_type,
                                 config,
                                 client_id,
                                 llm_client,
@@ -258,82 +290,14 @@ impl SnmpClient {
                             )
                             .await
                             {
-                                error!("Failed to send SNMP GET: {}", e);
+                                error!("Failed to send SNMP {}: {}", request_type, e);
                             }
                         }
-                    }
-                    "snmp_getnext" => {
-                        if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
-                            let oid_strings: Vec<String> = oids
-                                .iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect();
-
-                            if let Err(e) = Self::send_getnext_request(
-                                socket,
-                                &oid_strings,
-                                config,
-                                client_id,
-                                llm_client,
-                                app_state,
-                                status_tx,
-                                protocol,
-                            )
-                            .await
-                            {
-                                error!("Failed to send SNMP GETNEXT: {}", e);
-                            }
+                        Err(e) => {
+                            debug!("SNMP client {} could not build request: {}", client_id, e);
                         }
                     }
-                    "snmp_getbulk" => {
-                        if let Some(oids) = data.get("oids").and_then(|v| v.as_array()) {
-                            let oid_strings: Vec<String> = oids
-                                .iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect();
-                            let non_repeaters =
-                                data.get("non_repeaters")
-                                    .and_then(|v| v.as_i64())
-                                    .unwrap_or(0) as i32;
-                            let max_repetitions =
-                                data.get("max_repetitions")
-                                    .and_then(|v| v.as_i64())
-                                    .unwrap_or(10) as i32;
-
-                            if let Err(e) = Self::send_getbulk_request(
-                                socket,
-                                &oid_strings,
-                                non_repeaters,
-                                max_repetitions,
-                                config,
-                                client_id,
-                                llm_client,
-                                app_state,
-                                status_tx,
-                                protocol,
-                            )
-                            .await
-                            {
-                                error!("Failed to send SNMP GETBULK: {}", e);
-                            }
-                        }
-                    }
-                    "snmp_set" => {
-                        if let Some(variables) = data.get("variables").and_then(|v| v.as_array()) {
-                            if let Err(e) = Self::send_set_request(
-                                socket, variables, config, client_id, llm_client, app_state,
-                                status_tx, protocol,
-                            )
-                            .await
-                            {
-                                error!("Failed to send SNMP SET: {}", e);
-                            }
-                        }
-                    }
-                    _ => {
-                        debug!("Unknown SNMP action: {}", name);
-                    }
-                },
+                }
                 Ok(ClientActionResult::Disconnect) => {
                     info!("SNMP client {} disconnecting", client_id);
                     app_state
@@ -352,172 +316,90 @@ impl SnmpClient {
         }
     }
 
-    /// Send SNMP GET request
-    async fn send_get_request(
-        socket: &Arc<UdpSocket>,
-        oids: &[String],
-        config: &Arc<SnmpConfig>,
-        client_id: ClientId,
-        llm_client: &OllamaClient,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-        protocol: &Arc<SnmpClientProtocol>,
-    ) -> Result<()> {
+    /// Encode the request datagram for one executed action.
+    ///
+    /// Pure - no I/O - so the LLM path and the command channel put byte-identical
+    /// PDUs on the wire. Returns the bytes plus the PDU name used in the response
+    /// event.
+    fn build_request(
+        name: &str,
+        data: &Value,
+        config: &SnmpConfig,
+    ) -> Result<(Vec<u8>, &'static str)> {
+        let oids: Vec<String> = data
+            .get("oids")
+            .and_then(|v| v.as_array())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
         let request_id = rand::random::<i32>();
 
-        // Build GET request based on version
-        let request_bytes = match config.version {
-            SnmpVersion::V1 => Self::build_v1_get_request(oids, &config.community, request_id)?,
-            SnmpVersion::V2c => Self::build_v2c_get_request(oids, &config.community, request_id)?,
-        };
-
-        debug!(
-            "SNMP client {} sending GET for {} OIDs",
-            client_id,
-            oids.len()
-        );
-        trace!("SNMP GET request (hex): {}", hex::encode(&request_bytes));
-
-        // Send request and wait for response
-        Self::send_request_and_handle_response(
-            socket,
-            &request_bytes,
-            "GetRequest",
-            config,
-            client_id,
-            llm_client,
-            app_state,
-            status_tx,
-            protocol,
-        )
-        .await
-    }
-
-    /// Send SNMP GETNEXT request
-    async fn send_getnext_request(
-        socket: &Arc<UdpSocket>,
-        oids: &[String],
-        config: &Arc<SnmpConfig>,
-        client_id: ClientId,
-        llm_client: &OllamaClient,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-        protocol: &Arc<SnmpClientProtocol>,
-    ) -> Result<()> {
-        let request_id = rand::random::<i32>();
-
-        let request_bytes = match config.version {
-            SnmpVersion::V1 => Self::build_v1_getnext_request(oids, &config.community, request_id)?,
-            SnmpVersion::V2c => {
-                Self::build_v2c_getnext_request(oids, &config.community, request_id)?
+        match name {
+            "snmp_get" => {
+                let bytes = match config.version {
+                    SnmpVersion::V1 => {
+                        Self::build_v1_get_request(&oids, &config.community, request_id)?
+                    }
+                    SnmpVersion::V2c => {
+                        Self::build_v2c_get_request(&oids, &config.community, request_id)?
+                    }
+                };
+                Ok((bytes, "GetRequest"))
             }
-        };
-
-        debug!(
-            "SNMP client {} sending GETNEXT for {} OIDs",
-            client_id,
-            oids.len()
-        );
-
-        Self::send_request_and_handle_response(
-            socket,
-            &request_bytes,
-            "GetNextRequest",
-            config,
-            client_id,
-            llm_client,
-            app_state,
-            status_tx,
-            protocol,
-        )
-        .await
-    }
-
-    /// Send SNMP GETBULK request (v2c only)
-    async fn send_getbulk_request(
-        socket: &Arc<UdpSocket>,
-        oids: &[String],
-        non_repeaters: i32,
-        max_repetitions: i32,
-        config: &Arc<SnmpConfig>,
-        client_id: ClientId,
-        llm_client: &OllamaClient,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-        protocol: &Arc<SnmpClientProtocol>,
-    ) -> Result<()> {
-        if matches!(config.version, SnmpVersion::V1) {
-            return Err(anyhow::anyhow!("GETBULK is only supported in SNMPv2c"));
+            "snmp_getnext" => {
+                let bytes = match config.version {
+                    SnmpVersion::V1 => {
+                        Self::build_v1_getnext_request(&oids, &config.community, request_id)?
+                    }
+                    SnmpVersion::V2c => {
+                        Self::build_v2c_getnext_request(&oids, &config.community, request_id)?
+                    }
+                };
+                Ok((bytes, "GetNextRequest"))
+            }
+            "snmp_getbulk" => {
+                if matches!(config.version, SnmpVersion::V1) {
+                    return Err(anyhow::anyhow!("GETBULK is only supported in SNMPv2c"));
+                }
+                let non_repeaters = data
+                    .get("non_repeaters")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0) as i32;
+                let max_repetitions = data
+                    .get("max_repetitions")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(10) as i32;
+                let bytes = Self::build_v2c_getbulk_request(
+                    &oids,
+                    &config.community,
+                    request_id,
+                    non_repeaters,
+                    max_repetitions,
+                )?;
+                Ok((bytes, "GetBulkRequest"))
+            }
+            "snmp_set" => {
+                let variables = data
+                    .get("variables")
+                    .and_then(|v| v.as_array())
+                    .context("Missing 'variables' array")?;
+                let bytes = match config.version {
+                    SnmpVersion::V1 => {
+                        Self::build_v1_set_request(variables, &config.community, request_id)?
+                    }
+                    SnmpVersion::V2c => {
+                        Self::build_v2c_set_request(variables, &config.community, request_id)?
+                    }
+                };
+                Ok((bytes, "SetRequest"))
+            }
+            other => Err(anyhow::anyhow!(
+                "custom result '{other}' is not an SNMP wire verb"
+            )),
         }
-
-        let request_id = rand::random::<i32>();
-        let request_bytes = Self::build_v2c_getbulk_request(
-            oids,
-            &config.community,
-            request_id,
-            non_repeaters,
-            max_repetitions,
-        )?;
-
-        debug!(
-            "SNMP client {} sending GETBULK (non_repeaters={}, max_repetitions={})",
-            client_id, non_repeaters, max_repetitions
-        );
-
-        Self::send_request_and_handle_response(
-            socket,
-            &request_bytes,
-            "GetBulkRequest",
-            config,
-            client_id,
-            llm_client,
-            app_state,
-            status_tx,
-            protocol,
-        )
-        .await
-    }
-
-    /// Send SNMP SET request
-    async fn send_set_request(
-        socket: &Arc<UdpSocket>,
-        variables: &[Value],
-        config: &Arc<SnmpConfig>,
-        client_id: ClientId,
-        llm_client: &OllamaClient,
-        app_state: &Arc<AppState>,
-        status_tx: &mpsc::UnboundedSender<String>,
-        protocol: &Arc<SnmpClientProtocol>,
-    ) -> Result<()> {
-        let request_id = rand::random::<i32>();
-
-        let request_bytes = match config.version {
-            SnmpVersion::V1 => {
-                Self::build_v1_set_request(variables, &config.community, request_id)?
-            }
-            SnmpVersion::V2c => {
-                Self::build_v2c_set_request(variables, &config.community, request_id)?
-            }
-        };
-
-        debug!(
-            "SNMP client {} sending SET for {} variables",
-            client_id,
-            variables.len()
-        );
-
-        Self::send_request_and_handle_response(
-            socket,
-            &request_bytes,
-            "SetRequest",
-            config,
-            client_id,
-            llm_client,
-            app_state,
-            status_tx,
-            protocol,
-        )
-        .await
     }
 
     /// Send request and handle response
@@ -532,13 +414,44 @@ impl SnmpClient {
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: &Arc<SnmpClientProtocol>,
     ) -> Result<()> {
+        socket.send(request_bytes).await?;
+        Self::await_response(
+            socket,
+            request_bytes,
+            request_type,
+            config,
+            client_id,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+        )
+        .await
+    }
+
+    /// Wait for the reply to a request already on the wire, resending it on timeout
+    /// until `config.retries` is exhausted.
+    ///
+    /// Split out of [`Self::send_request_and_handle_response`] so the command channel
+    /// can report `Sent { bytes_sent }` the moment the datagram leaves - an injected
+    /// caller must not be made to wait out `timeout_ms * (retries + 1)` before it
+    /// learns whether its request was sent.
+    #[allow(clippy::too_many_arguments)]
+    async fn await_response(
+        socket: &Arc<UdpSocket>,
+        request_bytes: &[u8],
+        request_type: &str,
+        config: &Arc<SnmpConfig>,
+        client_id: ClientId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: &Arc<SnmpClientProtocol>,
+    ) -> Result<()> {
         let timeout_duration = Duration::from_millis(config.timeout_ms);
         let mut retries = config.retries;
 
         loop {
-            // Send request
-            socket.send(request_bytes).await?;
-
             // Wait for response with timeout
             let mut buffer = vec![0u8; 65535];
             match timeout(timeout_duration, socket.recv(&mut buffer)).await {
@@ -573,6 +486,7 @@ impl SnmpClient {
                             "SNMP client {} request timeout, retrying ({} left)",
                             client_id, retries
                         );
+                        socket.send(request_bytes).await?;
                         continue;
                     } else {
                         return Err(anyhow::anyhow!(
@@ -583,6 +497,134 @@ impl SnmpClient {
                 }
             }
         }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// Bespoke rather than `command_support::handle_stream_client_command` because
+    /// every SNMP verb yields `ClientActionResult::Custom` and the socket is a
+    /// connected datagram socket, not a write half. The logging and reply are
+    /// byte-for-byte what the generic helper does.
+    ///
+    /// The outcome is reported as soon as the request datagram is on the wire; the
+    /// reply is then awaited in this same task, so the response event still reaches
+    /// the LLM exactly as it does on the LLM path, and a second command simply queues
+    /// behind the first (the channel is bounded, so a caller gets "client busy" rather
+    /// than an unbounded backlog).
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        protocol: Arc<SnmpClientProtocol>,
+        socket: Arc<UdpSocket>,
+        config: Arc<SnmpConfig>,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::client_trait::ClientActionResult;
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+
+            // Built here so the request bytes can be awaited on after the reply.
+            let mut pending: Option<(Vec<u8>, &'static str)> = None;
+
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(ClientActionResult::Custom { name, data }) => {
+                    match Self::build_request(&name, &data, &config) {
+                        Err(e) => Ok(ClientSendOutcome::Rejected {
+                            error: e.to_string(),
+                        }),
+                        Ok((request_bytes, request_type)) => {
+                            match socket.send(&request_bytes).await {
+                                Ok(bytes_sent) => {
+                                    pending = Some((request_bytes, request_type));
+                                    Ok(ClientSendOutcome::Sent { bytes_sent })
+                                }
+                                Err(e) => Err(anyhow::anyhow!("send failed: {e}")),
+                            }
+                        }
+                    }
+                }
+                Ok(ClientActionResult::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Ok(ClientActionResult::WaitForMore) => Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_more".to_string(),
+                }),
+                Ok(other) => Ok(ClientSendOutcome::Executed {
+                    detail: format!("no wire effect: {other:?}"),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("SNMP client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send(format!(
+                    "[CLIENT] SNMP client {} disconnected (injected action)",
+                    client_id
+                ));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+
+            if let Some((request_bytes, request_type)) = pending {
+                if let Err(e) = Self::await_response(
+                    &socket,
+                    &request_bytes,
+                    request_type,
+                    &config,
+                    client_id,
+                    &llm_client,
+                    &app_state,
+                    &status_tx,
+                    &protocol,
+                )
+                .await
+                {
+                    debug!(
+                        "SNMP client {} got no usable reply to injected {}: {}",
+                        client_id, request_type, e
+                    );
+                }
+            }
+        }
+
+        // Every exit path lands here: drop the command handle so the dashboard stops
+        // offering [ send ] on a dead client (a late send then fails fast).
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Handle SNMP response

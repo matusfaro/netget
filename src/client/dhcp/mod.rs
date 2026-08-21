@@ -4,11 +4,13 @@ pub mod actions;
 pub use actions::DhcpClientProtocol;
 
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -34,6 +36,18 @@ struct ClientData {
     memory: String,
 }
 
+/// What applying one executed action did. Shared by the LLM paths and the
+/// command channel so an injected action reports the same truth the LLM path
+/// puts on the wire.
+enum Applied {
+    /// A datagram reached the wire, with its real byte count.
+    Sent(usize),
+    /// The action ran but wrote nothing.
+    Executed(String),
+    /// The session should end.
+    Disconnect,
+}
+
 /// DHCP client that sends requests and processes responses via LLM
 pub struct DhcpClient;
 
@@ -49,13 +63,29 @@ impl DhcpClient {
         // Parse remote_addr (DHCP server address)
         let server_addr: SocketAddr = remote_addr.parse().context("Invalid DHCP server address")?;
 
-        // Bind to DHCP client port (68)
-        // Note: This may require elevated privileges
-        let socket = Arc::new(
-            UdpSocket::bind("0.0.0.0:68")
-                .await
-                .context("Failed to bind to DHCP client port 68 (may need elevated privileges)")?,
-        );
+        // Bind to DHCP client port (68) when we may, an ephemeral port otherwise.
+        //
+        // Port 68 is privileged, so an unprivileged NetGet cannot have it - and a hard
+        // failure there made the DHCP client unusable (and untestable) for every
+        // non-root run, including the dashboard's own [ + new client ]. Falling back
+        // mirrors the BOOTP client. The cost is real and worth stating: a server that
+        // replies by broadcasting to port 68, as RFC 2131 allows when the BROADCAST
+        // flag is set, will not be heard on an ephemeral port; unicast replies to our
+        // source port are.
+        let socket = Arc::new(match UdpSocket::bind("0.0.0.0:68").await {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(
+                    "DHCP client {} could not bind port 68 ({}); using an ephemeral port \
+                     - replies broadcast to port 68 will not be received",
+                    client_id,
+                    e
+                );
+                UdpSocket::bind("0.0.0.0:0")
+                    .await
+                    .context("Failed to bind a UDP socket for the DHCP client")?
+            }
+        });
 
         // Enable broadcast
         socket.set_broadcast(true)?;
@@ -94,6 +124,16 @@ impl DhcpClient {
 
         debug!("DHCP client {} calling LLM for connected event", client_id);
 
+        // Command channel: lets the dashboard (and any programmatic caller) inject
+        // actions into this client via AppState::send_to_client.
+        //
+        // Registered BEFORE the connected event is handled: a `manual` routing rule can
+        // park that event at the dashboard for minutes, and until registration the UI
+        // reports "no command channel" - reading as a protocol limitation when it is
+        // only a queue.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
         // Call LLM for initial connection event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let protocol = Arc::new(DhcpClientProtocol::new());
@@ -121,116 +161,28 @@ impl DhcpClient {
 
                     // Execute actions from LLM response
                     for action in actions {
-                        use crate::llm::actions::client_trait::Client;
-
                         match protocol.as_ref().execute_action(action) {
                             Ok(action_result) => {
-                                use crate::llm::actions::client_trait::ClientActionResult;
-
-                                match action_result {
-                                    ClientActionResult::Custom { name, data } => {
-                                        if name == "dhcp_discover" {
-                                            #[cfg(feature = "dhcp")]
-                                            {
-                                                if let Ok(discover_packet) =
-                                                    Self::build_discover_packet(&data)
-                                                {
-                                                    let target = if data
-                                                        .get("broadcast")
-                                                        .and_then(|v| v.as_bool())
-                                                        .unwrap_or(true)
-                                                    {
-                                                        "255.255.255.255:67".parse().unwrap()
-                                                    } else {
-                                                        server_addr
-                                                    };
-
-                                                    let _ = socket
-                                                        .send_to(&discover_packet, target)
-                                                        .await;
-                                                    debug!(
-                                                        "DHCP client {} sent DISCOVER ({} bytes)",
-                                                        client_id,
-                                                        discover_packet.len()
-                                                    );
-                                                    trace!(
-                                                        "DHCP DISCOVER (hex): {}",
-                                                        hex::encode(&discover_packet)
-                                                    );
-                                                }
-                                            }
-
-                                            #[cfg(not(feature = "dhcp"))]
-                                            {
-                                                error!("DHCP feature not enabled");
-                                            }
-                                        } else if name == "dhcp_request" {
-                                            #[cfg(feature = "dhcp")]
-                                            {
-                                                if let Ok(request_packet) =
-                                                    Self::build_request_packet(&data)
-                                                {
-                                                    let target = if data
-                                                        .get("broadcast")
-                                                        .and_then(|v| v.as_bool())
-                                                        .unwrap_or(true)
-                                                    {
-                                                        "255.255.255.255:67".parse().unwrap()
-                                                    } else {
-                                                        server_addr
-                                                    };
-
-                                                    let _ = socket
-                                                        .send_to(&request_packet, target)
-                                                        .await;
-                                                    debug!(
-                                                        "DHCP client {} sent REQUEST ({} bytes)",
-                                                        client_id,
-                                                        request_packet.len()
-                                                    );
-                                                    trace!(
-                                                        "DHCP REQUEST (hex): {}",
-                                                        hex::encode(&request_packet)
-                                                    );
-                                                }
-                                            }
-
-                                            #[cfg(not(feature = "dhcp"))]
-                                            {
-                                                error!("DHCP feature not enabled");
-                                            }
-                                        } else if name == "dhcp_inform" {
-                                            #[cfg(feature = "dhcp")]
-                                            {
-                                                if let Ok(inform_packet) =
-                                                    Self::build_inform_packet(&data)
-                                                {
-                                                    let _ = socket
-                                                        .send_to(&inform_packet, server_addr)
-                                                        .await;
-                                                    debug!(
-                                                        "DHCP client {} sent INFORM ({} bytes)",
-                                                        client_id,
-                                                        inform_packet.len()
-                                                    );
-                                                    trace!(
-                                                        "DHCP INFORM (hex): {}",
-                                                        hex::encode(&inform_packet)
-                                                    );
-                                                }
-                                            }
-
-                                            #[cfg(not(feature = "dhcp"))]
-                                            {
-                                                error!("DHCP feature not enabled");
-                                            }
-                                        }
-                                    }
-                                    ClientActionResult::Disconnect => {
+                                match Self::apply_action_result(
+                                    action_result,
+                                    &socket,
+                                    server_addr,
+                                    client_id,
+                                )
+                                .await
+                                {
+                                    Ok(Applied::Disconnect) => {
                                         info!("DHCP client {} disconnecting", client_id);
+                                        app_state.remove_client_handle(client_id).await;
                                         return Ok(local_addr);
                                     }
-                                    _ => {}
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        error!(
+                                            "DHCP client {} could not send after connect: {}",
+                                            client_id, e
+                                        );
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -257,9 +209,41 @@ impl DhcpClient {
         let task_registrar = app_state.clone();
         let task_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 1500];
+            let cmd_protocol = Arc::new(DhcpClientProtocol::new());
 
             loop {
-                match socket_clone.recv_from(&mut buffer).await {
+                // `UdpSocket::recv_from` is cancellation-safe, so the command arm can
+                // share this select! with the read - losing the race never drops a
+                // datagram.
+                let recv_result = tokio::select! {
+                    result = socket_clone.recv_from(&mut buffer) => result,
+                    Some(cmd) = command_rx.recv() => {
+                        if Self::handle_injected_command(
+                            cmd,
+                            &socket_clone,
+                            server_addr,
+                            &cmd_protocol,
+                            &state_clone,
+                            &status_clone,
+                            client_id,
+                        )
+                        .await
+                        {
+                            state_clone
+                                .update_client_status(client_id, ClientStatus::Disconnected)
+                                .await;
+                            let _ = status_clone.send(format!(
+                                "[CLIENT] DHCP client {} disconnected (injected action)",
+                                client_id
+                            ));
+                            let _ = status_clone.send("__UPDATE_UI__".to_string());
+                            break;
+                        }
+                        continue;
+                    }
+                };
+
+                match recv_result {
                     Ok((n, peer_addr)) => {
                         let data = buffer[..n].to_vec();
 
@@ -334,56 +318,17 @@ impl DhcpClient {
 
                                             // Execute actions from LLM
                                             for action in actions {
-                                                use crate::llm::actions::client_trait::Client;
-
                                                 match protocol.as_ref().execute_action(action) {
                                                     Ok(action_result) => {
-                                                        use crate::llm::actions::client_trait::ClientActionResult;
-
-                                                        match action_result {
-                                                            ClientActionResult::Custom {
-                                                                name,
-                                                                data: action_data,
-                                                            } => {
-                                                                if name == "dhcp_discover" {
-                                                                    #[cfg(feature = "dhcp")]
-                                                                    {
-                                                                        if let Ok(discover_packet) = Self::build_discover_packet(&action_data) {
-                                                                            let target = if action_data.get("broadcast").and_then(|v| v.as_bool()).unwrap_or(true) {
-                                                                                "255.255.255.255:67".parse().unwrap()
-                                                                            } else {
-                                                                                peer_addr
-                                                                            };
-
-                                                                            let _ = socket_clone.send_to(&discover_packet, target).await;
-                                                                            debug!("DHCP client {} sent DISCOVER", client_id);
-                                                                        }
-                                                                    }
-                                                                } else if name == "dhcp_request" {
-                                                                    #[cfg(feature = "dhcp")]
-                                                                    {
-                                                                        if let Ok(request_packet) = Self::build_request_packet(&action_data) {
-                                                                            let target = if action_data.get("broadcast").and_then(|v| v.as_bool()).unwrap_or(true) {
-                                                                                "255.255.255.255:67".parse().unwrap()
-                                                                            } else {
-                                                                                peer_addr
-                                                                            };
-
-                                                                            let _ = socket_clone.send_to(&request_packet, target).await;
-                                                                            debug!("DHCP client {} sent REQUEST", client_id);
-                                                                        }
-                                                                    }
-                                                                } else if name == "dhcp_inform" {
-                                                                    #[cfg(feature = "dhcp")]
-                                                                    {
-                                                                        if let Ok(inform_packet) = Self::build_inform_packet(&action_data) {
-                                                                            let _ = socket_clone.send_to(&inform_packet, peer_addr).await;
-                                                                            debug!("DHCP client {} sent INFORM", client_id);
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                            ClientActionResult::Disconnect => {
+                                                        match Self::apply_action_result(
+                                                            action_result,
+                                                            &socket_clone,
+                                                            peer_addr,
+                                                            client_id,
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(Applied::Disconnect) => {
                                                                 info!(
                                                                     "DHCP client {} disconnecting",
                                                                     client_id
@@ -399,10 +344,10 @@ impl DhcpClient {
                                                                 );
                                                                 break;
                                                             }
-                                                            ClientActionResult::WaitForMore => {
-                                                                debug!("DHCP client {} waiting for more data", client_id);
+                                                            Ok(_) => {}
+                                                            Err(e) => {
+                                                                error!("DHCP client {} failed to send: {}", client_id, e);
                                                             }
-                                                            _ => {}
                                                         }
                                                     }
                                                     Err(e) => {
@@ -442,12 +387,144 @@ impl DhcpClient {
                     }
                 }
             }
+
+            // Every exit path lands here: drop the command handle so the dashboard
+            // stops offering [ send ] on a dead client (a late send then fails fast).
+            state_clone.remove_client_handle(client_id).await;
+            let _ = status_clone.send("__UPDATE_UI__".to_string());
         });
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
 
         Ok(local_addr)
+    }
+
+    /// Put one executed action on the wire. Shared by the connected-event path, the
+    /// receive loop and injected commands, so the packet encoding and the choice of
+    /// destination exist exactly once.
+    ///
+    /// `unicast_target` is where a non-broadcast datagram goes: the configured server
+    /// on the connect path, the peer that just answered us in the receive loop.
+    async fn apply_action_result(
+        result: ClientActionResult,
+        socket: &Arc<UdpSocket>,
+        unicast_target: SocketAddr,
+        client_id: ClientId,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } => {
+                #[cfg(feature = "dhcp")]
+                {
+                    let (packet, label) = match name.as_str() {
+                        "dhcp_discover" => (Self::build_discover_packet(&data)?, "DISCOVER"),
+                        "dhcp_request" => (Self::build_request_packet(&data)?, "REQUEST"),
+                        // INFORM is sent by a client that already has an address, so it
+                        // is always unicast to the server.
+                        "dhcp_inform" => (Self::build_inform_packet(&data)?, "INFORM"),
+                        _ => {
+                            return Ok(Applied::Executed(format!(
+                                "custom result '{name}' is not a DHCP wire verb"
+                            )))
+                        }
+                    };
+
+                    let broadcast = label != "INFORM"
+                        && data
+                            .get("broadcast")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(true);
+                    let target: SocketAddr = if broadcast {
+                        "255.255.255.255:67"
+                            .parse()
+                            .expect("literal broadcast address")
+                    } else {
+                        unicast_target
+                    };
+
+                    // The byte count reported to an injected caller is the one the
+                    // kernel accepted, not the length we hoped to send.
+                    let sent = socket.send_to(&packet, target).await?;
+                    debug!(
+                        "DHCP client {} sent {} ({} bytes) to {}",
+                        client_id, label, sent, target
+                    );
+                    trace!("DHCP {} (hex): {}", label, hex::encode(&packet));
+                    Ok(Applied::Sent(sent))
+                }
+
+                #[cfg(not(feature = "dhcp"))]
+                {
+                    let _ = (&name, &data, socket, unicast_target, client_id);
+                    Err(anyhow::anyhow!("DHCP feature not enabled"))
+                }
+            }
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            ClientActionResult::WaitForMore => Ok(Applied::Executed("wait_for_more".to_string())),
+            ClientActionResult::NoAction => Ok(Applied::Executed("no_action".to_string())),
+            other => Ok(Applied::Executed(format!("no wire effect: {other:?}"))),
+        }
+    }
+
+    /// Apply one injected action, record it in the access log exactly as
+    /// `command_support::handle_stream_client_command` does for stream clients, and
+    /// reply on the command's oneshot. Returns `true` when the receive loop should
+    /// stop.
+    ///
+    /// Bespoke rather than the generic helper because every DHCP verb yields
+    /// `ClientActionResult::Custom` and the destination is a property of the action
+    /// (its `broadcast` flag), not of a write half.
+    async fn handle_injected_command(
+        command: ClientCommand,
+        socket: &Arc<UdpSocket>,
+        unicast_target: SocketAddr,
+        protocol: &Arc<DhcpClientProtocol>,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+    ) -> bool {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let action = command.action.clone();
+        let outcome = match protocol.as_ref().execute_action(action.clone()) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(result) => Self::apply_action_result(result, socket, unicast_target, client_id)
+                .await
+                .map(|applied| match applied {
+                    Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                    Applied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                }),
+        };
+
+        let outcome_json = match &outcome {
+            Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+            Err(e) => serde_json::json!({"error": e.to_string()}),
+        };
+        app_state
+            .record_access_log(
+                AccessLogOwner::Client(client_id.as_u32()),
+                protocol.protocol_name(),
+                None,
+                "injected_action",
+                action,
+                vec![outcome_json],
+            )
+            .await;
+
+        let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+        if let Err(e) = &outcome {
+            error!("DHCP client {} injected action failed: {}", client_id, e);
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        crate::client::command_support::reply(command, outcome);
+        disconnect
     }
 
     #[cfg(feature = "dhcp")]

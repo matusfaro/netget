@@ -21,7 +21,8 @@ use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 use openidconnect::{
     core::{CoreClient, CoreProviderMetadata, CoreTokenResponse, CoreUserInfoClaims},
@@ -29,6 +30,30 @@ use openidconnect::{
     ClientId as OidcClientId, ClientSecret, IssuerUrl, OAuth2TokenResponse, ResourceOwnerPassword,
     ResourceOwnerUsername, Scope,
 };
+
+/// What [`OpenIdConnectClient::apply_action`] did with one executed action.
+///
+/// Every OIDC flow is HTTPS request/response through the `openidconnect` crate, so NetGet
+/// owns no socket whose byte count could be reported. The description is built from what is
+/// observably true afterwards - in particular whether a token was actually stored - so a
+/// flow that failed can never read as a success, and nothing here can invent a token.
+enum Applied {
+    /// The action ran; the string describes the effect.
+    Ran(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
+
+/// Whether an event is reported to the LLM inline or from its own task.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Raise it here and now. Used by the LLM path and by the flows' own spawned tasks.
+    Inline,
+    /// Hand it to a registered task. Used by the injected-command loop, so a manual
+    /// (human-answered) routing rule on `oidc_token_received` / `oidc_userinfo_received`
+    /// cannot hold up the command's outcome, or the next injected command.
+    Deferred,
+}
 
 /// OpenID Connect client that handles OAuth2/OIDC authentication flows
 pub struct OpenIdConnectClient;
@@ -47,9 +72,20 @@ impl OpenIdConnectClient {
             client_id, remote_addr
         );
 
-        // Store provider URL in protocol_data
+        // Store provider URL in protocol_data, and seed the startup params alongside it.
+        // Every OIDC flow reads `client_id` / `client_secret` out of `protocol_data`, but
+        // the generic creation path (dashboard form, MCP, `open_client`) only stores the
+        // validated startup params on the client and leaves `protocol_data` empty - so a
+        // client created that way arrived here unconfigured.
         app_state
             .with_client_mut(client_id, |client| {
+                if let Some(serde_json::Value::Object(params)) = client.startup_params.clone() {
+                    for (key, value) in params {
+                        if client.get_protocol_field(&key).is_none() {
+                            client.set_protocol_field(key, value);
+                        }
+                    }
+                }
                 client
                     .set_protocol_field("provider_url".to_string(), serde_json::json!(remote_addr));
             })
@@ -65,29 +101,23 @@ impl OpenIdConnectClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Spawn background task to handle LLM-requested actions
-        let app_state_clone = app_state.clone();
-        let _status_tx_clone = status_tx.clone();
-        let _llm_client_clone = llm_client.clone();
-
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            // Wait for initial LLM call to discover configuration
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state_clone.get_client(client_id).await.is_none() {
-                    info!("OpenID Connect client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
+        // Command channel for injected actions (the dashboard's [ exchange_password ],
+        // [ fetch_userinfo ], ...). Registered BEFORE the discovery + connected-event LLM
+        // call below, which is awaited inline and which a manual `*` routing rule can park
+        // for minutes - the operator must be able to drive the flow while it waits.
+        //
+        // This task also replaces the old "poll get_client() every 5s" idle task: the loop
+        // ends when the client is removed, because `remove_client` drops the sender.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Trigger initial discovery
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -216,7 +246,10 @@ impl OpenIdConnectClient {
         Ok(())
     }
 
-    /// Execute an LLM-generated action
+    /// Execute an LLM-generated action: the model's path into [`Self::apply_action`].
+    ///
+    /// Kept as a separate entry point because the follow-up actions the model returns from
+    /// a token/userinfo event come back here, and that recursion needs a boxed future.
     fn execute_llm_action<'a>(
         action: serde_json::Value,
         client_id: ClientId,
@@ -229,56 +262,248 @@ impl OpenIdConnectClient {
             use crate::llm::actions::Client;
 
             let result = protocol.execute_action(action.clone())?;
+            match Self::apply_action(
+                result,
+                Dispatch::Inline,
+                client_id,
+                llm_client,
+                app_state,
+                status_tx,
+                protocol,
+            )
+            .await?
+            {
+                Applied::Ran(detail) => info!("OIDC client {}: {}", client_id, detail),
+                Applied::Disconnect => {
+                    // The model asking to disconnect tears the client down, as it always
+                    // has. An *injected* disconnect only marks it Disconnected - removing
+                    // the client from under the command loop would abort the very task
+                    // that owes the dashboard a reply.
+                    app_state.remove_client(client_id).await;
+                }
+            }
+            Ok(())
+        })
+    }
 
+    /// Run one executed action. Shared by the LLM path and injected commands, so a flow is
+    /// driven by exactly one implementation whoever asked for it.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_action<'a>(
+        result: ClientActionResult,
+        dispatch: Dispatch,
+        client_id: ClientId,
+        llm_client: &'a OllamaClient,
+        app_state: &'a Arc<AppState>,
+        status_tx: &'a mpsc::UnboundedSender<String>,
+        protocol: Arc<OpenIdConnectClientProtocol>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Applied>> + Send + 'a>> {
+        Box::pin(async move {
             match result {
                 ClientActionResult::Custom { name, data } => match name.as_str() {
+                    "oidc_discover" => {
+                        let provider_url = app_state
+                            .with_client_mut(client_id, |client| {
+                                client
+                                    .get_protocol_field("provider_url")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string())
+                            })
+                            .await
+                            .flatten()
+                            .context("No provider URL found")?;
+                        let instruction = app_state
+                            .get_instruction_for_client(client_id)
+                            .await
+                            .unwrap_or_default();
+                        Self::discover_and_call_llm(
+                            &provider_url,
+                            client_id,
+                            llm_client,
+                            app_state,
+                            status_tx,
+                            &instruction,
+                            protocol,
+                        )
+                        .await?;
+                        Ok(Applied::Ran(format!(
+                            "oidc_discover: provider metadata fetched from {provider_url}"
+                        )))
+                    }
                     "oidc_device_flow" => {
                         Self::start_device_flow(
                             client_id, data, llm_client, app_state, status_tx, protocol,
                         )
                         .await?;
+                        Ok(Applied::Ran(
+                            "oidc_device_flow: device code issued, polling started".to_string(),
+                        ))
                     }
                     "oidc_authorization_code" => {
                         Self::start_authorization_code_flow(
                             client_id, data, llm_client, app_state, status_tx, protocol,
                         )
                         .await?;
+                        Ok(Applied::Ran(
+                            "oidc_authorization_code: authorization URL built, callback server \
+                             waiting"
+                                .to_string(),
+                        ))
                     }
                     "oidc_password_flow" => {
                         Self::exchange_password(
-                            client_id, data, llm_client, app_state, status_tx, protocol,
+                            client_id, data, llm_client, app_state, status_tx, protocol, dispatch,
                         )
                         .await?;
+                        Ok(Applied::Ran(
+                            Self::token_state_detail("oidc_password_flow", client_id, app_state)
+                                .await,
+                        ))
                     }
                     "oidc_client_credentials" => {
                         Self::exchange_client_credentials(
-                            client_id, data, llm_client, app_state, status_tx, protocol,
+                            client_id, data, llm_client, app_state, status_tx, protocol, dispatch,
                         )
                         .await?;
+                        Ok(Applied::Ran(
+                            Self::token_state_detail(
+                                "oidc_client_credentials",
+                                client_id,
+                                app_state,
+                            )
+                            .await,
+                        ))
                     }
                     "oidc_refresh_token" => {
-                        Self::refresh_token(client_id, llm_client, app_state, status_tx, protocol)
-                            .await?;
+                        Self::refresh_token(
+                            client_id, llm_client, app_state, status_tx, protocol, dispatch,
+                        )
+                        .await?;
+                        Ok(Applied::Ran(
+                            Self::token_state_detail("oidc_refresh_token", client_id, app_state)
+                                .await,
+                        ))
                     }
                     "oidc_fetch_userinfo" => {
-                        Self::fetch_userinfo(client_id, llm_client, app_state, status_tx, protocol)
-                            .await?;
+                        Self::fetch_userinfo(
+                            client_id, llm_client, app_state, status_tx, protocol, dispatch,
+                        )
+                        .await?;
+                        Ok(Applied::Ran(
+                            "oidc_fetch_userinfo: UserInfo endpoint answered".to_string(),
+                        ))
                     }
-                    _ => {
-                        return Err(anyhow::anyhow!("Unknown OIDC action: {}", name));
-                    }
+                    other => Err(anyhow::anyhow!("Unknown OIDC action: {}", other)),
                 },
                 ClientActionResult::Disconnect => {
                     info!("OIDC client {} disconnecting", client_id);
-                    app_state.remove_client(client_id).await;
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    Ok(Applied::Disconnect)
                 }
-                _ => {
-                    return Err(anyhow::anyhow!("Unsupported action result type"));
-                }
+                _ => Err(anyhow::anyhow!("Unsupported action result type")),
             }
-
-            Ok(())
         })
+    }
+
+    /// Describe a token flow by what it left behind - never by assuming it worked.
+    async fn token_state_detail(
+        name: &str,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+    ) -> String {
+        let has_token = app_state
+            .with_client_mut(client_id, |client| {
+                client.get_protocol_field("access_token").is_some()
+            })
+            .await
+            .unwrap_or(false);
+        if has_token {
+            format!("{name}: completed, an access token is stored")
+        } else {
+            format!(
+                "{name}: completed but no access token was stored - the provider did not \
+                 issue one (see netget.log)"
+            )
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// The flow itself is awaited, so the reported [`ClientSendOutcome`] describes what the
+    /// provider actually did; only the resulting token/userinfo event is handed to its own
+    /// task, so a manual routing rule waiting on a human cannot hold up the reply.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::llm::actions::Client;
+
+        let protocol = Arc::new(OpenIdConnectClientProtocol::new());
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(
+                    result,
+                    Dispatch::Deferred,
+                    client_id,
+                    &llm_client,
+                    &app_state,
+                    &status_tx,
+                    protocol.clone(),
+                )
+                .await
+                .map(|applied| match applied {
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    Applied::Ran(detail) => ClientSendOutcome::Executed { detail },
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("OIDC client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        info!("OIDC client {} command loop ended", client_id);
     }
 
     /// Start device code flow (RFC 8628)
@@ -608,65 +833,29 @@ impl OpenIdConnectClient {
             })
             .await;
 
-        // Call LLM with token received event
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let event = Event::new(
-                &OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
-                serde_json::json!({
-                    "access_token": access_token,
-                    "id_token": id_token,
-                    "refresh_token": refresh_token,
-                    "expires_in": expires_in,
-                    "token_type": token_type,
-                }),
-            );
-
-            let memory = app_state
-                .get_memory_for_client(client_id)
-                .await
-                .unwrap_or_default();
-
-            match call_llm_for_client(
-                llm_client,
-                app_state,
-                client_id.to_string(),
-                &instruction,
-                &memory,
-                Some(&event),
-                protocol.as_ref(),
-                status_tx,
-            )
-            .await
-            {
-                Ok(ClientLlmResult {
-                    actions,
-                    memory_updates,
-                }) => {
-                    if let Some(mem) = memory_updates {
-                        app_state.set_memory_for_client(client_id, mem).await;
-                    }
-
-                    // Execute follow-up actions
-                    for action in actions {
-                        if let Err(e) = Self::execute_llm_action(
-                            action,
-                            client_id,
-                            llm_client,
-                            app_state,
-                            status_tx,
-                            protocol.clone(),
-                        )
-                        .await
-                        {
-                            error!("Failed to execute follow-up action: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("LLM error for OIDC client {}: {}", client_id, e);
-                }
-            }
-        }
+        // Call LLM with token received event. This helper is only reached from the device
+        // and authorization-code flows' own spawned tasks, which are already off any
+        // command loop's critical path, so the event is raised inline there.
+        let event = Event::new(
+            &OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
+            serde_json::json!({
+                "access_token": access_token,
+                "id_token": id_token,
+                "refresh_token": refresh_token,
+                "expires_in": expires_in,
+                "token_type": token_type,
+            }),
+        );
+        Self::notify_event(
+            client_id,
+            event,
+            Dispatch::Inline,
+            llm_client,
+            app_state,
+            status_tx,
+            protocol,
+        )
+        .await;
 
         Ok(())
     }
@@ -950,6 +1139,7 @@ impl OpenIdConnectClient {
     }
 
     /// Exchange username/password for tokens
+    #[allow(clippy::too_many_arguments)]
     async fn exchange_password(
         client_id: ClientId,
         data: serde_json::Value,
@@ -957,6 +1147,7 @@ impl OpenIdConnectClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         let username = data
             .get("username")
@@ -1039,6 +1230,7 @@ impl OpenIdConnectClient {
             app_state,
             status_tx,
             protocol,
+            dispatch,
         )
         .await?;
 
@@ -1046,6 +1238,7 @@ impl OpenIdConnectClient {
     }
 
     /// Exchange client credentials for access token
+    #[allow(clippy::too_many_arguments)]
     async fn exchange_client_credentials(
         client_id: ClientId,
         data: serde_json::Value,
@@ -1053,6 +1246,7 @@ impl OpenIdConnectClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         let scopes = data.get("scopes").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -1117,6 +1311,7 @@ impl OpenIdConnectClient {
             app_state,
             status_tx,
             protocol,
+            dispatch,
         )
         .await?;
 
@@ -1130,6 +1325,7 @@ impl OpenIdConnectClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         Log::new(Some(status_tx)).info("Refreshing access token".to_string());
 
@@ -1193,6 +1389,7 @@ impl OpenIdConnectClient {
             app_state,
             status_tx,
             protocol,
+            dispatch,
         )
         .await?;
 
@@ -1206,6 +1403,7 @@ impl OpenIdConnectClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         Log::new(Some(status_tx)).info("Fetching UserInfo".to_string());
 
@@ -1268,47 +1466,23 @@ impl OpenIdConnectClient {
         ));
 
         // Call LLM with userinfo event
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let event = Event::new(
-                &OIDC_CLIENT_USERINFO_RECEIVED_EVENT,
-                serde_json::json!({
-                    "sub": userinfo.subject().as_str(),
-                    "claims": serde_json::to_value(&userinfo).unwrap_or(serde_json::json!({})),
-                }),
-            );
-
-            let memory = app_state
-                .get_memory_for_client(client_id)
-                .await
-                .unwrap_or_default();
-
-            match call_llm_for_client(
-                llm_client,
-                app_state,
-                client_id.to_string(),
-                &instruction,
-                &memory,
-                Some(&event),
-                protocol.as_ref(),
-                status_tx,
-            )
-            .await
-            {
-                Ok(ClientLlmResult { memory_updates, .. }) => {
-                    if let Some(mem) = memory_updates {
-                        app_state.set_memory_for_client(client_id, mem).await;
-                    }
-                }
-                Err(e) => {
-                    error!("LLM error for OIDC client {}: {}", client_id, e);
-                }
-            }
-        }
+        let event = Event::new(
+            &OIDC_CLIENT_USERINFO_RECEIVED_EVENT,
+            serde_json::json!({
+                "sub": userinfo.subject().as_str(),
+                "claims": serde_json::to_value(&userinfo).unwrap_or(serde_json::json!({})),
+            }),
+        );
+        Self::notify_event(
+            client_id, event, dispatch, llm_client, app_state, status_tx, protocol,
+        )
+        .await;
 
         Ok(())
     }
 
     /// Store tokens and notify LLM
+    #[allow(clippy::too_many_arguments)]
     async fn store_and_notify_tokens(
         client_id: ClientId,
         token_response: &CoreTokenResponse,
@@ -1316,6 +1490,7 @@ impl OpenIdConnectClient {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<OpenIdConnectClientProtocol>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         let access_token = token_response.access_token().secret();
         let id_token = token_response
@@ -1350,65 +1525,118 @@ impl OpenIdConnectClient {
             .await;
 
         // Call LLM with token received event
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let event = Event::new(
-                &OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
-                serde_json::json!({
-                    "access_token": access_token,
-                    "id_token": id_token,
-                    "refresh_token": refresh_token,
-                    "expires_in": expires_in,
-                    "token_type": token_type,
-                }),
-            );
-
-            let memory = app_state
-                .get_memory_for_client(client_id)
-                .await
-                .unwrap_or_default();
-
-            match call_llm_for_client(
-                llm_client,
-                app_state,
-                client_id.to_string(),
-                &instruction,
-                &memory,
-                Some(&event),
-                protocol.as_ref(),
-                status_tx,
-            )
-            .await
-            {
-                Ok(ClientLlmResult {
-                    actions,
-                    memory_updates,
-                }) => {
-                    if let Some(mem) = memory_updates {
-                        app_state.set_memory_for_client(client_id, mem).await;
-                    }
-
-                    // Execute follow-up actions
-                    for action in actions {
-                        if let Err(e) = Self::execute_llm_action(
-                            action,
-                            client_id,
-                            llm_client,
-                            app_state,
-                            status_tx,
-                            protocol.clone(),
-                        )
-                        .await
-                        {
-                            error!("Failed to execute follow-up action: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("LLM error for OIDC client {}: {}", client_id, e);
-                }
-            }
-        }
+        let event = Event::new(
+            &OIDC_CLIENT_TOKEN_RECEIVED_EVENT,
+            serde_json::json!({
+                "access_token": access_token,
+                "id_token": id_token,
+                "refresh_token": refresh_token,
+                "expires_in": expires_in,
+                "token_type": token_type,
+            }),
+        );
+        Self::notify_event(
+            client_id, event, dispatch, llm_client, app_state, status_tx, protocol,
+        )
+        .await;
 
         Ok(())
+    }
+
+    /// Report one event to the LLM, inline or from a registered task.
+    #[allow(clippy::too_many_arguments)]
+    async fn notify_event(
+        client_id: ClientId,
+        event: Event,
+        dispatch: Dispatch,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: Arc<OpenIdConnectClientProtocol>,
+    ) {
+        match dispatch {
+            Dispatch::Inline => {
+                Self::raise_event(
+                    client_id,
+                    event,
+                    llm_client.clone(),
+                    app_state.clone(),
+                    status_tx.clone(),
+                    protocol,
+                )
+                .await
+            }
+            Dispatch::Deferred => {
+                let handle = tokio::spawn(Self::raise_event(
+                    client_id,
+                    event,
+                    llm_client.clone(),
+                    app_state.clone(),
+                    status_tx.clone(),
+                    protocol,
+                ));
+                // Registered so stop_client aborts an in-flight LLM call for this event.
+                app_state.register_client_task(client_id, handle).await;
+            }
+        }
+    }
+
+    /// The event -> LLM round-trip itself, plus whatever follow-up actions it answers with.
+    async fn raise_event(
+        client_id: ClientId,
+        event: Event,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<OpenIdConnectClientProtocol>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+
+                // Execute follow-up actions
+                for action in actions {
+                    if let Err(e) = Self::execute_llm_action(
+                        action,
+                        client_id,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                        protocol.clone(),
+                    )
+                    .await
+                    {
+                        error!("Failed to execute follow-up action: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("LLM error for OIDC client {}: {}", client_id, e);
+            }
+        }
     }
 }

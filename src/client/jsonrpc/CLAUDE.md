@@ -314,3 +314,31 @@ Call add(5, 3) first.
 3. **Spec Compliance** - Strict JSON-RPC 2.0 adherence
 4. **Batch Support** - Efficient multi-request handling
 5. **Stateless Design** - Each request is independent
+
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running JSON-RPC client. The handle is
+registered **before** the `jsonrpc_connected` LLM call, because a dashboard-created client
+defaults to a `*` → manual rule and that call can park for minutes waiting for a human.
+
+The old "poll `get_client()` every 5 s and exit when it is gone" task is gone: the command
+loop is now this client's long-lived task, and it ends when the client is removed
+(`remove_client` drops the command sender, so `recv()` returns `None`) or when an injected
+`disconnect` arrives. Both the connected-event handler and the command loop go through one
+`apply_action`, so the request encoding exists exactly once.
+
+**Outcome semantics — `Executed`, never `Sent`.** reqwest owns the socket and never reports
+how many bytes a request serialised to, so a `Sent { bytes_sent }` here would be a number
+someone made up. The command loop **awaits** the HTTP round-trip and reports
+`Executed { detail: "jsonrpc_request 'add' sent; HTTP 200 (JSON-RPC response received)" }`,
+or `... (body was not valid JSON)` when the server answered with something else. A request
+that never completes is an `Err`, an unknown action name is `Rejected { error }`, and
+`disconnect` is `Disconnected` (the loop ends and the handle is dropped).
+
+`jsonrpc_response_received` still fires, but for an injected request it is raised from its
+own registered task (`Dispatch::Deferred`) rather than inline — otherwise a manual rule
+parking that LLM call would wedge the command loop for the length of a human's think time
+and `send_to_client` would time out on a request that in fact succeeded. `make_request` /
+`make_batch_request` are unchanged for callers; each is now `perform_*` (network only)
+followed by `notify_*` (the LLM event).

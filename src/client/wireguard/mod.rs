@@ -58,6 +58,21 @@ pub struct WireguardClientParams {
     pub private_key: Option<String>,
 }
 
+/// What applying one action to the WireGuard interface actually did.
+///
+/// WireGuard never yields [`crate::state::client_handles::ClientSendOutcome::Sent`]:
+/// NetGet implements none of the WireGuard protocol and writes no packets — it
+/// orchestrates `defguard_wireguard_rs`, which drives the kernel module (or, on
+/// macOS, an external `wireguard-go`). Every verb this client has reads interface
+/// state or tears the interface down, so `Executed` with a specific reading is the
+/// only truthful answer.
+pub enum WireguardApplied {
+    /// The action ran; the string describes what it read or did.
+    Executed(String),
+    /// The interface was torn down.
+    Disconnected,
+}
+
 /// WireGuard client
 pub struct WireguardClient {
     interface_name: String,
@@ -204,7 +219,25 @@ impl WireguardClient {
         // Store command channel in global map
         WIREGUARD_CLIENTS.write().await.insert(client_id, cmd_tx);
 
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the connected-event LLM call below: a dashboard-created
+        // client defaults to a `*` -> manual rule, so that call can park for minutes
+        // waiting for a human, and the operator must be able to query or tear down
+        // the tunnel while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn({
+            let client = client.clone();
+            let app_state = app_state.clone();
+            let status_tx = status_tx.clone();
+            async move {
+                Self::command_loop(command_rx, client, client_id, app_state, status_tx).await;
+            }
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn monitoring loop
+        let app_state_for_cleanup = app_state.clone();
         let app_state_clone = app_state.clone();
         let status_tx_clone = status_tx.clone();
         let llm_client_clone = llm_client.clone();
@@ -228,8 +261,11 @@ impl WireguardClient {
             )
             .await;
 
-            // Clean up on exit
+            // Clean up on exit. The command handle goes too: the monitoring loop is
+            // what tracks liveness, so once it is gone the dashboard must stop
+            // offering [ send ].
             WIREGUARD_CLIENTS.write().await.remove(&client_id);
+            app_state_for_cleanup.remove_client_handle(client_id).await;
         });
         task_registrar
             .register_client_task(client_id, task_handle)
@@ -288,6 +324,149 @@ impl WireguardClient {
             IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
             listen_port,
         ))
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed,
+    /// which drops the handle) or an injected `disconnect` tears the tunnel down.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this
+    /// client: it owns no socket at all. Everything goes through
+    /// [`Self::apply_wireguard_action`], and the outcome is recorded and replied the
+    /// way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        client: Arc<WireguardClient>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = crate::client::wireguard::WireguardClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+
+            let outcome: anyhow::Result<ClientSendOutcome> = match Self::apply_wireguard_action(
+                &client,
+                action.clone(),
+                client_id,
+                &app_state,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(WireguardApplied::Executed(detail)) => {
+                    Ok(ClientSendOutcome::Executed { detail })
+                }
+                Ok(WireguardApplied::Disconnected) => Ok(ClientSendOutcome::Disconnected),
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        // Every exit path lands here: drop the command handle so the dashboard stops
+        // offering [ send ] on a tunnel that is gone.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    /// Carry one action out against the live interface.
+    ///
+    /// `Err` means the protocol rejected the action (unknown verb); a
+    /// `read_interface_data` failure is `Ok(Executed(..))` naming the error, because
+    /// the action did run.
+    async fn apply_wireguard_action(
+        client: &Arc<WireguardClient>,
+        action: serde_json::Value,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<WireguardApplied> {
+        use crate::llm::actions::client_trait::{Client, ClientActionResult};
+
+        let protocol = crate::client::wireguard::WireguardClientProtocol::new();
+        match protocol.execute_action(action)? {
+            ClientActionResult::Custom { name, .. } if name == "wireguard_get_status" => {
+                match client.get_status().await {
+                    Ok(status) => Ok(WireguardApplied::Executed(format!(
+                        "get_connection_status: connected={}, tx_bytes={}, rx_bytes={}, \
+                         last_handshake={}",
+                        status["connected"],
+                        status["tx_bytes"],
+                        status["rx_bytes"],
+                        status["last_handshake"],
+                    ))),
+                    Err(e) => Ok(WireguardApplied::Executed(format!(
+                        "get_connection_status failed: {e:#}"
+                    ))),
+                }
+            }
+            ClientActionResult::Custom { name, .. } if name == "wireguard_get_info" => {
+                let info = client.get_client_info();
+                Ok(WireguardApplied::Executed(format!(
+                    "get_client_info: interface={}, public_key={}, client_address={}, \
+                     server_endpoint={}",
+                    info["interface"],
+                    info["public_key"],
+                    info["client_address"],
+                    info["server_endpoint"],
+                )))
+            }
+            ClientActionResult::Custom { name, .. } => Ok(WireguardApplied::Executed(format!(
+                "custom result '{name}' has no WireGuard handler"
+            ))),
+            ClientActionResult::Disconnect => {
+                if let Err(e) = client.disconnect().await {
+                    error!(
+                        "WireGuard client {} failed to remove interface: {}",
+                        client_id, e
+                    );
+                }
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                // Drop the command handle here rather than only in the command loop:
+                // the monitoring loop can disconnect too, and a handle left behind
+                // would offer [ send ] into a torn-down interface.
+                app_state.remove_client_handle(client_id).await;
+                let _ = status_tx.send(format!(
+                    "[CLIENT] WireGuard client {} disconnected",
+                    client_id
+                ));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                Ok(WireguardApplied::Disconnected)
+            }
+            other => Ok(WireguardApplied::Executed(format!(
+                "unhandled action result {other:?}"
+            ))),
+        }
     }
 
     /// Monitoring loop to track connection status and handle commands

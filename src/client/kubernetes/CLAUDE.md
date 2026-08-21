@@ -310,3 +310,52 @@ See `tests/client/kubernetes/CLAUDE.md` for E2E testing approach.
 - **Credentials** - Uses kubeconfig credentials (secure storage)
 - **TLS** - All communication encrypted via HTTPS
 - **Namespace Isolation** - Operations scoped to specific namespaces
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running Kubernetes client.
+`connect_with_llm_actions` registers the channel (`command_support::register_command_channel`)
+and spawns a registered `command_loop` task in place of the old 5s "has this client been removed
+yet" poll.
+
+**The `kube::Client` built at connect time is now kept, not discarded.** It is carried into the
+command task and `execute_operation` takes it as a parameter, so one configured handle serves
+every operation instead of each call re-running `kube::Client::try_default()` and re-reading the
+kubeconfig. (`kube::Client` is cheap to clone and internally shared, so this needs no `Mutex`.)
+
+Outcome semantics — `kube` owns the socket and reports no wire byte count, so **`Sent` is never
+returned**:
+
+| Situation | `ClientSendOutcome` |
+|---|---|
+| `execute_action` refused it | `Rejected { error }` |
+| Operation ran and the apiserver answered | `Executed { detail: "list pods completed: {…}" }` |
+| Operation ran and the apiserver or `kube` failed | `Executed { detail: "list pods failed: …" }` |
+| `disconnect` | `Disconnected` (loop ends, handle removed) |
+
+The apiserver call itself is **awaited** in the loop, so the detail is a real result. The
+`k8s_resource_received` event is raised from its own registered task, so an event handler that
+parks for a human answer cannot wedge the command loop.
+
+### Known defect: rustls provider ambiguity in multi-protocol builds
+
+`kube` builds a rustls `ClientConfig` even for an `http://` apiserver. rustls 0.23 **panics**
+at that point unless exactly one of its `ring` / `aws-lc-rs` features is enabled, or a
+process-wide `CryptoProvider` has been installed. Feature unification makes both features active
+whenever `kubernetes` is compiled alongside the AWS SDK protocols:
+
+```bash
+cargo tree --no-default-features --features kubernetes           -e features -i rustls@0.23  # ring only
+cargo tree --no-default-features --features kubernetes,s3        -e features -i rustls@0.23  # ring + aws-lc-rs
+```
+
+So in an `all-protocols` binary — the one on `PATH` — `kube::Client::try_default()` panics and
+the Kubernetes client cannot start at all. This is pre-existing and **not fixed here**: the fix
+is a `CryptoProvider::install_default()` call at the top of `connect_with_llm_actions`, which
+needs `dep:rustls` added to the `kubernetes` feature in `Cargo.toml`.
+`tests/client/kubernetes/command_channel_test.rs` works around it test-side by installing the
+`ring` provider through `quinn`'s rustls re-export (a dev-dependency).
+
+Test: `tests/client/kubernetes/command_channel_test.rs` (no LLM, no cluster — `KUBECONFIG` is
+pointed at a throwaway file whose only cluster is a loopback listener, which also keeps the
+developer's real `~/.kube/config` out of the test).

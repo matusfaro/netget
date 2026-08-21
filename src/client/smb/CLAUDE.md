@@ -358,3 +358,32 @@ Connect to SMB at //server/logs and find all .log files modified today
 - pavao crate: https://crates.io/crates/pavao
 - libsmbclient: https://www.samba.org/samba/docs/current/man-html/libsmbclient.7.html
 - SMB protocol: https://docs.microsoft.com/en-us/openspecs/windows_protocols/ms-smb/
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into the running client. `command_loop` in
+`mod.rs` drains the bounded channel and runs each action through `apply_smb_result` — the
+same function the `smb_client_connected` and follow-up event paths use.
+
+The `pavao::SmbClient` handle lives behind an `Arc<Mutex<_>>` (`SharedSmb`) so both the LLM
+task and the command loop can use it. libsmbclient is not thread-safe, so the mutex is the
+serialisation the library requires anyway. **The guard is taken and released around each
+synchronous pavao call and is never held across an `.await`** — in particular never across an
+LLM round-trip, which a `*` -> manual rule can park for minutes.
+
+The channel is registered **before** the connected-event LLM call.
+
+Outcomes:
+
+| action | `ClientSendOutcome` |
+|---|---|
+| `list_directory` | `Executed { detail: "list_directory \"…\": N entries" }` (or `… failed: <err>`) |
+| `read_file` | `Executed { detail: "read_file \"…\": N bytes read" }` |
+| `write_file` | `Executed { detail: "write_file \"…\": N bytes written" }` |
+| `create_directory` / `delete_file` / `delete_directory` | `Executed { detail: "<verb> \"…\": created/deleted" }` |
+| `disconnect` | `Disconnected` (handle dropped) |
+| unknown verb | `Rejected { error }` |
+
+**SMB never reports `Sent`.** libsmbclient owns the transport and may sign or encrypt it, so
+NetGet never sees a wire byte count. A write reports the payload bytes it really put into the
+file, inside `Executed`.

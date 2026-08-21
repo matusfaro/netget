@@ -3,12 +3,13 @@ pub mod actions;
 
 pub use actions::S3ClientProtocol;
 
-use crate::llm::actions::client_trait::Client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::client::llm_budget::call_llm_for_client;
 use crate::client::s3::actions::S3_CLIENT_RESPONSE_RECEIVED_EVENT;
@@ -16,7 +17,9 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+use crate::utils::truncate::truncate_for_log;
 
 /// S3 client that interacts with AWS S3 or S3-compatible services
 pub struct S3Client;
@@ -126,6 +129,21 @@ impl S3Client {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // Registered BEFORE the connected-event LLM call below: a dashboard-created
+        // client defaults to a `*` -> manual routing rule, which parks that call until
+        // a human answers, and [ send ] has to work for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            _llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM initially with connected event
         let remote_addr_clone = remote_addr.clone();
         let llm_client_clone = _llm_client.clone();
@@ -183,58 +201,39 @@ impl S3Client {
                         app_state_clone.set_memory_for_client(client_id, mem).await;
                     }
 
-                    // Execute actions
+                    // Execute actions through the same path injected commands use.
                     for action in actions {
-                        use crate::llm::actions::client_trait::ClientActionResult;
-                        match protocol.execute_action(action) {
-                            Ok(ClientActionResult::Custom { name, data }) => {
-                                // Execute S3 operation
-                                if let Err(e) = Self::execute_operation(
-                                    client_id,
-                                    name,
-                                    data,
-                                    app_state_clone.clone(),
-                                    llm_client_clone.clone(),
-                                    status_tx_clone.clone(),
-                                )
-                                .await
-                                {
-                                    error!("S3 client {} operation error: {}", client_id, e);
-                                    let _ = status_tx_clone
-                                        .send(format!("[ERROR] S3 operation failed: {}", e));
-                                }
+                        let result = match protocol.execute_action(action) {
+                            Ok(result) => result,
+                            Err(e) => {
+                                error!("S3 client {} action error: {}", client_id, e);
+                                continue;
                             }
-                            Ok(ClientActionResult::Disconnect) => {
+                        };
+                        let outcome = Self::apply_action(
+                            result,
+                            client_id,
+                            &app_state_clone,
+                            &llm_client_clone,
+                            &status_tx_clone,
+                        )
+                        .await;
+                        match outcome {
+                            ClientSendOutcome::Disconnected => {
                                 info!("S3 client {} disconnecting", client_id);
                                 app_state_clone
                                     .update_client_status(client_id, ClientStatus::Disconnected)
                                     .await;
+                                app_state_clone.remove_client_handle(client_id).await;
                                 let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                 return;
                             }
-                            Ok(ClientActionResult::WaitForMore) => {
-                                // S3 is request-response, wait for next user action
-                                break;
-                            }
-                            Err(e) => {
-                                error!("S3 client {} action error: {}", client_id, e);
-                            }
-                            _ => {}
+                            other => debug!("S3 client {} connect action: {:?}", client_id, other),
                         }
                     }
                 }
                 Err(e) => {
                     error!("LLM error for S3 client {}: {}", client_id, e);
-                }
-            }
-
-            // Monitor for client removal
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                if app_state_clone.get_client(client_id).await.is_none() {
-                    info!("S3 client {} stopped", client_id);
-                    break;
                 }
             }
         });
@@ -246,7 +245,9 @@ impl S3Client {
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Execute an S3 operation
+    /// Execute an S3 operation, returning the operation's own JSON result so the
+    /// caller can report what actually happened (the command loop puts it in the
+    /// `ClientSendOutcome` detail).
     pub async fn execute_operation(
         client_id: ClientId,
         operation_name: String,
@@ -254,7 +255,7 @@ impl S3Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<serde_json::Value> {
         info!(
             "S3 client {} executing operation: {}",
             client_id, operation_name
@@ -336,60 +337,199 @@ impl S3Client {
             _ => Err(anyhow::anyhow!("Unknown S3 operation: {}", operation_name)),
         };
 
-        // Call LLM with result
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::s3::actions::S3ClientProtocol::new());
-            let event = match &result {
-                Ok(response_data) => Event::new(
-                    &S3_CLIENT_RESPONSE_RECEIVED_EVENT,
-                    serde_json::json!({
-                        "operation": operation_name,
-                        "success": true,
-                        "result": response_data,
-                    }),
-                ),
-                Err(e) => Event::new(
-                    &S3_CLIENT_RESPONSE_RECEIVED_EVENT,
-                    serde_json::json!({
-                        "operation": operation_name,
-                        "success": false,
-                        "error": e.to_string(),
-                    }),
-                ),
-            };
+        // Raise the response event from its own registered task rather than inline. A
+        // dashboard-created client defaults to a `*` -> manual routing rule, so this LLM
+        // call can park for minutes waiting for a human; awaiting it here would wedge the
+        // command loop and make an injected action that in fact succeeded look to the
+        // dashboard like a timeout.
+        let event_data = match &result {
+            Ok(response_data) => serde_json::json!({
+                "operation": operation_name,
+                "success": true,
+                "result": response_data,
+            }),
+            Err(e) => serde_json::json!({
+                "operation": operation_name,
+                "success": false,
+                "error": e.to_string(),
+            }),
+        };
+        let notify = tokio::spawn(Self::notify_response(
+            client_id,
+            event_data,
+            app_state.clone(),
+            llm_client,
+            status_tx,
+        ));
+        app_state.register_client_task(client_id, notify).await;
 
-            let memory = app_state
-                .get_memory_for_client(client_id)
+        result
+    }
+
+    /// Apply one executed action against the S3 API. Shared by the connected-event
+    /// LLM path and by injected commands, so the two cannot diverge.
+    ///
+    /// The AWS SDK owns the socket and reports no wire byte count, so a completed
+    /// operation is `Executed { detail }` naming the operation and its result -
+    /// never `Sent`, which would be a fabricated byte count.
+    async fn apply_action(
+        result: ClientActionResult,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> ClientSendOutcome {
+        match result {
+            ClientActionResult::Custom { name, data } => {
+                match Self::execute_operation(
+                    client_id,
+                    name.clone(),
+                    data,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                )
                 .await
-                .unwrap_or_default();
-
-            match call_llm_for_client(
-                &llm_client,
-                &app_state,
-                client_id.to_string(),
-                &instruction,
-                &memory,
-                Some(&event),
-                protocol.as_ref(),
-                &status_tx,
-            )
-            .await
-            {
-                Ok(ClientLlmResult {
-                    actions: _,
-                    memory_updates,
-                }) => {
-                    if let Some(mem) = memory_updates {
-                        app_state.set_memory_for_client(client_id, mem).await;
+                {
+                    Ok(value) => ClientSendOutcome::Executed {
+                        detail: format!(
+                            "{} completed: {}",
+                            name,
+                            truncate_for_log(&value.to_string(), 200)
+                        ),
+                    },
+                    Err(e) => {
+                        error!("S3 client {} operation {} failed: {}", client_id, name, e);
+                        let _ = status_tx.send(format!("[ERROR] S3 operation failed: {}", e));
+                        ClientSendOutcome::Executed {
+                            detail: format!(
+                                "{} failed: {}",
+                                name,
+                                truncate_for_log(&e.to_string(), 200)
+                            ),
+                        }
                     }
                 }
-                Err(e) => {
-                    error!("LLM error for S3 client {}: {}", client_id, e);
+            }
+            ClientActionResult::Disconnect => ClientSendOutcome::Disconnected,
+            ClientActionResult::WaitForMore => ClientSendOutcome::Executed {
+                detail: "wait_for_more".to_string(),
+            },
+            ClientActionResult::NoAction => ClientSendOutcome::Executed {
+                detail: "no_action".to_string(),
+            },
+            ClientActionResult::SendData(_) => ClientSendOutcome::Executed {
+                detail: "send_data has no meaning for the S3 client: it speaks the S3 REST API \
+                         through the AWS SDK, not a socket this client owns"
+                    .to_string(),
+            },
+            ClientActionResult::Multiple(_) => ClientSendOutcome::Executed {
+                detail: "the S3 client's own verbs never produce Multiple; nothing was applied"
+                    .to_string(),
+            },
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed)
+    /// or an injected `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client:
+    /// every S3 verb yields `ClientActionResult::Custom` and there is no write half
+    /// to put bytes on. The action therefore goes through [`Self::apply_action`] -
+    /// the same function the LLM path uses - and the outcome is logged and replied
+    /// exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = crate::client::s3::actions::S3ClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                },
+                Ok(result) => {
+                    Self::apply_action(result, client_id, &app_state, &llm_client, &status_tx).await
                 }
+            };
+            let disconnected = matches!(outcome, ClientSendOutcome::Disconnected);
+
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null)],
+                )
+                .await;
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, Ok(outcome));
+
+            if disconnected {
+                info!("S3 client {} disconnecting on injected action", client_id);
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
             }
         }
 
-        result.map(|_| ())
+        // Never leave the dashboard offering [ send ] into a client that is gone.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    /// Raise `s3_response_received` and fold in any memory update. Spawned, never
+    /// awaited by a caller that holds the command loop: an event handler may park this
+    /// call for a human answer.
+    async fn notify_response(
+        client_id: ClientId,
+        event_data: serde_json::Value,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+        let protocol = crate::client::s3::actions::S3ClientProtocol::new();
+        let event = Event::new(&S3_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            &protocol,
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for S3 client {}: {}", client_id, e);
+            }
+        }
     }
 
     async fn put_object(

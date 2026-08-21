@@ -342,3 +342,28 @@ List available tools, then call the 'calculate' tool with expression "2+2".
 - [MCP Server Implementation](../../server/mcp/CLAUDE.md)
 - [reqwest Documentation](https://docs.rs/reqwest/)
 - [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
+
+## Injected actions (the dashboard's `[ send ]`)
+
+The client registers a command channel and spawns `McpClient::command_loop` **before** the
+`mcp_connected` LLM call, because a `*` -> manual rule can park that call for minutes and the
+operator must still be able to reach the client. The command task also replaces the old 5s
+"has the client been removed yet" poll inside the LLM task.
+
+`McpClient::apply_action` is the single place a JSON-RPC call is issued and its
+`mcp_response_received` event fired; `execute_llm_actions` and the command loop both go
+through it, so an injected `list_tools` produces the same `tools/list` POST (and the same
+follow-up action chain) the LLM path would. It is boxed because it recurses back into
+`execute_llm_actions` for the follow-ups.
+
+`ClientSendOutcome` semantics:
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | The JSON-RPC call ran, e.g. `mcp_list_tools completed`. |
+| `Rejected { error }` | `execute_action` refused the action (unknown verb, missing `uri`/`name`). |
+| `Disconnected` | `{"type":"disconnect"}`; status goes to Disconnected and the handle is dropped. |
+| `Err(...)` | The POST failed, the server returned a JSON-RPC error, or the body did not parse. |
+
+**`Sent { bytes_sent }` is never reported**: reqwest owns the socket, so a byte count would
+be invented. The call is awaited before the outcome is returned.

@@ -248,3 +248,26 @@ tempfile = "3.x"  # For temporary directories
 - [git2-rs Documentation](https://docs.rs/git2/)
 - [GitHub API Rate Limits](https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limiting)
 - [NetGet Test Infrastructure](../../../TEST_INFRASTRUCTURE_FIXES.md)
+
+## `command_channel_test.rs` — injected actions
+
+In-process, no NetGet subprocess, **zero LLM calls and no network at all**: the repository is
+a `git2`-initialised temp directory and the client's LLM points at `http://127.0.0.1:1`, so
+its `git_connected` call fails and the connect path has to tolerate that.
+
+What it pins:
+
+- `has_client_handle` is true **before** anything answers the connected event.
+- `git_status` on a client created with `remote_addr` = an existing repository →
+  `Executed { detail }` naming the untracked file. Both halves matter: it proves the injected
+  action ran against a real repository, and it proves connect seeds the session from a local
+  `remote_addr` (before, `repo_path` was `None` until something cloned).
+- `git_status` on a client whose `remote_addr` is *not* a repository → an `Err` naming the
+  missing repository. That branch used to be a silent no-op.
+- an unknown action → `Rejected`; `disconnect` → `Disconnected`, status `Disconnected`,
+  handle gone.
+
+`Executed`, not `Sent`: git2 owns whatever sockets an operation uses and reports no byte
+counts.
+
+**LLM call budget: 0.**

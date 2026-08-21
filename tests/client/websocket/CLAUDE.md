@@ -58,3 +58,21 @@ contacted.
 - The `headers` startup parameter (and the ignore-list for handshake headers) is not covered.
 - Fragmented **inbound** messages are not exercised on the client side, only the server side.
 - `wait_for_websocket_data` on the client has no assertion.
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+A second, cheaper peer: a **NetGet WebSocket server** with static handlers (`websocket_handshake`
+→ `accept_websocket`, `*` → no actions). The point here is not the framing — `e2e_test.rs` owns
+that — but the injection path, so a NetGet server is the right peer: its access log is the proof
+the frame arrived.
+
+**LLM calls: 0.** Both sides answer from static handlers, and the client's LLM URL is
+`http://127.0.0.1:1`, so its `websocket_client_connected` call fails; the loop has to tolerate
+that and the command task must be independent of it.
+
+Asserts, in order: the command handle exists **before** anything is sent (the regression guard
+for registering the channel ahead of the connected-event LLM call); `send_websocket_text` returns
+`Sent { bytes_sent: 16 }` for a 16-byte payload; the injection appears in the client's access log
+and the text in the server's; a payload-less ping returns `Executed`, not `Sent{0}`; close code
+1006 is `Rejected` by the protocol's own validation; a polite close returns `Disconnected` and the
+command handle disappears.

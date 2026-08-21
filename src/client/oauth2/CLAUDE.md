@@ -203,3 +203,53 @@ E2E testing requires:
 4. Refresh token testing
 
 See `tests/client/oauth2/CLAUDE.md` for test strategy.
+
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running OAuth2 client. The handle is
+registered **before** the `oauth2_connected` LLM call — which this client awaits inline in
+`connect()` — because a dashboard-created client defaults to a `*` → manual rule and that
+call can park for minutes waiting for a human.
+
+The old "poll `get_client()` every 5 s" task is gone (it was never registered either, so
+`stop_client` could not abort it). The command loop is now this client's long-lived task and
+ends when the client is removed or an injected `disconnect` arrives. `execute_llm_action`
+became `apply_action`, which both the connected-event handler and the command loop call, so
+every flow is driven by one implementation whoever asked for it.
+
+**Outcome semantics — `Executed`, never `Sent`, and the detail is derived, not assumed.**
+The `oauth2` crate owns the HTTPS socket and reports no byte count, so `Sent { bytes_sent }`
+would be invented. The command loop **awaits** the flow and then *looks at what it left
+behind*:
+
+- `Executed { detail: "oauth2_exchange_client_credentials: completed, an access token is stored" }`
+- `Executed { detail: "oauth2_refresh_token: completed but no access token was stored - the
+  provider did not issue one (see the oauth2_error event and netget.log)" }`
+- `Executed { detail: "oauth2_generate_auth_url: authorization URL built (nothing sent; the
+  user's browser carries it)" }`
+- `Rejected { error }` for an unknown action name or bad parameters, `Err` for a flow that
+  could not run (`exchange_code` with no stored PKCE verifier, say), `Disconnected` for
+  `disconnect`.
+
+That derivation is the point, and it is the client-side counterpart of the OAuth2 *server*
+fail-open bug this repo treats as its reference case: **no path here may report a success
+for a flow that produced no token, and none may fabricate a code or a token.** The
+`token_state_detail` helper reads `access_token` back out of the client's state after the
+flow; a refusal by the provider therefore reads as a refusal.
+
+`oauth2_token_obtained` / `oauth2_error` still fire, but for an injected action from their
+own registered task (`Dispatch::Deferred`) rather than inline — otherwise a manual rule
+parking that LLM call would wedge the command loop and `send_to_client` would time out on a
+flow that in fact completed. The device-code polling task keeps raising its events inline;
+it is already off any command loop's critical path.
+
+### Startup params reach `protocol_data` now
+
+Every flow reads its configuration (`client_id`, `token_url`, `client_secret`, …) out of
+`protocol_data`, but the generic creation path — the dashboard form, MCP, `open_client` —
+only stores the validated startup params on the client and leaves `protocol_data` `Null`.
+A client created that way arrived here unconfigured and failed with "Missing OAuth2
+client_id startup parameter", on the LLM path just as much as the injected one. `connect`
+now seeds `protocol_data` from `startup_params` once, without overwriting anything already
+set.

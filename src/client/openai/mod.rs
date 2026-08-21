@@ -13,12 +13,15 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::client::openai::actions::{
     OPENAI_CLIENT_CONNECTED_EVENT, OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// OpenAI client that connects to the OpenAI API
 pub struct OpenAiClient;
@@ -84,6 +87,23 @@ impl OpenAiClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // Registered - and already being drained by its own task - BEFORE the
+        // connected-event LLM call, which a manual `*` rule can park for minutes: the
+        // operator must be able to reach the client while it waits. This task also
+        // replaces the old 5s "is the client gone yet" poll: the channel closes when the
+        // client is removed, which ends the loop immediately.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with openai_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -105,8 +125,47 @@ impl OpenAiClient {
             )
             .await
             {
-                Ok(_result) => {
+                Ok(result) => {
                     info!("OpenAI client ready after connect event");
+                    let protocol = crate::client::openai::actions::OpenAiClientProtocol::new();
+                    for action in result.actions {
+                        match protocol.execute_action(action.clone()) {
+                            Ok(ClientActionResult::Disconnect) => {
+                                info!(
+                                    "OpenAI client {} disconnecting on connect-event action",
+                                    client_id
+                                );
+                                app_state
+                                    .update_client_status(client_id, ClientStatus::Disconnected)
+                                    .await;
+                                // Every exit path drops the handle so the dashboard stops
+                                // offering [ send ] into a dead client.
+                                app_state.remove_client_handle(client_id).await;
+                                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                return Ok("0.0.0.0:0".parse().unwrap());
+                            }
+                            Ok(result) => {
+                                // Dispatch::Spawn: a 30s API call must not hold up
+                                // `connect()`. The injected path awaits the same
+                                // `apply_action` so its ClientSendOutcome is truthful.
+                                if let Err(e) = Self::apply_action(
+                                    result,
+                                    Dispatch::Spawn,
+                                    client_id,
+                                    &app_state,
+                                    &llm_client,
+                                    &status_tx,
+                                )
+                                .await
+                                {
+                                    error!("OpenAI request failed: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                error!("OpenAI action execution error: {}", e);
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     error!("LLM error on openai_connected event: {}", e);
@@ -114,31 +173,252 @@ impl OpenAiClient {
             }
         }
 
-        // For OpenAI client, we'll spawn a background task that monitors for client removal
-        // The actual API requests are made on-demand via actions
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("OpenAI client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
-
         // Return a dummy local address (OpenAI is a remote API, not a local connection)
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Make a chat completion request
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client: it writes
+    /// `SendData` to a socket, and every OpenAI verb yields `ClientActionResult::Custom`
+    /// that has to go out through `async-openai`. So the action is executed through the
+    /// protocol's own `execute_action` and applied by [`Self::apply_action`] - the same
+    /// function the connected-event path uses - and the outcome is recorded and replied
+    /// exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = crate::client::openai::actions::OpenAiClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                // Dispatch::Await: the network exchange is awaited, so the reported
+                // outcome describes a request that has actually completed. The
+                // openai_response_received event is delivered from its own registered
+                // task, so a manual handler parked for a human's think time cannot wedge
+                // this loop or time out the dashboard's [ send ].
+                Ok(result) => Self::apply_action(
+                    result,
+                    Dispatch::Await,
+                    client_id,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await
+                .map(|applied| match applied {
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    Applied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("OpenAI client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
+            }
+        }
+
+        info!("OpenAI client {} command loop stopped", client_id);
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    /// Apply one already-executed action result. The single place an OpenAI API call is
+    /// dispatched from, so an injected action behaves exactly like an LLM-produced one.
+    async fn apply_action(
+        result: ClientActionResult,
+        dispatch: Dispatch,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } if name == "openai_chat_completion" => {
+                let messages = data
+                    .get("messages")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let model = data
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let temperature = data.get("temperature").and_then(|v| v.as_f64());
+                let max_tokens = data
+                    .get("max_tokens")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n as u32);
+                let functions = data.get("functions").cloned().filter(|v| !v.is_null());
+                let model_label = model.clone().unwrap_or_else(|| "<default>".to_string());
+
+                match dispatch {
+                    Dispatch::Spawn => {
+                        let state_clone = app_state.clone();
+                        let llm_clone = llm_client.clone();
+                        let status_clone = status_tx.clone();
+                        let request_handle = tokio::spawn(async move {
+                            if let Err(e) = Self::make_chat_completion(
+                                client_id,
+                                messages,
+                                model,
+                                temperature,
+                                max_tokens,
+                                functions,
+                                state_clone,
+                                llm_clone,
+                                status_clone,
+                            )
+                            .await
+                            {
+                                error!("OpenAI chat completion failed: {}", e);
+                            }
+                        });
+                        app_state
+                            .register_client_task(client_id, request_handle)
+                            .await;
+                        Ok(Applied::Executed(format!(
+                            "send_chat_completion dispatched (model={model_label})"
+                        )))
+                    }
+                    Dispatch::Await => {
+                        let exchange = Self::finish_exchange(
+                            Self::perform_chat_completion(
+                                client_id,
+                                messages,
+                                model,
+                                temperature,
+                                max_tokens,
+                                functions,
+                                app_state,
+                                status_tx,
+                            )
+                            .await,
+                            client_id,
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await?;
+                        Ok(Applied::Executed(format!(
+                            "send_chat_completion completed (model={model_label}, {})",
+                            exchange.summary
+                        )))
+                    }
+                }
+            }
+            ClientActionResult::Custom { name, data } if name == "openai_embedding" => {
+                let input = data
+                    .get("input")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Null);
+                let model = data
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let model_label = model
+                    .clone()
+                    .unwrap_or_else(|| "text-embedding-ada-002".to_string());
+
+                match dispatch {
+                    Dispatch::Spawn => {
+                        let state_clone = app_state.clone();
+                        let llm_clone = llm_client.clone();
+                        let status_clone = status_tx.clone();
+                        let request_handle = tokio::spawn(async move {
+                            if let Err(e) = Self::make_embedding_request(
+                                client_id,
+                                input,
+                                model,
+                                state_clone,
+                                llm_clone,
+                                status_clone,
+                            )
+                            .await
+                            {
+                                error!("OpenAI embedding request failed: {}", e);
+                            }
+                        });
+                        app_state
+                            .register_client_task(client_id, request_handle)
+                            .await;
+                        Ok(Applied::Executed(format!(
+                            "send_embedding_request dispatched (model={model_label})"
+                        )))
+                    }
+                    Dispatch::Await => {
+                        let exchange = Self::finish_exchange(
+                            Self::perform_embedding_request(
+                                client_id, input, model, app_state, status_tx,
+                            )
+                            .await,
+                            client_id,
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await?;
+                        Ok(Applied::Executed(format!(
+                            "send_embedding_request completed (model={model_label}, {})",
+                            exchange.summary
+                        )))
+                    }
+                }
+            }
+            ClientActionResult::Custom { name, .. } => Ok(Applied::Executed(format!(
+                "custom result '{name}' has no OpenAI executor"
+            ))),
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            ClientActionResult::WaitForMore => Ok(Applied::Executed("wait_for_more".to_string())),
+            ClientActionResult::NoAction => Ok(Applied::Executed("no_action".to_string())),
+            ClientActionResult::SendData(_) => Ok(Applied::Executed(
+                "raw send_data has no meaning for the OpenAI HTTPS client".to_string(),
+            )),
+            // OpenAiClientProtocol::execute_action never produces Multiple.
+            ClientActionResult::Multiple(_) => Ok(Applied::Executed(
+                "multiple results are not produced by the OpenAI client".to_string(),
+            )),
+        }
+    }
+
+    /// Make a chat completion request and hand the result to the LLM.
+    #[allow(clippy::too_many_arguments)]
     pub async fn make_chat_completion(
         client_id: ClientId,
         messages: serde_json::Value,
@@ -150,6 +430,160 @@ impl OpenAiClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        let outcome = Self::perform_chat_completion(
+            client_id,
+            messages,
+            model,
+            temperature,
+            max_tokens,
+            functions,
+            &app_state,
+            &status_tx,
+        )
+        .await;
+        Self::notify_outcome(outcome, client_id, &app_state, &llm_client, &status_tx)
+            .await
+            .map(|_| ())
+    }
+
+    /// Make an embedding request and hand the result to the LLM.
+    pub async fn make_embedding_request(
+        client_id: ClientId,
+        input: serde_json::Value,
+        model: Option<String>,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
+        let outcome =
+            Self::perform_embedding_request(client_id, input, model, &app_state, &status_tx).await;
+        Self::notify_outcome(outcome, client_id, &app_state, &llm_client, &status_tx)
+            .await
+            .map(|_| ())
+    }
+
+    /// Deliver an exchange's `openai_response_received` event **inline** and wait for it.
+    /// Used by the LLM-driven path, where nobody is waiting on a reply.
+    async fn notify_outcome(
+        outcome: Result<OpenAiExchange>,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<OpenAiExchange> {
+        let event_data = match &outcome {
+            Ok(exchange) => exchange.event_data.clone(),
+            Err(e) => error_event_data(e),
+        };
+        Self::notify_response(
+            client_id,
+            event_data,
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        )
+        .await;
+        outcome
+    }
+
+    /// Deliver an exchange's `openai_response_received` event from **its own registered
+    /// task** and return the exchange immediately.
+    ///
+    /// This is the point of the perform/notify split. The injected-command loop already
+    /// holds the truthful network result and must reply to the operator before that
+    /// event's handler runs: a dashboard-created client defaults to a `*` -> manual rule,
+    /// so the handler can park for a human's think time (300s by default), far longer
+    /// than the composer's 30s send timeout. What the model decides to do with the
+    /// response is a different question from whether the injected action reached the wire.
+    async fn finish_exchange(
+        outcome: Result<OpenAiExchange>,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<OpenAiExchange> {
+        let event_data = match &outcome {
+            Ok(exchange) => exchange.event_data.clone(),
+            Err(e) => error_event_data(e),
+        };
+        let state_clone = app_state.clone();
+        let llm_clone = llm_client.clone();
+        let status_clone = status_tx.clone();
+        let notify_handle = tokio::spawn(async move {
+            OpenAiClient::notify_response(
+                client_id,
+                event_data,
+                state_clone,
+                llm_clone,
+                status_clone,
+            )
+            .await;
+        });
+        // Registered so the notification - and the LLM call it makes - is aborted when
+        // the client is stopped.
+        app_state
+            .register_client_task(client_id, notify_handle)
+            .await;
+        outcome
+    }
+
+    /// Fire one `openai_response_received` event at the LLM and apply any memory update.
+    async fn notify_response(
+        client_id: ClientId,
+        event_data: serde_json::Value,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+        let protocol = Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
+        let event = Event::new(&OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for OpenAI client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    /// Perform the chat-completion round-trip only. No LLM involvement, so a caller can
+    /// await this and know exactly what OpenAI answered.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn perform_chat_completion(
+        client_id: ClientId,
+        messages: serde_json::Value,
+        model: Option<String>,
+        temperature: Option<f64>,
+        max_tokens: Option<u32>,
+        functions: Option<serde_json::Value>,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<OpenAiExchange> {
         // Get API configuration from client
         let (api_key, default_model, api_endpoint) = app_state
             .with_client_mut(client_id, |client| {
@@ -298,10 +732,11 @@ impl OpenAiClient {
                     .map(|s| s.to_string())
                     .unwrap_or_default();
 
+                let total_tokens = response.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0);
                 let usage = serde_json::json!({
                     "prompt_tokens": response.usage.as_ref().map(|u| u.prompt_tokens).unwrap_or(0),
                     "completion_tokens": response.usage.as_ref().map(|u| u.completion_tokens).unwrap_or(0),
-                    "total_tokens": response.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0),
+                    "total_tokens": total_tokens,
                 });
 
                 // Extract tool_calls if present
@@ -324,7 +759,7 @@ impl OpenAiClient {
                 info!(
                     "OpenAI client {} received response ({} tokens{})",
                     client_id,
-                    response.usage.as_ref().map(|u| u.total_tokens).unwrap_or(0),
+                    total_tokens,
                     if tool_calls.is_some() {
                         ", with tool calls"
                     } else {
@@ -332,105 +767,45 @@ impl OpenAiClient {
                     }
                 );
 
-                // Call LLM with response
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol =
-                        Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
-                    let mut event_data = serde_json::json!({
-                        "response_type": "chat_completion",
-                        "content": content,
-                        "model": response.model,
-                        "usage": usage,
-                    });
+                let summary = format!(
+                    "{} tokens, {} chars of content",
+                    total_tokens,
+                    content.chars().count()
+                );
 
-                    // Add tool_calls if present
-                    if let Some(calls) = tool_calls {
-                        event_data["tool_calls"] = serde_json::json!(calls);
-                    }
-
-                    let event = Event::new(&OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("LLM error for OpenAI client {}: {}", client_id, e);
-                        }
-                    }
+                // Built here, delivered by `notify_response` - inline for the LLM path,
+                // from its own task for the injected-command path.
+                let mut event_data = serde_json::json!({
+                    "response_type": "chat_completion",
+                    "content": content,
+                    "model": response.model,
+                    "usage": usage,
+                });
+                if let Some(calls) = tool_calls {
+                    event_data["tool_calls"] = serde_json::json!(calls);
                 }
 
-                Ok(())
+                Ok(OpenAiExchange {
+                    event_data,
+                    summary,
+                })
             }
             Err(e) => {
-                Log::new(Some(&status_tx))
+                Log::new(Some(status_tx))
                     .error(format!("OpenAI client {} request failed: {}", client_id, e));
-
-                // Send error event to LLM
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol =
-                        Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
-                    let event = Event::new(
-                        &OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "response_type": "error",
-                            "content": e.to_string(),
-                        }),
-                    );
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-                    let _ = call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await;
-                }
-
                 Err(e.into())
             }
         }
     }
 
-    /// Make an embedding request
-    pub async fn make_embedding_request(
+    /// Perform the embedding round-trip only. No LLM involvement.
+    pub async fn perform_embedding_request(
         client_id: ClientId,
         input: serde_json::Value,
         model: Option<String>,
-        app_state: Arc<AppState>,
-        llm_client: OllamaClient,
-        status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<OpenAiExchange> {
         // Get API configuration from client
         let (api_key, api_endpoint) = app_state
             .with_client_mut(client_id, |client| {
@@ -509,58 +884,28 @@ impl OpenAiClient {
                     response.usage.total_tokens
                 );
 
-                // Call LLM with response
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol =
-                        Arc::new(crate::client::openai::actions::OpenAiClientProtocol::new());
-                    let event = Event::new(
-                        &OPENAI_CLIENT_RESPONSE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "response_type": "embedding",
-                            "content": format!("Generated {} embeddings", embeddings.len()),
-                            "model": response.model,
-                            "usage": usage,
-                            "embeddings_count": embeddings.len(),
-                            "embedding_dimensions": embeddings.first().map(|e| e.len()).unwrap_or(0),
-                        }),
-                    );
+                let summary = format!(
+                    "{} embeddings of {} dimensions",
+                    embeddings.len(),
+                    embeddings.first().map(|e| e.len()).unwrap_or(0)
+                );
 
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
+                let event_data = serde_json::json!({
+                    "response_type": "embedding",
+                    "content": format!("Generated {} embeddings", embeddings.len()),
+                    "model": response.model,
+                    "usage": usage,
+                    "embeddings_count": embeddings.len(),
+                    "embedding_dimensions": embeddings.first().map(|e| e.len()).unwrap_or(0),
+                });
 
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("LLM error for OpenAI client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                Ok(OpenAiExchange {
+                    event_data,
+                    summary,
+                })
             }
             Err(e) => {
-                Log::new(Some(&status_tx)).error(format!(
+                Log::new(Some(status_tx)).error(format!(
                     "OpenAI client {} embedding request failed: {}",
                     client_id, e
                 ));
@@ -568,4 +913,49 @@ impl OpenAiClient {
             }
         }
     }
+}
+
+/// The `openai_response_received` payload for a request that failed. Kept next to the
+/// success payload so both paths report through the same event type.
+fn error_event_data(error: &anyhow::Error) -> serde_json::Value {
+    serde_json::json!({
+        "response_type": "error",
+        "content": error.to_string(),
+    })
+}
+
+/// How an OpenAI API call is issued.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Spawn the request and return immediately. Used by the connected-event handler,
+    /// which runs inline in `connect()` and must not block client creation on a request
+    /// that can take the full 30s timeout.
+    Spawn,
+    /// Await the API round-trip so the caller can report what actually happened. Used by
+    /// the injected-command loop. The response event is still delivered to the LLM, from
+    /// its own registered task, so a parked manual handler cannot wedge the command loop
+    /// for the length of a human's think time.
+    Await,
+}
+
+/// One completed OpenAI exchange.
+///
+/// Split out of [`OpenAiClient::make_chat_completion`] so the injected-command loop can
+/// await the network round-trip - and report a truthful outcome - without also awaiting
+/// the LLM call the response event triggers.
+pub struct OpenAiExchange {
+    /// The `openai_response_received` payload this exchange produced.
+    pub event_data: serde_json::Value,
+    /// A short human summary for an injected action's outcome detail.
+    pub summary: String,
+}
+
+/// What [`OpenAiClient::apply_action`] did with one action. The OpenAI client owns no
+/// socket, so there is no honest byte count to report - only "the API call ran" or
+/// "the session should end".
+enum Applied {
+    /// The action ran; the string says what, for the injected action's outcome detail.
+    Executed(String),
+    /// The session should end.
+    Disconnect,
 }

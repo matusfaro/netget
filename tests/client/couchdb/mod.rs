@@ -2,3 +2,6 @@
 
 #[cfg(all(test, feature = "couchdb"))]
 mod e2e_test;
+
+#[cfg(all(test, feature = "couchdb"))]
+mod command_channel_test;

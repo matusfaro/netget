@@ -362,3 +362,34 @@ LLM:
 - NFC Forum: https://nfc-forum.org/our-work/specifications-and-application-documents/
 - NDEF specification: NFC Data Exchange Format
 - ACR122U documentation: https://www.acs.com.hk/en/products/3/acr122u-usb-nfc-reader/
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into the running client. `command_loop` in
+`mod.rs` drains the bounded channel and runs each action through `apply_nfc_action` — the same
+function the `nfc_readers_listed` LLM path uses.
+
+The command task owns a clone of the PC/SC `Context` plus the selected reader's `CString`, and
+is what keeps the client alive; before this the client listed readers and returned, leaving
+nothing running. The channel is registered **before** the readers-listed LLM call, and that
+call no longer aborts the client when the backend is unreachable (it is logged instead) — the
+operator can still drive the reader by hand, which is exactly what a `*` -> manual rule sets up.
+
+`send_apdu` / `send_apdu_raw` are real: `Context::connect` + `Card::transmit` run on a
+`spawn_blocking` thread (PC/SC is a blocking C API), and the card handle is opened and dropped
+per command so a card that was removed and re-presented still works. The response also raises
+`nfc_apdu_response`, which was declared and never emitted before this.
+
+Outcomes:
+
+| action | `ClientSendOutcome` |
+|---|---|
+| `send_apdu` / `send_apdu_raw`, card answered | `Sent { bytes_sent }` (response hex is in the access log) |
+| `send_apdu` with no card in the field | `Executed { detail: "send_apdu did not reach a card: <err>" }` |
+| `read_ndef` / `write_ndef` | `Executed { detail: "'<verb>' is declared but not implemented …" }` |
+| `disconnect_card` | `Disconnected` (handle dropped) |
+| unknown verb | `Rejected { error }` |
+
+**Known gap:** `read_ndef` and `write_ndef` are advertised by `actions.rs` and have no
+implementation. The command channel says so explicitly rather than silently doing nothing —
+but they are still advertised to the model, which is the real bug to fix.

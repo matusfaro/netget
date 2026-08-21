@@ -314,3 +314,23 @@ and signaling requirements.
 - [WebRTC Testing Best Practices](https://webrtc.org/getting-started/testing)
 - [webrtc-rs Examples](https://github.com/webrtc-rs/webrtc/tree/master/examples)
 - [WebRTC Samples](https://webrtc.github.io/samples/)
+
+---
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+The one test in this directory that is **not** `#[ignore]`d, because it needs neither a second
+peer nor Ollama. It uses `"ice_servers": []` so ICE gathers host candidates only and nothing
+leaves the machine — the default Google STUN server would otherwise be contacted during
+`connect()`.
+
+**LLM calls: 0** (the client's LLM URL is `http://127.0.0.1:1`).
+
+Asserts: the command handle exists before anything is sent; `create_channel` really creates a
+channel on the live `RTCPeerConnection` and returns `Executed`; a send to an unknown channel
+label is `Rejected`; a send on the default channel, which no peer ever opened, returns an
+**error naming the channel** rather than a fake `Sent`; an unknown action is `Rejected`; the
+injection is in the client's access log; `disconnect` returns `Disconnected` and drops the handle.
+
+What it cannot cover: `Sent { bytes_sent }`, which needs an open data channel and therefore a
+real second peer.

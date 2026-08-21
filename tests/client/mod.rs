@@ -28,7 +28,7 @@ pub mod dns;
 pub mod doh;
 #[cfg(feature = "dot")]
 pub mod dot;
-#[cfg(feature = "dynamo")]
+#[cfg(any(feature = "dynamo", feature = "dynamodb"))]
 pub mod dynamodb;
 #[cfg(feature = "elasticsearch")]
 pub mod elasticsearch;
@@ -174,5 +174,7 @@ pub mod websocket;
 pub mod whois;
 #[cfg(feature = "wireguard")]
 pub mod wireguard;
+#[cfg(feature = "xmlrpc")]
+pub mod xmlrpc;
 #[cfg(feature = "xmpp")]
 pub mod xmpp;

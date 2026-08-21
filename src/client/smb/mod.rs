@@ -26,6 +26,27 @@ use pavao::{
     SmbOptions,
 };
 use std::io::{Read as IoRead, Write as IoWrite};
+use tokio::sync::Mutex;
+
+/// The live libsmbclient handle, shared by the LLM task and the command loop.
+///
+/// `pavao`'s calls are synchronous, so the guard is taken and released around each
+/// one and is never held across an `.await` — in particular never across an LLM
+/// round-trip, which a `*` manual routing rule can park for minutes.
+type SharedSmb = Arc<Mutex<PavaoSmbClient>>;
+
+/// What applying one action against the SMB share actually did.
+///
+/// SMB never yields [`crate::state::client_handles::ClientSendOutcome::Sent`]:
+/// libsmbclient owns the transport and may sign or encrypt it, so NetGet never
+/// sees a byte count on the wire. A write reports the number of payload bytes it
+/// really put into the file, inside `Executed`.
+pub enum SmbApplied {
+    /// The action ran; the string describes what it did.
+    Executed(String),
+    /// The client was disconnected.
+    Disconnected,
+}
 
 /// SMB client that connects to an SMB/CIFS server
 pub struct SmbClient;
@@ -78,8 +99,10 @@ impl SmbClient {
         }
 
         // Create SMB client
-        let smb_client = PavaoSmbClient::new(creds, SmbOptions::default())
-            .context("Failed to create SMB client")?;
+        let smb_client: SharedSmb = Arc::new(Mutex::new(
+            PavaoSmbClient::new(creds, SmbOptions::default())
+                .context("Failed to create SMB client")?,
+        ));
 
         // For SMB, we use a dummy local address since it's a library-based client
         // The actual connection happens per-operation
@@ -93,6 +116,27 @@ impl SmbClient {
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         info!("SMB client {} connected to {}", client_id, remote_addr);
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the connected-event LLM call below: a dashboard-created
+        // client defaults to a `*` -> manual rule, so that call can park for minutes
+        // waiting for a human, and the operator must be able to reach the share while
+        // it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn({
+            let smb_client = smb_client.clone();
+            let llm_client = llm_client.clone();
+            let app_state = app_state.clone();
+            let status_tx = status_tx.clone();
+            async move {
+                Self::command_loop(
+                    command_rx, smb_client, client_id, llm_client, app_state, status_tx,
+                )
+                .await;
+            }
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Spawn task to handle LLM interactions
         let app_state_clone = app_state.clone();
@@ -189,17 +233,124 @@ impl SmbClient {
         Ok(local_addr)
     }
 
+    /// Drain injected commands until the channel closes (the client was removed,
+    /// which drops the handle) or an injected `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this
+    /// client: it owns no socket, and every SMB verb yields a
+    /// `ClientActionResult::Custom` that only libsmbclient can carry out. So the
+    /// action goes through [`Self::execute_smb_action`] — the exact function the LLM
+    /// path uses, including the follow-up events — and the outcome is recorded and
+    /// replied the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        smb_client: SharedSmb,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = Arc::new(SmbClientProtocol::new());
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+
+            // `execute_action` is the only step that can fail before the share is
+            // touched, so its error is a rejection (unknown verb / bad params) rather
+            // than an SMB failure.
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_smb_result(
+                    result,
+                    &smb_client,
+                    client_id,
+                    &protocol,
+                    &llm_client,
+                    &app_state,
+                    &status_tx,
+                )
+                .await
+                .map(|applied| match applied {
+                    SmbApplied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                    SmbApplied::Disconnected => ClientSendOutcome::Disconnected,
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("SMB client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        // Every exit path lands here: drop the command handle so the dashboard stops
+        // offering [ send ] on a dead client and a late send fails fast.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
     /// Execute an SMB action and call LLM with result
     async fn execute_smb_action(
-        smb_client: &PavaoSmbClient,
+        smb_client: &SharedSmb,
         action: serde_json::Value,
         client_id: ClientId,
         protocol: &Arc<SmbClientProtocol>,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        match protocol.execute_action(action)? {
+    ) -> Result<SmbApplied> {
+        let result = protocol.execute_action(action)?;
+        Self::apply_smb_result(
+            result, smb_client, client_id, protocol, llm_client, app_state, status_tx,
+        )
+        .await
+    }
+
+    /// Carry one already-decoded action out against the share. Shared by the
+    /// connected-event path, the follow-up event path and injected commands, so the
+    /// libsmbclient calls exist exactly once.
+    async fn apply_smb_result(
+        action_result: crate::llm::actions::client_trait::ClientActionResult,
+        smb_client: &SharedSmb,
+        client_id: ClientId,
+        protocol: &Arc<SmbClientProtocol>,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<SmbApplied> {
+        // Assigned exactly once on every path that does not return early.
+        let detail: String;
+        match action_result {
             crate::llm::actions::client_trait::ClientActionResult::Custom { name, data } => {
                 match name.as_str() {
                     "smb_list_dir" => {
@@ -210,8 +361,10 @@ impl SmbClient {
 
                         debug!("SMB client {} listing directory: {}", client_id, path);
 
-                        // List directory using pavao
-                        match smb_client.list_dir(path) {
+                        // List directory using pavao. The guard is scoped to the
+                        // synchronous call only — never held across the LLM await below.
+                        let list_result = { smb_client.lock().await.list_dir(path) };
+                        match list_result {
                             Ok(entries) => {
                                 let entry_list: Vec<serde_json::Value> = entries
                                     .iter()
@@ -241,6 +394,11 @@ impl SmbClient {
                                     entry_list.len(),
                                     path
                                 );
+                                detail = format!(
+                                    "list_directory {:?}: {} entries",
+                                    path,
+                                    entry_list.len()
+                                );
 
                                 let event = Event::new(
                                     &SMB_CLIENT_DIR_LISTED_EVENT,
@@ -258,6 +416,7 @@ impl SmbClient {
                             }
                             Err(e) => {
                                 error!("SMB client {} list_dir error: {}", client_id, e);
+                                detail = format!("list_directory {path:?} failed: {e}");
                                 let error_event = Event::new(
                                     &SMB_CLIENT_ERROR_EVENT,
                                     serde_json::json!({
@@ -289,13 +448,15 @@ impl SmbClient {
 
                         // Open file for reading and immediately read contents
                         // We need to close the file before any await (SmbFile contains raw pointer, not Send)
-                        let read_result = smb_client
-                            .open_with(path, SmbOpenOptions::default().read(true))
-                            .and_then(|mut file| {
-                                let mut content_bytes = Vec::new();
-                                file.read_to_end(&mut content_bytes)?;
-                                Ok(content_bytes)
-                            });
+                        let read_result = {
+                            let smb = smb_client.lock().await;
+                            smb.open_with(path, SmbOpenOptions::default().read(true))
+                                .and_then(|mut file| {
+                                    let mut content_bytes = Vec::new();
+                                    file.read_to_end(&mut content_bytes)?;
+                                    Ok(content_bytes)
+                                })
+                        };
 
                         match read_result {
                             Ok(content_bytes) => {
@@ -314,6 +475,7 @@ impl SmbClient {
                                     };
 
                                 info!("SMB client {} read {} bytes from {}", client_id, size, path);
+                                detail = format!("read_file {path:?}: {size} bytes read");
 
                                 let event = Event::new(
                                     &SMB_CLIENT_FILE_READ_EVENT,
@@ -332,6 +494,7 @@ impl SmbClient {
                             }
                             Err(e) => {
                                 error!("SMB client {} read_file error: {}", client_id, e);
+                                detail = format!("read_file {path:?} failed: {e}");
                                 let error_event = Event::new(
                                     &SMB_CLIENT_ERROR_EVENT,
                                     serde_json::json!({
@@ -386,8 +549,9 @@ impl SmbClient {
 
                         // Open file for writing and immediately write contents
                         // We need to close the file before any await (SmbFile contains raw pointer, not Send)
-                        let write_result = smb_client
-                            .open_with(
+                        let write_result = {
+                            let smb = smb_client.lock().await;
+                            smb.open_with(
                                 path,
                                 SmbOpenOptions::default()
                                     .write(true)
@@ -397,7 +561,8 @@ impl SmbClient {
                             .and_then(|mut file| {
                                 file.write_all(content_bytes)?;
                                 Ok(content_bytes.len())
-                            });
+                            })
+                        };
 
                         match write_result {
                             Ok(bytes_written) => {
@@ -405,6 +570,8 @@ impl SmbClient {
                                     "SMB client {} wrote {} bytes to {}",
                                     client_id, bytes_written, path
                                 );
+                                detail =
+                                    format!("write_file {path:?}: {bytes_written} bytes written");
 
                                 let event = Event::new(
                                     &SMB_CLIENT_FILE_WRITTEN_EVENT,
@@ -422,6 +589,7 @@ impl SmbClient {
                             }
                             Err(e) => {
                                 error!("SMB client {} write_file error: {}", client_id, e);
+                                detail = format!("write_file {path:?} failed: {e}");
                                 let error_event = Event::new(
                                     &SMB_CLIENT_ERROR_EVENT,
                                     serde_json::json!({
@@ -451,9 +619,16 @@ impl SmbClient {
 
                         debug!("SMB client {} creating directory: {}", client_id, path);
 
-                        match smb_client.mkdir(path, pavao::SmbMode::from(0o755)) {
+                        let mkdir_result = {
+                            smb_client
+                                .lock()
+                                .await
+                                .mkdir(path, pavao::SmbMode::from(0o755))
+                        };
+                        match mkdir_result {
                             Ok(()) => {
                                 info!("SMB client {} created directory {}", client_id, path);
+                                detail = format!("create_directory {path:?}: created");
                                 let _ = status_tx.send(format!(
                                     "[CLIENT] SMB client {} created directory: {}",
                                     client_id, path
@@ -461,6 +636,7 @@ impl SmbClient {
                             }
                             Err(e) => {
                                 error!("SMB client {} mkdir error: {}", client_id, e);
+                                detail = format!("create_directory {path:?} failed: {e}");
                                 let error_event = Event::new(
                                     &SMB_CLIENT_ERROR_EVENT,
                                     serde_json::json!({
@@ -490,9 +666,11 @@ impl SmbClient {
 
                         debug!("SMB client {} deleting file: {}", client_id, path);
 
-                        match smb_client.unlink(path) {
+                        let unlink_result = { smb_client.lock().await.unlink(path) };
+                        match unlink_result {
                             Ok(()) => {
                                 info!("SMB client {} deleted file {}", client_id, path);
+                                detail = format!("delete_file {path:?}: deleted");
                                 let _ = status_tx.send(format!(
                                     "[CLIENT] SMB client {} deleted file: {}",
                                     client_id, path
@@ -500,6 +678,7 @@ impl SmbClient {
                             }
                             Err(e) => {
                                 error!("SMB client {} unlink error: {}", client_id, e);
+                                detail = format!("delete_file {path:?} failed: {e}");
                                 let error_event = Event::new(
                                     &SMB_CLIENT_ERROR_EVENT,
                                     serde_json::json!({
@@ -529,9 +708,11 @@ impl SmbClient {
 
                         debug!("SMB client {} deleting directory: {}", client_id, path);
 
-                        match smb_client.rmdir(path) {
+                        let rmdir_result = { smb_client.lock().await.rmdir(path) };
+                        match rmdir_result {
                             Ok(()) => {
                                 info!("SMB client {} deleted directory {}", client_id, path);
+                                detail = format!("delete_directory {path:?}: deleted");
                                 let _ = status_tx.send(format!(
                                     "[CLIENT] SMB client {} deleted directory: {}",
                                     client_id, path
@@ -539,6 +720,7 @@ impl SmbClient {
                             }
                             Err(e) => {
                                 error!("SMB client {} rmdir error: {}", client_id, e);
+                                detail = format!("delete_directory {path:?} failed: {e}");
                                 let error_event = Event::new(
                                     &SMB_CLIENT_ERROR_EVENT,
                                     serde_json::json!({
@@ -562,6 +744,7 @@ impl SmbClient {
                     }
                     _ => {
                         error!("SMB client {} unknown action: {}", client_id, name);
+                        detail = format!("custom result '{name}' has no SMB handler");
                     }
                 }
             }
@@ -570,16 +753,25 @@ impl SmbClient {
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
+                // Drop the command handle here rather than only in the command loop:
+                // the LLM can disconnect too, and a handle left behind would offer
+                // [ send ] into a closed client.
+                app_state.remove_client_handle(client_id).await;
                 let _ = status_tx.send(format!("[CLIENT] SMB client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
+                return Ok(SmbApplied::Disconnected);
             }
             crate::llm::actions::client_trait::ClientActionResult::WaitForMore => {
                 debug!("SMB client {} waiting for more", client_id);
+                detail = "wait_for_more".to_string();
             }
-            _ => {}
+            other => {
+                debug!("SMB client {} unhandled action result", client_id);
+                detail = format!("unhandled action result {other:?}");
+            }
         }
 
-        Ok(())
+        Ok(SmbApplied::Executed(detail))
     }
 
     /// Call LLM with an event and execute resulting actions
@@ -590,7 +782,7 @@ impl SmbClient {
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-        smb_client: &PavaoSmbClient,
+        smb_client: &SharedSmb,
     ) -> Result<()> {
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let memory = app_state

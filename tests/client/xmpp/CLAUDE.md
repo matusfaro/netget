@@ -259,3 +259,22 @@ tail -f /var/log/ejabberd/ejabberd.log
 - [ejabberd Documentation](https://docs.ejabberd.im/)
 - [XMPP Standards](https://xmpp.org/rfcs/)
 - [XEP List](https://xmpp.org/extensions/) (XMPP Extension Protocols)
+
+---
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+The one test here that runs without a server, and it is deliberately narrow. It creates a client
+for `netget@127.0.0.1@secret` — loopback, nothing listening — which is exactly the state in which
+`[ send ]` must still be reachable rather than absent, and asserts: the command handle exists
+before anything is sent (registration precedes the `xmpp_connected` LLM call, which now runs in
+its own task); `wait_for_more` returns `Executed` saying nothing went on the wire; an unknown
+action is `Rejected`; the injection is recorded in the client's access log; `disconnect` returns
+`Disconnected` and drops the handle.
+
+**LLM calls: 0** (the client's LLM URL is `http://127.0.0.1:1`).
+
+What it cannot cover: a stanza actually reaching a peer. `Client::send_stanza` resolves only once
+the stanza has been written to the transport, and no XMPP server this suite can start completes
+tokio-xmpp's STARTTLS/SASL negotiation — so `send_message` remains covered only by the
+`#[ignore]`d test above, against a real prosody/ejabberd.

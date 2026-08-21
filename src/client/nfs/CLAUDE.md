@@ -472,3 +472,37 @@ Target: < 10 LLM calls per test suite
 3. **Symlinks** - Add symlink creation/resolution
 4. **Extended Attributes** - Support xattrs if needed
 5. **Better Error Reporting** - Include NFS error codes in events
+
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel and spawns `command_loop` **before** the
+handler task that makes the `nfs_client_connected` LLM call, which a manual `*` rule can park.
+
+The operation table was extracted into `perform_op`, so an injected command and an LLM-produced
+action reach exactly the same code; `report_operation` (also extracted) raises
+`nfs_operation_result` and executes the answer. The command loop replies first and spawns
+`report_operation` in its own registered task, so a parked handler cannot block the next
+injected command.
+
+`command_loop` is a task of its own rather than a `select!` arm: the ONC-RPC exchanges inside
+`nfs3_client` read with `read_exact`, which is not cancellation-safe. The connection mutex
+serialises it against the handler task.
+
+**Outcome semantics.** `nfs3_client` frames every RPC, so a byte count would be a fiction: an
+operation that ran reports `Executed { detail: "<op> completed: <reply json>" }`. An operation
+the server refused is an `Err`. Every exit removes the handle.
+
+### Port selection (`portmapper_port`, `mount_port`, `nfs_port`, `privileged_source_port`)
+
+`get_startup_parameters()` now declares four optional parameters. The defaults are unchanged and
+are the real-world ones — portmapper on 111, MOUNT and NFS resolved through it, and a privileged
+local source port, which many servers demand and which requires root.
+
+They exist because without them the client is unreachable to a server that multiplexes all
+three RPC programs on one port — which NetGet's own NFS server does, through `nfsserve`, whose
+portmapper always answers with the port it was asked on. `nfs3_client` otherwise contacts 111
+regardless of the address it was given, so the port in `server:port:/export` never reached the
+transport.
+
+Test: `tests/client/nfs/command_channel_test.rs` (zero LLM calls; a NetGet NFS server on an
+ephemeral port, export `/` so MOUNT resolves through `root_dir()` without a VFS lookup).

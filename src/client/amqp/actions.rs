@@ -90,6 +90,48 @@ impl Protocol for AmqpClientProtocol {
                 log_template: None,
             },
             ActionDefinition {
+                name: "publish".to_string(),
+                description:
+                    "Publish a message to an exchange. Opens a channel first if none is open \
+                     yet, so this works immediately after connecting."
+                        .to_string(),
+                parameters: vec![
+                    Parameter {
+                        name: "routing_key".to_string(),
+                        type_hint: "string".to_string(),
+                        description:
+                            "Routing key. With the default exchange (\"\") this is the queue \
+                            name the message is delivered to."
+                                .to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "payload".to_string(),
+                        type_hint: "string".to_string(),
+                        description: "Message body, sent as UTF-8. Put serialised JSON here as a \
+                            string."
+                            .to_string(),
+                        required: true,
+                    },
+                    Parameter {
+                        name: "exchange".to_string(),
+                        type_hint: "string".to_string(),
+                        description:
+                            "Exchange to publish to. Defaults to \"\", the default exchange, \
+                            which routes by queue name."
+                                .to_string(),
+                        required: false,
+                    },
+                ],
+                example: json!({
+                    "type": "publish",
+                    "exchange": "",
+                    "routing_key": "tasks",
+                    "payload": "hello"
+                }),
+                log_template: None,
+            },
+            ActionDefinition {
                 name: "disconnect".to_string(),
                 description: "Disconnect from the AMQP broker".to_string(),
                 parameters: vec![],
@@ -243,6 +285,23 @@ impl Client for AmqpClientProtocol {
                 name: "open_channel".to_string(),
                 data: json!({}),
             }),
+            "publish" => {
+                let routing_key = action["routing_key"]
+                    .as_str()
+                    .context("Missing 'routing_key' for publish")?;
+                let payload = action["payload"]
+                    .as_str()
+                    .context("Missing 'payload' for publish")?;
+                let exchange = action["exchange"].as_str().unwrap_or("");
+                Ok(ClientActionResult::Custom {
+                    name: "publish".to_string(),
+                    data: json!({
+                        "exchange": exchange,
+                        "routing_key": routing_key,
+                        "payload": payload,
+                    }),
+                })
+            }
             "disconnect" => Ok(ClientActionResult::Disconnect),
             "wait_for_more" => Ok(ClientActionResult::WaitForMore),
             // Reject rather than swallow. This used to be `_ => WaitForMore`, so *any* name -
@@ -251,8 +310,8 @@ impl Client for AmqpClientProtocol {
             // Ok also stops the repair loop from ever firing, so the mistake could not be
             // corrected; the client simply waited forever for a message it never asked for.
             other => Err(anyhow::anyhow!(
-                "Unknown AMQP client action '{}'. Valid actions: open_channel, disconnect, \
-                 wait_for_more",
+                "Unknown AMQP client action '{}'. Valid actions: open_channel, publish, \
+                 disconnect, wait_for_more",
                 other
             )),
         }

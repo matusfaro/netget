@@ -240,3 +240,35 @@ execute_action(client_id, json!({
 - [SAML 2.0 Specification](https://docs.oasis-open.org/security/saml/v2.0/)
 - [SAML 2.0 Bindings](https://docs.oasis-open.org/security/saml/v2.0/saml-bindings-2.0-os.pdf)
 - [SAML 2.0 Profiles](https://docs.oasis-open.org/security/saml/v2.0/saml-profiles-2.0-os.pdf)
+
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running SAML client. The handle is
+registered **before** the `saml_connected` LLM call — which this client awaits inline in
+`connect()` — because a dashboard-created client defaults to a `*` → manual rule and that
+call can park for minutes waiting for a human.
+
+The old "poll `get_client()` every 5 s" task is gone: the command loop is now this client's
+long-lived task and ends when the client is removed or an injected `disconnect` arrives.
+
+Adopting the channel closed a second hole: **the connected-event handler used to discard
+the model's actions entirely** (it matched `Ok(_result)` and logged "SAML client ready"), so
+`initiate_sso` was unreachable except by a human. Both paths now go through one
+`apply_action`, which implements all three verbs — `saml_initiate_sso`,
+`saml_validate_assertion` and `saml_parse_assertion` (the last had no implementation at all;
+it now parses and raises `saml_response_received` through the same helper
+`validate_assertion` uses).
+
+**Outcome semantics — `Executed`, never `Sent`.** SAML puts nothing on a socket NetGet owns:
+an AuthnRequest is carried by the user's browser. So the outcomes are
+`Executed { detail: "saml_initiate_sso: AuthnRequest built, SSO URL <url>" }`,
+`Executed { detail: "saml_validate_assertion: response parsed and reported" }` and
+`Executed { detail: "saml_parse_assertion: status <status> (success=<bool>)" }`. A response
+that cannot be decoded or parsed is an `Err` — never a success, and nothing on this path can
+report an authenticated session it did not get. An unknown action name is
+`Rejected { error }`; `disconnect` is `Disconnected`.
+
+`saml_response_received` fires from its own registered task for an injected action
+(`Dispatch::Deferred`), so a manual rule parking that LLM call cannot wedge the command
+loop. `Dispatch` is `pub` because `initiate_sso` / `validate_assertion` are.

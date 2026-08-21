@@ -203,3 +203,24 @@ For production-like testing, consider:
 3. **Fast** - Direct library calls, no LLM latency
 4. **Reliable** - Docker ensures consistent etcd behavior
 5. **Observable** - Print statements show test progress
+
+## `command_channel_test.rs` — injected actions
+
+In-process, no NetGet subprocess and **zero LLM calls**: a NetGet etcd *server* answers
+through static handlers (`etcd_put_request` → `etcd_put_response{revision: 7}`,
+`etcd_range_request` → one kv) and the client's LLM points at `http://127.0.0.1:1`, so its
+`etcd_connected` call fails and the connect path has to tolerate that.
+
+What it pins:
+
+- `has_client_handle` is true **before** anything answers the connected event.
+- `etcd_put` → `Executed { detail }` carrying the key and the revision *our server* returned,
+  and the server's access log shows the key — so the operation really crossed the wire.
+- a second `etcd_get` on the same client succeeds, which is what proves the session is held
+  rather than re-dialled per operation.
+- an unknown action → `Rejected`; `disconnect` → `Disconnected`, status `Disconnected`,
+  handle gone.
+
+`Executed`, not `Sent`: `etcd-client` owns the HTTP/2 connection and reports no byte counts.
+
+**LLM call budget: 0.**

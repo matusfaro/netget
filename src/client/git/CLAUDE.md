@@ -316,3 +316,48 @@ git2 = { version = "0.18", optional = true }
 - [git2-rs Documentation](https://docs.rs/git2/)
 - [libgit2 Documentation](https://libgit2.org/docs/)
 - [Git Internals](https://git-scm.com/book/en/v2/Git-Internals-Plumbing-and-Porcelain)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running Git client. The handle is
+registered **before** the `git_connected` LLM call, because a dashboard-created client
+defaults to a `*` → manual rule and that call can park for minutes waiting for a human.
+
+This is the archetype-(a) adoption. The session — `repo_path`, `username`, `password` — used
+to be three `&mut Option<...>` locals owned by the connect task, which is exactly why nothing
+outside that task could run a Git action: the working repository was unreachable. They are now
+a `GitSession` behind an `Arc<Mutex<_>>` shared by the LLM path and the command loop, so
+`[ send ]` operates on the repository the LLM just cloned. Both paths call one
+`execute_git_action`.
+
+**Outcome semantics — `Executed`, never `Sent`.** git2 owns whatever sockets an operation uses
+(clone/fetch/pull/push do real network I/O) and reports no byte counts, so a number here would
+be invented. The detail carries the real result — `git_status: dashboard-marker.txt; …`,
+`git_push: <refspec result>`, `git_log: 12 line(s)`. An action the protocol refuses is
+`Rejected`; a git2 operation that ran and failed is an `Err` (see below); `disconnect` is
+`Disconnected`.
+
+Three defects this surfaced, all fixed:
+
+- **Every verb but `git_clone` was a silent no-op when no repository was open.** The arms were
+  `if let Some(ref path) = repo_path { … }` with no `else`, so the operation simply did not
+  happen and nothing said so. `run_git_operation` now returns a named error.
+- **`remote_addr` pointing at an existing local repository did nothing.** `repo_path` started
+  `None` and only a clone could set it, although this file has always documented `remote_addr`
+  as "a repository URL (for cloning) **or** a local path (for existing repo)". Connect now
+  tries `Repository::open(&remote_addr)` and seeds the session from it.
+- **git2 was called straight from async context.** Every operation blocked a runtime worker.
+  The whole dispatch now runs on `spawn_blocking`.
+
+`Rejected` vs `Err` is distinguished by a `RejectedAction` marker error: the protocol refusing
+an action (unknown type, missing field) is `Rejected`, a git2 operation that ran and failed is
+an `Err` the operator sees as a failure. Neither is reported as success.
+
+### The "bypasses the rate limiter" note in the root CLAUDE.md is stale for this client
+
+That note says `git` and `mercurial` "call `generate_with_retry` directly, bypassing the rate
+limiter, the retry/repair loop, and event-handler dispatch". Nothing under `src/client/git/`
+or `src/server/git/` calls `generate_with_retry` any more: this client uses
+`call_llm_for_client` (so client `event_handlers` are dispatched, budget is debited, and the
+limiter applies) and `src/server/git/mod.rs` uses `action_helper::call_llm`. The only callers
+of `generate_with_retry` left in the tree are inside `src/llm/` itself.

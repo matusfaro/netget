@@ -61,7 +61,8 @@ enum ConnectionState {
 struct ChannelData {
     state: ConnectionState,
     queued_messages: Vec<(String, bool)>, // (message, is_binary)
-    #[allow(dead_code)]
+    /// The live channel, used to send on it from outside the on_message closure
+    /// (injected commands go through this).
     channel: Arc<RTCDataChannel>,
 }
 
@@ -86,6 +87,7 @@ impl WebRtcClient {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         info!(
             "WebRTC client {} initializing for {}",
@@ -130,12 +132,32 @@ impl WebRtcClient {
             .with_interceptor_registry(registry)
             .build();
 
-        // Configure ICE servers (Google STUN by default)
+        // Configure ICE servers. `ice_servers` was declared in `get_startup_parameters()`
+        // and never read, so the Google STUN server was hardcoded for every client; it is now
+        // the default and nothing more. An explicitly empty array means host candidates only,
+        // which is what a purely local peer wants.
+        let ice_urls: Vec<String> = match startup_params.as_ref() {
+            Some(params) => match params
+                .get_optional_array("ice_servers")
+                .map_err(|e| anyhow::anyhow!("WebRTC client parameter error: {e}"))?
+            {
+                Some(arr) => arr
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+                    .filter(|s| !s.is_empty())
+                    .collect(),
+                None => vec!["stun:stun.l.google.com:19302".to_owned()],
+            },
+            None => vec!["stun:stun.l.google.com:19302".to_owned()],
+        };
         let config = RTCConfiguration {
-            ice_servers: vec![RTCIceServer {
-                urls: vec!["stun:stun.l.google.com:19302".to_owned()],
-                ..Default::default()
-            }],
+            ice_servers: ice_urls
+                .into_iter()
+                .map(|url| RTCIceServer {
+                    urls: vec![url],
+                    ..Default::default()
+                })
+                .collect(),
             ..Default::default()
         };
 
@@ -197,6 +219,9 @@ impl WebRtcClient {
                             app_state
                                 .update_client_status(client_id, ClientStatus::Disconnected)
                                 .await;
+                            // The connection is gone: drop the command handle so the
+                            // dashboard stops offering [ send ] into it.
+                            app_state.remove_client_handle(client_id).await;
                             let _ = status_tx
                                 .send(format!("[CLIENT] WebRTC client {} disconnected", client_id));
                             let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -228,6 +253,31 @@ impl WebRtcClient {
                 );
             })
             .await;
+
+        // Command channel for injected actions (the dashboard's [ send ]). Registered BEFORE
+        // signaling runs: the WebSocket mode makes an LLM call on
+        // `webrtc_signaling_connected`, and a manual `*` rule parks that call until a human
+        // answers - [ send ] has to work for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_pc = Arc::clone(&peer_connection);
+        let cmd_data = Arc::clone(&client_data);
+        let cmd_state = Arc::clone(&app_state);
+        let cmd_status_tx = status_tx.clone();
+        let cmd_llm = llm_client.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx,
+                cmd_pc,
+                cmd_data,
+                client_id,
+                cmd_state,
+                cmd_status_tx,
+                cmd_llm,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         match signaling_mode {
             SignalingMode::Manual => {
@@ -267,6 +317,8 @@ impl WebRtcClient {
                 // Check if client was removed
                 if app_state_cleanup.get_client(client_id).await.is_none() {
                     info!("WebRTC client {} stopped", client_id);
+                    // Also ends `command_loop`, whose channel closes with the handle.
+                    app_state_cleanup.remove_client_handle(client_id).await;
                     // Clean up Arc pointer
                     unsafe {
                         if pc_ptr != 0 {
@@ -889,5 +941,207 @@ impl WebRtcClient {
         // For now, this is a placeholder
 
         Ok(())
+    }
+
+    /// Drain injected commands (the dashboard's \[ send \]) until the channel closes - the
+    /// client was removed, or the peer connection failed - or an injected `disconnect` ends
+    /// the session.
+    ///
+    /// This is option (a) of the library-driven archetype: the `RTCPeerConnection` and every
+    /// `RTCDataChannel` are already behind `Arc`s that outlive `connect()`, so the command
+    /// loop holds clones of them and needs no restructuring. `RTCDataChannel::send` returns
+    /// the number of bytes it wrote to the SCTP stream, so an injected message reports a real
+    /// `Sent { bytes_sent }` rather than a guess.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        peer_connection: Arc<RTCPeerConnection>,
+        client_data: Arc<Mutex<ClientData>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        llm_client: OllamaClient,
+    ) {
+        use crate::llm::actions::client_trait::{Client, ClientActionResult};
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = WebRtcClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            // `execute_action` folds `send_message`/`send_binary` into a bare `SendData` and
+            // drops the `channel` parameter it declares, so the target channel is read from
+            // the action here. The default is the channel `connect()` always creates.
+            let label = action
+                .get("channel")
+                .and_then(|v| v.as_str())
+                .unwrap_or("netget")
+                .to_string();
+
+            let outcome: Result<ClientSendOutcome> = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(ClientActionResult::SendData(bytes)) => {
+                    let channel = {
+                        client_data
+                            .lock()
+                            .await
+                            .channels
+                            .get(&label)
+                            .map(|c| Arc::clone(&c.channel))
+                    };
+                    match channel {
+                        None => Ok(ClientSendOutcome::Rejected {
+                            error: format!(
+                                "this client has no data channel labelled '{label}'; \
+                                 open one with create_channel first"
+                            ),
+                        }),
+                        Some(channel) => match channel.send(&bytes.into()).await {
+                            Ok(bytes_sent) => Ok(ClientSendOutcome::Sent { bytes_sent }),
+                            Err(e) => Err(anyhow::anyhow!(
+                                "data channel '{}' is {} - send failed: {}",
+                                label,
+                                channel.ready_state(),
+                                e
+                            )),
+                        },
+                    }
+                }
+                Ok(ClientActionResult::Custom { name, data }) => match name.as_str() {
+                    "create_channel" => {
+                        let new_label = data
+                            .get("channel_label")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("netget")
+                            .to_string();
+                        match peer_connection.create_data_channel(&new_label, None).await {
+                            Ok(channel) => {
+                                Self::setup_data_channel_handlers(
+                                    Arc::clone(&channel),
+                                    new_label.clone(),
+                                    client_id,
+                                    Arc::clone(&client_data),
+                                    Arc::clone(&app_state),
+                                    status_tx.clone(),
+                                    llm_client.clone(),
+                                )
+                                .await;
+                                client_data.lock().await.channels.insert(
+                                    new_label.clone(),
+                                    ChannelData {
+                                        state: ConnectionState::Idle,
+                                        queued_messages: Vec::new(),
+                                        channel,
+                                    },
+                                );
+                                Ok(ClientSendOutcome::Executed {
+                                    detail: format!(
+                                        "data channel '{new_label}' created; it carries data \
+                                         once the peer connection is established"
+                                    ),
+                                })
+                            }
+                            Err(e) => Err(anyhow::anyhow!("create_data_channel failed: {e}")),
+                        }
+                    }
+                    "apply_answer" => {
+                        let answer_json = data
+                            .get("answer_json")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default();
+                        match serde_json::from_str::<RTCSessionDescription>(answer_json) {
+                            Ok(answer) => {
+                                match peer_connection.set_remote_description(answer).await {
+                                    Ok(()) => Ok(ClientSendOutcome::Executed {
+                                        detail: "SDP answer applied; ICE and DTLS now proceed"
+                                            .to_string(),
+                                    }),
+                                    Err(e) => {
+                                        Err(anyhow::anyhow!("set_remote_description failed: {e}"))
+                                    }
+                                }
+                            }
+                            Err(e) => Ok(ClientSendOutcome::Rejected {
+                                error: format!("answer_json is not an SDP answer: {e}"),
+                            }),
+                        }
+                    }
+                    // Honest gap, not a silent no-op: the signaling WebSocket sink is owned
+                    // by `websocket_signaling`'s own task and is not reachable from here, and
+                    // in manual mode there is no signaling connection at all.
+                    "send_offer" => Ok(ClientSendOutcome::Executed {
+                        detail: "send_offer was NOT sent: the signaling WebSocket sink belongs \
+                                 to the signaling task and cannot be reached from an injected \
+                                 command"
+                            .to_string(),
+                    }),
+                    other => Ok(ClientSendOutcome::Rejected {
+                        error: format!("WebRTC client cannot apply custom result '{other}'"),
+                    }),
+                },
+                Ok(ClientActionResult::Disconnect) => {
+                    let channels: Vec<Arc<RTCDataChannel>> = {
+                        client_data
+                            .lock()
+                            .await
+                            .channels
+                            .values()
+                            .map(|c| Arc::clone(&c.channel))
+                            .collect()
+                    };
+                    for channel in channels {
+                        let _ = channel.close().await;
+                    }
+                    if let Err(e) = peer_connection.close().await {
+                        debug!("WebRTC client {} close: {}", client_id, e);
+                    }
+                    Ok(ClientSendOutcome::Disconnected)
+                }
+                Ok(ClientActionResult::WaitForMore) => Ok(ClientSendOutcome::Executed {
+                    detail: "waiting for the next message; nothing sent".to_string(),
+                }),
+                Ok(ClientActionResult::NoAction) => Ok(ClientSendOutcome::Executed {
+                    detail: "no_action: nothing sent".to_string(),
+                }),
+                Ok(ClientActionResult::Multiple(_)) => Ok(ClientSendOutcome::Rejected {
+                    error: "WebRTC client does not support Multiple action results".to_string(),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("WebRTC client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state.remove_client_handle(client_id).await;
+                break;
+            }
+        }
     }
 }

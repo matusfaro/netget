@@ -6,6 +6,7 @@ pub use actions::MqttClientProtocol;
 use anyhow::{Context, Result};
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, Publish, QoS};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -104,6 +105,33 @@ impl MqttClient {
         let app_state_clone = app_state.clone();
         let status_tx_clone = status_tx.clone();
 
+        // Set when a `disconnect` was asked for, so the event loop's read error that follows
+        // is reported as a clean disconnect rather than as a connection failure.
+        let disconnecting = Arc::new(AtomicBool::new(false));
+
+        // Command channel for injected actions (the dashboard's [ send ]). Registered here,
+        // before the event loop task starts, so it exists throughout the connected-event LLM
+        // call that task makes on ConnAck - a manual `*` rule can park that call for minutes
+        // and the operator must still be able to publish.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_client = mqtt_client.clone();
+        let cmd_state = app_state.clone();
+        let cmd_status_tx = status_tx.clone();
+        let cmd_disconnecting = disconnecting.clone();
+        let cmd_task = tokio::spawn(async move {
+            command_loop(
+                command_rx,
+                cmd_client,
+                client_id,
+                cmd_state,
+                cmd_status_tx,
+                cmd_disconnecting,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn MQTT event loop
         let task_registrar = app_state.clone();
         let handle = tokio::spawn(async move {
@@ -115,6 +143,7 @@ impl MqttClient {
                 status_tx_clone,
                 client_id,
                 mqtt_client_id,
+                disconnecting,
             )
             .await;
         });
@@ -125,6 +154,7 @@ impl MqttClient {
 }
 
 /// Handle MQTT events from the broker
+#[allow(clippy::too_many_arguments)]
 async fn handle_mqtt_events(
     mut eventloop: EventLoop,
     mqtt_client: AsyncClient,
@@ -133,6 +163,7 @@ async fn handle_mqtt_events(
     status_tx: mpsc::UnboundedSender<String>,
     client_id: ClientId,
     mqtt_client_id: String,
+    disconnecting: Arc<AtomicBool>,
 ) {
     let mut connected = false;
 
@@ -190,6 +221,7 @@ async fn handle_mqtt_events(
                                             &app_state,
                                             client_id,
                                             &protocol,
+                                            &disconnecting,
                                         )
                                         .await;
                                     }
@@ -208,6 +240,7 @@ async fn handle_mqtt_events(
                             &app_state,
                             &status_tx,
                             client_id,
+                            &disconnecting,
                         )
                         .await;
                     }
@@ -237,19 +270,39 @@ async fn handle_mqtt_events(
                 }
             }
             Err(e) => {
-                error!("MQTT client {} connection error: {}", client_id, e);
-                app_state
-                    .update_client_status(client_id, ClientStatus::Error(e.to_string()))
-                    .await;
-                let _ = status_tx.send(format!("[CLIENT] MQTT client {} error: {}", client_id, e));
+                // A `disconnect` action closes the socket, and rumqttc reports the closed
+                // socket as a poll error. Reporting that as ClientStatus::Error would draw a
+                // deliberate hang-up as a failure, so the requested case is separated out.
+                if disconnecting.load(Ordering::SeqCst) {
+                    info!("MQTT client {} disconnected on request", client_id);
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    let _ =
+                        status_tx.send(format!("[CLIENT] MQTT client {} disconnected", client_id));
+                } else {
+                    error!("MQTT client {} connection error: {}", client_id, e);
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                        .await;
+                    let _ =
+                        status_tx.send(format!("[CLIENT] MQTT client {} error: {}", client_id, e));
+                }
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
                 break;
             }
         }
     }
+
+    // Every exit path lands here: drop the command handle so the dashboard stops offering
+    // [ send ] on a dead connection. It also closes the command channel, which ends
+    // `command_loop`.
+    app_state.remove_client_handle(client_id).await;
+    let _ = status_tx.send("__UPDATE_UI__".to_string());
 }
 
 /// Handle incoming MQTT message
+#[allow(clippy::too_many_arguments)]
 async fn handle_incoming_message(
     publish: &Publish,
     mqtt_client: &AsyncClient,
@@ -257,6 +310,7 @@ async fn handle_incoming_message(
     app_state: &Arc<AppState>,
     status_tx: &mpsc::UnboundedSender<String>,
     client_id: ClientId,
+    disconnecting: &Arc<AtomicBool>,
 ) {
     let topic = publish.topic.clone();
     let payload = String::from_utf8_lossy(&publish.payload).to_string();
@@ -301,12 +355,179 @@ async fn handle_incoming_message(
         .await
         {
             Ok(result) => {
-                handle_llm_actions(result, mqtt_client, app_state, client_id, &protocol).await;
+                handle_llm_actions(
+                    result,
+                    mqtt_client,
+                    app_state,
+                    client_id,
+                    &protocol,
+                    disconnecting,
+                )
+                .await;
             }
             Err(e) => {
                 error!("LLM error for MQTT client {}: {}", client_id, e);
             }
         }
+    }
+}
+
+/// What [`apply_action`] did with one executed action.
+enum MqttApplied {
+    /// Handed to rumqttc, whose event loop writes the packet on the socket. rumqttc returns
+    /// as soon as the request is accepted and reports no byte count, so this is deliberately
+    /// not a "sent N bytes" claim.
+    Queued(String),
+    /// Ran, but nothing was put on the wire.
+    NoWire(String),
+    /// A disconnect was requested and sent to the broker.
+    Disconnect,
+}
+
+/// Apply one executed action to the live broker connection.
+///
+/// Shared by the LLM path ([`handle_llm_actions`]) and by injected commands
+/// ([`command_loop`]), so the mapping from `mqtt_publish`/`mqtt_subscribe`/`mqtt_unsubscribe`
+/// onto `rumqttc` calls exists exactly once and an injected action behaves identically to an
+/// LLM-produced one.
+async fn apply_action(
+    action_result: ClientActionResult,
+    mqtt_client: &AsyncClient,
+    client_id: ClientId,
+    disconnecting: &Arc<AtomicBool>,
+) -> Result<MqttApplied> {
+    match action_result {
+        ClientActionResult::Custom { name, data } => match name.as_str() {
+            "mqtt_subscribe" => {
+                let topics = data
+                    .get("topics")
+                    .and_then(|v| v.as_array())
+                    .context("mqtt_subscribe result has no 'topics' array")?;
+                let qos = data.get("qos").and_then(|v| v.as_u64()).unwrap_or(0);
+                let qos_level = qos_from_u64(qos);
+
+                let mut subscribed: Vec<String> = Vec::new();
+                for topic in topics {
+                    if let Some(topic_str) = topic.as_str() {
+                        mqtt_client
+                            .subscribe(topic_str, qos_level)
+                            .await
+                            .with_context(|| format!("subscribe to '{topic_str}' failed"))?;
+                        info!(
+                            "MQTT client {} subscribed to '{}' with QoS {}",
+                            client_id, topic_str, qos
+                        );
+                        subscribed.push(topic_str.to_string());
+                    }
+                }
+                if subscribed.is_empty() {
+                    return Ok(MqttApplied::NoWire(
+                        "mqtt_subscribe: no valid topic strings".to_string(),
+                    ));
+                }
+                Ok(MqttApplied::Queued(format!(
+                    "SUBSCRIBE to [{}] at QoS {} accepted by rumqttc",
+                    subscribed.join(", "),
+                    qos
+                )))
+            }
+            "mqtt_publish" => {
+                let topic = data
+                    .get("topic")
+                    .and_then(|v| v.as_str())
+                    .context("mqtt_publish result has no 'topic'")?;
+                let payload = data
+                    .get("payload")
+                    .and_then(|v| v.as_str())
+                    .context("mqtt_publish result has no 'payload'")?;
+                let qos = data.get("qos").and_then(|v| v.as_u64()).unwrap_or(0);
+                let retain = data
+                    .get("retain")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                mqtt_client
+                    .publish(topic, qos_from_u64(qos), retain, payload.as_bytes())
+                    .await
+                    .with_context(|| format!("publish to '{topic}' failed"))?;
+                info!(
+                    "MQTT client {} published to '{}': {}",
+                    client_id, topic, payload
+                );
+                Ok(MqttApplied::Queued(format!(
+                    "PUBLISH to '{}' ({} byte payload, QoS {}, retain {}) accepted by rumqttc",
+                    topic,
+                    payload.len(),
+                    qos,
+                    retain
+                )))
+            }
+            "mqtt_unsubscribe" => {
+                let topics = data
+                    .get("topics")
+                    .and_then(|v| v.as_array())
+                    .context("mqtt_unsubscribe result has no 'topics' array")?;
+                let mut removed: Vec<String> = Vec::new();
+                for topic in topics {
+                    if let Some(topic_str) = topic.as_str() {
+                        mqtt_client
+                            .unsubscribe(topic_str)
+                            .await
+                            .with_context(|| format!("unsubscribe from '{topic_str}' failed"))?;
+                        info!(
+                            "MQTT client {} unsubscribed from '{}'",
+                            client_id, topic_str
+                        );
+                        removed.push(topic_str.to_string());
+                    }
+                }
+                if removed.is_empty() {
+                    return Ok(MqttApplied::NoWire(
+                        "mqtt_unsubscribe: no valid topic strings".to_string(),
+                    ));
+                }
+                Ok(MqttApplied::Queued(format!(
+                    "UNSUBSCRIBE from [{}] accepted by rumqttc",
+                    removed.join(", ")
+                )))
+            }
+            other => Err(anyhow::anyhow!(
+                "MQTT client cannot apply custom result '{}'",
+                other
+            )),
+        },
+        ClientActionResult::Disconnect => {
+            info!("MQTT client {} disconnecting", client_id);
+            // Set before the request goes out, so the poll error rumqttc raises for the
+            // closed socket is already attributable when the event loop sees it.
+            disconnecting.store(true, Ordering::SeqCst);
+            mqtt_client
+                .disconnect()
+                .await
+                .inspect_err(|_| disconnecting.store(false, Ordering::SeqCst))
+                .context("disconnect request failed")?;
+            Ok(MqttApplied::Disconnect)
+        }
+        ClientActionResult::WaitForMore => Ok(MqttApplied::NoWire(
+            "waiting for the next broker message; nothing sent".to_string(),
+        )),
+        ClientActionResult::NoAction => {
+            Ok(MqttApplied::NoWire("no_action: nothing sent".to_string()))
+        }
+        ClientActionResult::SendData(_) => {
+            Err(anyhow::anyhow!("MQTT has no raw-byte channel; use publish"))
+        }
+        ClientActionResult::Multiple(_) => Err(anyhow::anyhow!(
+            "MQTT client does not support Multiple action results"
+        )),
+    }
+}
+
+fn qos_from_u64(qos: u64) -> QoS {
+    match qos {
+        1 => QoS::AtLeastOnce,
+        2 => QoS::ExactlyOnce,
+        _ => QoS::AtMostOnce,
     }
 }
 
@@ -317,6 +538,7 @@ async fn handle_llm_actions(
     app_state: &Arc<AppState>,
     client_id: ClientId,
     protocol: &Arc<MqttClientProtocol>,
+    disconnecting: &Arc<AtomicBool>,
 ) {
     // Update memory
     if let Some(mem) = result.memory_updates {
@@ -326,106 +548,98 @@ async fn handle_llm_actions(
     // Execute actions
     for action in result.actions {
         match protocol.execute_action(action) {
-            Ok(ClientActionResult::Custom { name, data }) => match name.as_str() {
-                "mqtt_subscribe" => {
-                    if let (Some(topics), Some(qos)) = (
-                        data.get("topics").and_then(|v| v.as_array()),
-                        data.get("qos").and_then(|v| v.as_u64()),
-                    ) {
-                        let qos_level = match qos {
-                            0 => QoS::AtMostOnce,
-                            1 => QoS::AtLeastOnce,
-                            2 => QoS::ExactlyOnce,
-                            _ => QoS::AtMostOnce,
-                        };
-
-                        for topic in topics {
-                            if let Some(topic_str) = topic.as_str() {
-                                if let Err(e) = mqtt_client.subscribe(topic_str, qos_level).await {
-                                    error!("MQTT client {} subscribe error: {}", client_id, e);
-                                } else {
-                                    info!(
-                                        "MQTT client {} subscribed to '{}' with QoS {}",
-                                        client_id, topic_str, qos
-                                    );
-                                }
-                            }
-                        }
+            Ok(action_result) => {
+                match apply_action(action_result, mqtt_client, client_id, disconnecting).await {
+                    Ok(MqttApplied::Queued(detail)) => {
+                        debug!("MQTT client {}: {}", client_id, detail);
+                    }
+                    Ok(MqttApplied::NoWire(detail)) => {
+                        debug!("MQTT client {}: {}", client_id, detail);
+                    }
+                    Ok(MqttApplied::Disconnect) => {}
+                    Err(e) => {
+                        error!("MQTT client {} could not apply action: {}", client_id, e);
                     }
                 }
-                "mqtt_publish" => {
-                    if let (Some(topic), Some(payload)) = (
-                        data.get("topic").and_then(|v| v.as_str()),
-                        data.get("payload").and_then(|v| v.as_str()),
-                    ) {
-                        let qos = data.get("qos").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let retain = data
-                            .get("retain")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-
-                        let qos_level = match qos {
-                            0 => QoS::AtMostOnce,
-                            1 => QoS::AtLeastOnce,
-                            2 => QoS::ExactlyOnce,
-                            _ => QoS::AtMostOnce,
-                        };
-
-                        if let Err(e) = mqtt_client
-                            .publish(topic, qos_level, retain, payload.as_bytes())
-                            .await
-                        {
-                            error!("MQTT client {} publish error: {}", client_id, e);
-                        } else {
-                            info!(
-                                "MQTT client {} published to '{}': {}",
-                                client_id, topic, payload
-                            );
-                        }
-                    }
-                }
-                "mqtt_unsubscribe" => {
-                    if let Some(topics) = data.get("topics").and_then(|v| v.as_array()) {
-                        for topic in topics {
-                            if let Some(topic_str) = topic.as_str() {
-                                if let Err(e) = mqtt_client.unsubscribe(topic_str).await {
-                                    error!("MQTT client {} unsubscribe error: {}", client_id, e);
-                                } else {
-                                    info!(
-                                        "MQTT client {} unsubscribed from '{}'",
-                                        client_id, topic_str
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    debug!("Unknown MQTT custom action: {}", name);
-                }
-            },
-            Ok(ClientActionResult::Disconnect) => {
-                info!("MQTT client {} disconnecting", client_id);
-                if let Err(e) = mqtt_client.disconnect().await {
-                    error!("MQTT client {} disconnect error: {}", client_id, e);
-                }
-            }
-            Ok(ClientActionResult::WaitForMore) => {
-                debug!("MQTT client {} waiting for more messages", client_id);
-            }
-            Ok(ClientActionResult::SendData(_)) => {
-                // Not used for MQTT
-            }
-            Ok(ClientActionResult::NoAction) => {
-                // No action needed
-            }
-            Ok(ClientActionResult::Multiple(_)) => {
-                // Multiple actions not currently supported for MQTT
-                debug!("Multiple actions not supported for MQTT client");
             }
             Err(e) => {
                 error!("Error executing MQTT action: {}", e);
             }
+        }
+    }
+}
+
+/// Drain injected commands (the dashboard's \[ send \]) until the channel closes - which
+/// happens when the client is removed or the broker event loop exits - or until an injected
+/// `disconnect` ends the session.
+///
+/// This is option (a) of the library-driven archetype: `rumqttc::AsyncClient` is a cheap
+/// clonable handle to the event loop's request channel, so no `Arc<Mutex<_>>` and no
+/// restructuring was needed - the command loop holds its own clone and applies actions
+/// through the same [`apply_action`] the LLM path uses.
+async fn command_loop(
+    mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+    mqtt_client: AsyncClient,
+    client_id: ClientId,
+    app_state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
+    disconnecting: Arc<AtomicBool>,
+) {
+    use crate::llm::actions::protocol_trait::Protocol;
+    use crate::state::client_handles::ClientSendOutcome;
+    use crate::state::AccessLogOwner;
+
+    let protocol = MqttClientProtocol::new();
+
+    while let Some(command) = command_rx.recv().await {
+        let action = command.action.clone();
+        let outcome: Result<ClientSendOutcome> = match protocol.execute_action(action.clone()) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(result) => match apply_action(result, &mqtt_client, client_id, &disconnecting).await
+            {
+                // Never `Sent`: rumqttc accepts the request into its event loop's queue and
+                // returns; the bytes are written by that loop afterwards and it reports no
+                // count, so claiming a byte count here would be a guess.
+                Ok(MqttApplied::Queued(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                Ok(MqttApplied::NoWire(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                Ok(MqttApplied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Err(e) => Err(e),
+            },
+        };
+
+        let outcome_json = match &outcome {
+            Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+            Err(e) => serde_json::json!({"error": e.to_string()}),
+        };
+        app_state
+            .record_access_log(
+                AccessLogOwner::Client(client_id.as_u32()),
+                protocol.protocol_name(),
+                None,
+                "injected_action",
+                action,
+                vec![outcome_json],
+            )
+            .await;
+
+        let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+        if let Err(e) = &outcome {
+            error!("MQTT client {} injected action failed: {}", client_id, e);
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        crate::client::command_support::reply(command, outcome);
+
+        if disconnect {
+            // The event loop drops the handle on its way out too; doing it here as well means
+            // the dashboard stops offering [ send ] the moment the DISCONNECT went out.
+            app_state.remove_client_handle(client_id).await;
+            break;
         }
     }
 }

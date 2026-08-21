@@ -395,3 +395,37 @@ choco install wireguard
 - [WireGuard Protocol Spec](https://www.wireguard.com/protocol/)
 - [Curve25519](https://cr.yp.to/ecdh.html)
 - [ChaCha20-Poly1305](https://datatracker.ietf.org/doc/html/rfc8439)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into the running client. `command_loop` in
+`mod.rs` drains the bounded channel and runs each action through `apply_wireguard_action`
+against the `Arc<WireguardClient>`. The channel is registered **before** the
+`wireguard_connected` LLM call and dropped when the interface is torn down or the monitoring
+loop exits.
+
+This closed a real gap on the LLM side too: `connect_with_llm_actions` logged the model's
+response to `wireguard_connected` and executed none of its actions, so before this nothing in
+the process could apply a WireGuard client action at all.
+
+Outcomes:
+
+| action | `ClientSendOutcome` |
+|---|---|
+| `get_connection_status` | `Executed { detail: "get_connection_status: connected=…, tx_bytes=…, rx_bytes=…, last_handshake=…" }` |
+| `get_client_info` | `Executed { detail: "get_client_info: interface=…, public_key=…, …" }` |
+| `disconnect` | `Disconnected` (interface removed, handle dropped) |
+| unknown verb | `Rejected { error }` |
+
+**WireGuard can never report `Sent`.** NetGet implements none of the WireGuard protocol and
+writes no packets — it orchestrates `defguard_wireguard_rs`, which drives the kernel module
+(or `wireguard-go` on macOS). Every verb this client has reads interface state or tears the
+interface down.
+
+**Untested here, deliberately.** `configure_interface` creates a real network interface, which
+needs root and, on macOS, an external `wireguard-go` binary — so `connect()` cannot succeed in
+a normal test process and the injection path has never been executed. `tests/client/wireguard/
+command_channel_test.rs` asserts only what is reachable unprivileged (a failed connect leaves
+no command handle and `send_to_client` refuses) and marks the privileged half `#[ignore]`. It
+does **not** mock an action or event to manufacture a pass; that is what cost this protocol its
+Stable rating.

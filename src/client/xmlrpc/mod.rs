@@ -14,13 +14,44 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::client::xmlrpc::actions::{
     XMLRPC_CLIENT_CONNECTED_EVENT, XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
-use crate::llm::actions::client_trait::Client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+
+/// What [`XmlRpcClient::apply_action`] did with one executed action. XML-RPC is
+/// request/response over HTTP with no socket of our own, so no byte count can honestly be
+/// reported - each variant carries a description of the effect instead.
+enum Applied {
+    /// The action ran; the string describes what happened.
+    Ran(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
+
+/// What a completed XML-RPC call answered.
+enum CallOutcome {
+    /// The server returned a value (converted to JSON).
+    Result(serde_json::Value),
+    /// The server returned an XML-RPC `<fault>`; the call reached it and was refused.
+    Fault(String),
+}
+
+/// Whether the response event is raised inline or from its own task.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Raise it here and now. Used by the connected-event LLM path (which already runs in
+    /// its own spawned task) and by the model's own follow-up calls.
+    Inline,
+    /// Hand it to a registered task. Used by the injected-command loop so a manual
+    /// (human-answered) routing rule on `xmlrpc_response_received` cannot hold up the
+    /// command's outcome, or the next injected command.
+    Deferred,
+}
 
 /// XML-RPC client that calls methods on remote servers
 pub struct XmlRpcClient;
@@ -67,6 +98,21 @@ impl XmlRpcClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ call_xmlrpc_method ] /
+        // [ disconnect ]). Registered BEFORE the connected-event LLM call below, which is
+        // awaited inline and which a manual `*` routing rule can park for minutes - the
+        // operator must be able to call a method while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            _llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with initial connected event to trigger first action
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let protocol = Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
@@ -102,77 +148,225 @@ impl XmlRpcClient {
                     app_state.set_memory_for_client(client_id, mem).await;
                 }
 
-                // Execute initial actions
+                // Execute initial actions through the same path injected commands use.
                 for action in actions {
-                    match protocol.execute_action(action) {
-                        Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
-                            name,
-                            data,
-                        }) if name == "xmlrpc_call" => {
-                            if let (Some(method), Some(params)) = (
-                                data.get("method_name").and_then(|v| v.as_str()),
-                                data.get("params").and_then(|v| v.as_array()),
-                            ) {
-                                // Spawn initial method call
-                                let app_state_clone = app_state.clone();
-                                let llm_client_clone = _llm_client.clone();
-                                let status_tx_clone = status_tx.clone();
-                                let method_clone = method.to_string();
-                                let params_clone = params.clone();
+                    let result = match protocol.execute_action(action) {
+                        Ok(result) => result,
+                        Err(e) => {
+                            error!("XML-RPC client {} rejected action: {}", client_id, e);
+                            continue;
+                        }
+                    };
 
-                                // Registered with AppState so stop_client can abort this task —
-                                // dropping a JoinHandle only detaches it in Tokio.
-                                let task_registrar = app_state.clone();
-                                let task_handle = tokio::spawn(async move {
-                                    let _ = Self::call_method(
-                                        client_id,
-                                        method_clone,
-                                        params_clone,
-                                        app_state_clone,
-                                        llm_client_clone,
-                                        status_tx_clone,
-                                    )
-                                    .await;
-                                });
-                                task_registrar
-                                    .register_client_task(client_id, task_handle)
-                                    .await;
-                            }
-                        }
-                        Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                            info!(
-                                "XML-RPC client {} disconnecting on initial action",
-                                client_id
-                            );
-                            return Ok("0.0.0.0:0".parse().unwrap());
-                        }
-                        _ => {}
+                    if matches!(result, ClientActionResult::Disconnect) {
+                        info!(
+                            "XML-RPC client {} disconnecting on initial action",
+                            client_id
+                        );
+                        let _ = Self::apply_action(
+                            result,
+                            Dispatch::Inline,
+                            client_id,
+                            &app_state,
+                            &_llm_client,
+                            &status_tx,
+                        )
+                        .await;
+                        // Nothing can be injected into a session that never started.
+                        app_state.remove_client_handle(client_id).await;
+                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                        return Ok("0.0.0.0:0".parse().unwrap());
                     }
+
+                    // The method call itself is spawned so `connect` still returns
+                    // promptly; injected commands await it instead (see `command_loop`).
+                    let app_state_clone = app_state.clone();
+                    let llm_client_clone = _llm_client.clone();
+                    let status_tx_clone = status_tx.clone();
+                    // Registered with AppState so stop_client can abort this task —
+                    // dropping a JoinHandle only detaches it in Tokio.
+                    let task_registrar = app_state.clone();
+                    let task_handle = tokio::spawn(async move {
+                        if let Err(e) = Self::apply_action(
+                            result,
+                            Dispatch::Inline,
+                            client_id,
+                            &app_state_clone,
+                            &llm_client_clone,
+                            &status_tx_clone,
+                        )
+                        .await
+                        {
+                            error!("XML-RPC client {} action failed: {}", client_id, e);
+                        }
+                    });
+                    task_registrar
+                        .register_client_task(client_id, task_handle)
+                        .await;
                 }
             }
         }
 
-        // Spawn background task that monitors for client disconnection
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("XML-RPC client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
+        // No idle-poll task: the command loop is this client's long-lived task and it ends
+        // when the client is removed (`remove_client` drops the command sender).
 
         // Return a dummy local address (XML-RPC is connectionless)
         Ok("0.0.0.0:0".parse().unwrap())
+    }
+
+    /// Run one executed action. Shared by the connected-event LLM path and injected
+    /// commands so the `xmlrpc_call` decoding exists exactly once.
+    async fn apply_action(
+        result: ClientActionResult,
+        dispatch: Dispatch,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } if name == "xmlrpc_call" => {
+                let method = data
+                    .get("method_name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'method_name' in xmlrpc_call")?
+                    .to_string();
+                let params = data
+                    .get("params")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                let param_count = params.len();
+
+                let outcome =
+                    Self::perform_call(client_id, &method, params, app_state, status_tx).await?;
+                let detail = match &outcome {
+                    CallOutcome::Result(_) => format!(
+                        "xmlrpc_call '{}' with {} param(s): server returned a result",
+                        method, param_count
+                    ),
+                    CallOutcome::Fault(fault) => format!(
+                        "xmlrpc_call '{}' with {} param(s): server returned fault: {}",
+                        method, param_count, fault
+                    ),
+                };
+
+                match dispatch {
+                    Dispatch::Inline => {
+                        Self::notify_call_result(
+                            client_id,
+                            method,
+                            outcome,
+                            app_state.clone(),
+                            llm_client.clone(),
+                            status_tx.clone(),
+                        )
+                        .await;
+                    }
+                    Dispatch::Deferred => {
+                        let handle = tokio::spawn(Self::notify_call_result(
+                            client_id,
+                            method,
+                            outcome,
+                            app_state.clone(),
+                            llm_client.clone(),
+                            status_tx.clone(),
+                        ));
+                        // Registered so stop_client aborts an in-flight LLM call.
+                        app_state.register_client_task(client_id, handle).await;
+                    }
+                }
+                Ok(Applied::Ran(detail))
+            }
+            ClientActionResult::Disconnect => {
+                info!("XML-RPC client {} disconnecting", client_id);
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                Ok(Applied::Disconnect)
+            }
+            ClientActionResult::Custom { name, .. } => Err(anyhow::anyhow!(
+                "XML-RPC client cannot execute custom result '{}'",
+                name
+            )),
+            // WaitForMore / NoAction / SendData / nested Multiple: no method call to make.
+            _ => Ok(Applied::Ran(
+                "no method called (action produced no XML-RPC request)".to_string(),
+            )),
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session. The call is awaited, so the reported
+    /// [`ClientSendOutcome`] describes a round-trip that really happened - including its
+    /// failure, which surfaces as an error rather than a fake success.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let protocol = crate::client::xmlrpc::actions::XmlRpcClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(
+                    result,
+                    Dispatch::Deferred,
+                    client_id,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await
+                .map(|applied| match applied {
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    Applied::Ran(detail) => ClientSendOutcome::Executed { detail },
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("XML-RPC client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        info!("XML-RPC client {} command loop ended", client_id);
     }
 
     /// Call an XML-RPC method
@@ -197,7 +391,7 @@ impl XmlRpcClient {
         })
     }
 
-    /// Implementation of call_method
+    /// Implementation of call_method: perform the call, then report it.
     async fn call_method_impl(
         client_id: ClientId,
         method_name: String,
@@ -206,6 +400,41 @@ impl XmlRpcClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        let outcome =
+            Self::perform_call(client_id, &method_name, params, &app_state, &status_tx).await?;
+        let failed = match &outcome {
+            CallOutcome::Fault(fault) => Some(fault.clone()),
+            CallOutcome::Result(_) => None,
+        };
+        Self::notify_call_result(
+            client_id,
+            method_name,
+            outcome,
+            app_state,
+            llm_client,
+            status_tx,
+        )
+        .await;
+        match failed {
+            Some(fault) => Err(anyhow::anyhow!("XML-RPC error: {}", fault)),
+            None => Ok(()),
+        }
+    }
+
+    /// Make one XML-RPC call and return what the server answered.
+    ///
+    /// Split out of [`Self::call_method_impl`] so the injected-command loop can await the
+    /// round-trip - and report what really happened - without also awaiting the LLM call
+    /// the response event triggers, which a manual routing rule can park for minutes.
+    /// A transport failure is an `Err`; an XML-RPC `<fault>` is a `CallOutcome::Fault`,
+    /// because the server did answer.
+    async fn perform_call(
+        client_id: ClientId,
+        method_name: &str,
+        params: Vec<serde_json::Value>,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<CallOutcome> {
         // Get server URL from client
         let server_url = app_state
             .with_client_mut(client_id, |client| {
@@ -232,12 +461,12 @@ impl XmlRpcClient {
             xmlrpc_params.push(xmlrpc_value);
         }
 
-        // Clone method_name for the closure
-        let method_name_for_log = method_name.clone();
+        let method_owned = method_name.to_string();
+        let log_name = method_name.to_string();
 
-        // Make the call - build request in blocking task
+        // The `xmlrpc` crate is blocking, so the call runs on the blocking pool.
         match tokio::task::spawn_blocking(move || {
-            let mut request = xmlrpc::Request::new(&method_name);
+            let mut request = xmlrpc::Request::new(&method_owned);
             for param in xmlrpc_params {
                 request = request.arg(param);
             }
@@ -248,170 +477,113 @@ impl XmlRpcClient {
             Ok(Ok(response)) => {
                 info!(
                     "XML-RPC client {} received response for {}",
-                    client_id, method_name_for_log
+                    client_id, log_name
                 );
-
-                // Convert response to JSON
-                let result_json = Self::xmlrpc_value_to_json(&response);
-
-                // Call LLM with response
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol =
-                        Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
-                    let event = Event::new(
-                        &XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "method_name": method_name_for_log,
-                            "result": result_json,
-                        }),
-                    );
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-
-                            // Execute actions returned by LLM
-                            for action in actions {
-                                match protocol.execute_action(action) {
-                                    Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data })
-                                        if name == "xmlrpc_call" => {
-                                        // Extract method call parameters
-                                        if let (Some(method), Some(params)) = (
-                                            data.get("method_name").and_then(|v| v.as_str()),
-                                            data.get("params").and_then(|v| v.as_array())
-                                        ) {
-                                            // Recursive call
-                                            let _ = Self::call_method(
-                                                client_id,
-                                                method.to_string(),
-                                                params.clone(),
-                                                app_state.clone(),
-                                                llm_client.clone(),
-                                                status_tx.clone(),
-                                            ).await;
-                                        }
-                                    }
-                                    Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                                        info!("XML-RPC client {} disconnecting", client_id);
-                                        return Ok(());
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("LLM error for XML-RPC client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                Ok(CallOutcome::Result(Self::xmlrpc_value_to_json(&response)))
             }
             Ok(Err(fault)) => {
                 let fault_msg = fault.to_string();
                 error!(
                     "XML-RPC client {} error for {}: {}",
-                    client_id, method_name_for_log, fault_msg
+                    client_id, log_name, fault_msg
                 );
-
-                // Call LLM with fault
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol =
-                        Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
-                    let event = Event::new(
-                        &XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "method_name": method_name_for_log,
-                            "fault": {
-                                "error": fault_msg.clone(),
-                            },
-                        }),
-                    );
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    if let Ok(ClientLlmResult {
-                        actions,
-                        memory_updates,
-                    }) = call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        // Update memory
-                        if let Some(mem) = memory_updates {
-                            app_state.set_memory_for_client(client_id, mem).await;
-                        }
-
-                        // Execute actions (e.g., retry with different params, log error, etc.)
-                        for action in actions {
-                            match protocol.execute_action(action) {
-                                Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data })
-                                    if name == "xmlrpc_call" => {
-                                    if let (Some(method), Some(params)) = (
-                                        data.get("method_name").and_then(|v| v.as_str()),
-                                        data.get("params").and_then(|v| v.as_array())
-                                    ) {
-                                        let _ = Self::call_method(
-                                            client_id,
-                                            method.to_string(),
-                                            params.clone(),
-                                            app_state.clone(),
-                                            llm_client.clone(),
-                                            status_tx.clone(),
-                                        ).await;
-                                    }
-                                }
-                                Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                                    // LLM decided to disconnect after fault
-                                    break;
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-
-                Err(anyhow::anyhow!("XML-RPC error: {}", fault_msg))
+                Ok(CallOutcome::Fault(fault_msg))
             }
             Err(e) => {
-                Log::new(Some(&status_tx))
+                Log::new(Some(status_tx))
                     .error(format!("XML-RPC client {} call failed: {}", client_id, e));
                 Err(e.into())
             }
         }
+    }
+
+    /// Raise `xmlrpc_response_received` for a completed call and run whatever the model
+    /// answers with (which may be a follow-up call, hence the boxed recursion).
+    fn notify_call_result(
+        client_id: ClientId,
+        method_name: String,
+        outcome: CallOutcome,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
+        Box::pin(async move {
+            let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+                return;
+            };
+
+            let protocol = Arc::new(crate::client::xmlrpc::actions::XmlRpcClientProtocol::new());
+            let data = match &outcome {
+                CallOutcome::Result(result) => serde_json::json!({
+                    "method_name": method_name,
+                    "result": result,
+                }),
+                CallOutcome::Fault(fault) => serde_json::json!({
+                    "method_name": method_name,
+                    "fault": { "error": fault },
+                }),
+            };
+            let event = Event::new(&XMLRPC_CLIENT_RESPONSE_RECEIVED_EVENT, data);
+
+            let memory = app_state
+                .get_memory_for_client(client_id)
+                .await
+                .unwrap_or_default();
+
+            match call_llm_for_client(
+                &llm_client,
+                &app_state,
+                client_id.to_string(),
+                &instruction,
+                &memory,
+                Some(&event),
+                protocol.as_ref(),
+                &status_tx,
+            )
+            .await
+            {
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
+                    if let Some(mem) = memory_updates {
+                        app_state.set_memory_for_client(client_id, mem).await;
+                    }
+
+                    // Execute the follow-up actions through the shared path.
+                    for action in actions {
+                        let result = match protocol.execute_action(action) {
+                            Ok(result) => result,
+                            Err(e) => {
+                                error!("XML-RPC client {} rejected action: {}", client_id, e);
+                                continue;
+                            }
+                        };
+                        match Self::apply_action(
+                            result,
+                            Dispatch::Inline,
+                            client_id,
+                            &app_state,
+                            &llm_client,
+                            &status_tx,
+                        )
+                        .await
+                        {
+                            Ok(Applied::Ran(detail)) => {
+                                info!("XML-RPC client {}: {}", client_id, detail)
+                            }
+                            Ok(Applied::Disconnect) => break,
+                            Err(e) => {
+                                error!("XML-RPC client {} action failed: {}", client_id, e)
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error for XML-RPC client {}: {}", client_id, e);
+                }
+            }
+        })
     }
 
     /// Convert JSON value to xmlrpc::Value

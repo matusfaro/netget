@@ -20,7 +20,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 use crate::client::syslog::actions::SYSLOG_CLIENT_CONNECTED_EVENT;
 
@@ -103,6 +104,18 @@ enum SyslogTransport {
     Udp(Arc<UdpSocket>, SocketAddr),
 }
 
+/// What applying one executed action did. Shared by the LLM path and the command
+/// channel so an injected action reports the same truth the LLM path puts on the
+/// wire.
+enum Applied {
+    /// Bytes really written (and flushed, on TCP) to the transport.
+    Sent(usize),
+    /// The action ran but wrote nothing.
+    Executed(String),
+    /// The session should end.
+    Disconnect,
+}
+
 /// Syslog client that connects to a remote syslog server
 pub struct SyslogClient;
 
@@ -182,7 +195,9 @@ impl SyslogClient {
             }
         };
 
-        let local_addr = match &transport {
+        let transport = Arc::new(transport);
+
+        let local_addr = match transport.as_ref() {
             SyslogTransport::Tcp(stream) => stream.lock().await.local_addr()?,
             SyslogTransport::Udp(socket, _) => socket.local_addr()?,
         };
@@ -197,6 +212,28 @@ impl SyslogClient {
             protocol.to_uppercase()
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Command channel: lets the dashboard (and any programmatic caller) inject
+        // actions into this client via AppState::send_to_client. For syslog this is the
+        // whole point of the client - "emit this line now" is a human action, and until
+        // now nothing but the LLM could ask for it.
+        //
+        // Registered BEFORE the connected event is handled: a `manual` routing rule can
+        // park that event at the dashboard for minutes, and until registration the UI
+        // reports "no command channel" - reading as a protocol limitation when it is
+        // only a queue.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // Syslog has no read loop at all (it is fire-and-forget in both transports), so
+        // the commands are drained by a task of their own rather than a select! arm.
+        let cmd_transport = transport.clone();
+        let cmd_state = app_state.clone();
+        let cmd_status = status_tx.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(command_rx, cmd_transport, client_id, cmd_state, cmd_status).await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -229,7 +266,7 @@ impl SyslogClient {
                     for action in actions {
                         if let Err(e) = Self::execute_syslog_action(
                             action,
-                            &transport,
+                            transport.as_ref(),
                             client_id,
                             &status_tx,
                             protocol_impl.as_ref(),
@@ -253,15 +290,29 @@ impl SyslogClient {
         Ok(local_addr)
     }
 
-    /// Execute a syslog action
+    /// Execute a syslog action (LLM path: rejection and wire failure are both just
+    /// logged by the caller).
     async fn execute_syslog_action(
         action: Value,
         transport: &SyslogTransport,
         client_id: ClientId,
         status_tx: &mpsc::UnboundedSender<String>,
         protocol: &dyn Client,
-    ) -> Result<()> {
-        match protocol.execute_action(action)? {
+    ) -> Result<Applied> {
+        let result = protocol.execute_action(action)?;
+        Self::apply_action_result(result, transport, client_id, status_tx).await
+    }
+
+    /// Put one executed action on the wire. Shared by the connected-event path and
+    /// injected commands, so the RFC 5424 framing exists exactly once and an injected
+    /// message is byte-identical to an LLM-produced one.
+    async fn apply_action_result(
+        result: ClientActionResult,
+        transport: &SyslogTransport,
+        client_id: ClientId,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        match result {
             ClientActionResult::Custom { name, data } if name == "send_syslog_message" => {
                 let facility = data["facility"].as_str().context("Missing facility")?;
                 let severity = data["severity"].as_str().context("Missing severity")?;
@@ -277,21 +328,24 @@ impl SyslogClient {
 
                 trace!("Syslog client {} sending: {}", client_id, formatted_message);
 
-                match transport {
+                // The byte count reported to an injected caller counts what actually
+                // reached the transport, including the TCP framing newline.
+                let bytes_sent = match transport {
                     SyslogTransport::Tcp(stream) => {
                         // TCP: message terminated with newline
                         let mut stream = stream.lock().await;
                         stream.write_all(formatted_message.as_bytes()).await?;
                         stream.write_all(b"\n").await?;
                         stream.flush().await?;
+                        formatted_message.len() + 1
                     }
                     SyslogTransport::Udp(socket, remote_addr) => {
                         // UDP: send as datagram
                         socket
                             .send_to(formatted_message.as_bytes(), remote_addr)
-                            .await?;
+                            .await?
                     }
-                }
+                };
 
                 info!(
                     "Syslog client {} sent message: facility={}, severity={}, msg={}",
@@ -302,13 +356,103 @@ impl SyslogClient {
                     client_id, facility, severity, message
                 ));
 
-                Ok(())
+                Ok(Applied::Sent(bytes_sent))
             }
+            ClientActionResult::Custom { name, .. } => Ok(Applied::Executed(format!(
+                "custom result '{name}' is not a syslog wire verb"
+            ))),
             ClientActionResult::Disconnect => {
                 info!("Syslog client {} disconnecting", client_id);
-                Ok(())
+                Ok(Applied::Disconnect)
             }
-            _ => Ok(()),
+            ClientActionResult::WaitForMore => Ok(Applied::Executed("wait_for_more".to_string())),
+            ClientActionResult::NoAction => Ok(Applied::Executed("no_action".to_string())),
+            other => Ok(Applied::Executed(format!("no wire effect: {other:?}"))),
         }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// Bespoke rather than `command_support::handle_stream_client_command` because
+    /// `send_syslog_message` yields `ClientActionResult::Custom` and the transport is
+    /// either a datagram socket or a stream - there is no single write half. The
+    /// logging and reply are byte-for-byte what the generic helper does.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        transport: Arc<SyslogTransport>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let protocol = SyslogClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => {
+                    Self::apply_action_result(result, transport.as_ref(), client_id, &status_tx)
+                        .await
+                        .map(|applied| match applied {
+                            Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                            Applied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                            Applied::Disconnect => ClientSendOutcome::Disconnected,
+                        })
+                }
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("Syslog client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                if let SyslogTransport::Tcp(stream) = transport.as_ref() {
+                    // Half-close so the collector sees EOF rather than a dangling
+                    // connection.
+                    let _ = stream.lock().await.shutdown().await;
+                }
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Syslog client {} disconnected (injected action)",
+                    client_id
+                ));
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
+
+        // Every exit path lands here: drop the command handle so the dashboard stops
+        // offering [ send ] on a dead client (a late send then fails fast).
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 }

@@ -20,7 +20,22 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+
+/// What applying one executed action did. Shared by the LLM path and the command
+/// channel.
+///
+/// There is no `Sent(usize)` variant, and that is the honest shape for this client:
+/// `mdns-sd`'s `ServiceDaemon` owns the multicast socket and reports neither the
+/// query bytes it emits nor when it emits them, so no byte count we could produce
+/// would be a real one.
+enum Applied {
+    /// The action ran; the detail says what the daemon was asked to do.
+    Executed(String),
+    /// The session should end.
+    Disconnect,
+}
 
 /// mDNS client that performs service discovery on the local network
 pub struct MdnsClient;
@@ -53,6 +68,32 @@ impl MdnsClient {
             .await;
         let _ = status_tx.send(format!("[CLIENT] mDNS client {} initialized", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Command channel: lets the dashboard (and any programmatic caller) inject
+        // actions into this client via AppState::send_to_client.
+        //
+        // Registered BEFORE the connected event is handled: a `manual` routing rule can
+        // park that event at the dashboard for minutes, and until registration the UI
+        // reports "no command channel" - reading as a protocol limitation when it is
+        // only a queue.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // The command task gets a clone of the *same* daemon handle - `ServiceDaemon`
+        // is a cloneable handle onto one running daemon, so an injected browse goes out
+        // of the same sockets, to the same multicast group, as one the LLM asked for.
+        // It also keeps the daemon alive when the client has no instruction at all.
+        let cmd_daemon = mdns.clone();
+        let cmd_llm = llm_client.clone();
+        let cmd_state = app_state.clone();
+        let cmd_status = status_tx.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx, cmd_daemon, client_id, cmd_llm, cmd_state, cmd_status,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Call LLM with connected event to get initial instructions
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -145,6 +186,9 @@ impl MdnsClient {
     }
 
     /// Execute an mDNS action (browse, resolve, etc.)
+    ///
+    /// Shared by the connected-event path and injected commands, so a `[ send ]` from
+    /// the dashboard drives exactly the same daemon calls the LLM would.
     async fn execute_mdns_action(
         client_id: ClientId,
         action: serde_json::Value,
@@ -152,7 +196,7 @@ impl MdnsClient {
         llm_client: OllamaClient,
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<Applied> {
         use crate::llm::actions::client_trait::Client;
         let protocol = Arc::new(crate::client::mdns::actions::MdnsClientProtocol::new());
 
@@ -189,8 +233,26 @@ impl MdnsClient {
                         let task_registrar = app_state.clone();
                         let task_handle = tokio::spawn(async move {
                             loop {
-                                // Use recv_timeout to avoid blocking forever
-                                match receiver.recv_timeout(Duration::from_secs(10)) {
+                                // `recv_timeout` is a *synchronous* blocking call, so it
+                                // runs on the blocking pool rather than a runtime worker.
+                                // Called inline it parks the worker for up to 10s at a
+                                // time, and on a current-thread runtime that stalls
+                                // everything else the client is doing - including the
+                                // command channel, which is how this was found.
+                                let rx = receiver.clone();
+                                let recv_result = match tokio::task::spawn_blocking(move || {
+                                    rx.recv_timeout(Duration::from_secs(10))
+                                })
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(e) => {
+                                        error!("mDNS browse receive task failed: {}", e);
+                                        break;
+                                    }
+                                };
+
+                                match recv_result {
                                     Ok(event) => {
                                         match event {
                                             ServiceEvent::ServiceFound(service_type, fullname) => {
@@ -359,6 +421,11 @@ impl MdnsClient {
                         task_registrar
                             .register_client_task(client_id, task_handle)
                             .await;
+
+                        return Ok(Applied::Executed(format!(
+                            "browse_service '{service_type}' started (the mdns-sd daemon \
+                             owns the multicast socket, so no byte count is observable)"
+                        )));
                     }
                     "resolve_hostname" => {
                         let hostname = data["hostname"]
@@ -373,6 +440,9 @@ impl MdnsClient {
                                 info!("Resolved {} to {} addresses", hostname, addrs.len());
                                 let _ = status_tx
                                     .send(format!("[CLIENT] Resolved {}: {:?}", hostname, addrs));
+                                return Ok(Applied::Executed(format!(
+                                    "resolve_hostname '{hostname}' issued"
+                                )));
                             }
                             Err(e) => {
                                 warn!("Failed to resolve {}: {}", hostname, e);
@@ -380,11 +450,17 @@ impl MdnsClient {
                                     "[CLIENT] Failed to resolve {}: {}",
                                     hostname, e
                                 ));
+                                return Err(anyhow::anyhow!(
+                                    "resolve_hostname '{hostname}' failed: {e}"
+                                ));
                             }
                         }
                     }
                     _ => {
                         warn!("Unknown mDNS action: {}", name);
+                        return Ok(Applied::Executed(format!(
+                            "custom result '{name}' is not an mDNS verb"
+                        )));
                     }
                 }
             }
@@ -394,13 +470,99 @@ impl MdnsClient {
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
                 let _ = status_tx.send(format!("[CLIENT] mDNS client {} disconnected", client_id));
+                return Ok(Applied::Disconnect);
             }
             Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
                 trace!("mDNS client {} waiting for more data", client_id);
+                return Ok(Applied::Executed("wait_for_more".to_string()));
             }
-            _ => {}
+            Ok(other) => Ok(Applied::Executed(format!("no wire effect: {other:?}"))),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// Bespoke rather than `command_support::handle_stream_client_command` because
+    /// every mDNS verb yields `ClientActionResult::Custom` and there is no write half
+    /// at all - the effect goes through the `ServiceDaemon` handle. The logging and
+    /// reply are byte-for-byte what the generic helper does.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        mdns: ServiceDaemon,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::client_trait::Client;
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let protocol = crate::client::mdns::actions::MdnsClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = Self::execute_mdns_action(
+                client_id,
+                action.clone(),
+                &mdns,
+                llm_client.clone(),
+                app_state.clone(),
+                status_tx.clone(),
+            )
+            .await
+            .map(|applied| match applied {
+                Applied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                Applied::Disconnect => ClientSendOutcome::Disconnected,
+            });
+
+            // `execute_mdns_action` folds an unknown action name and a failed daemon
+            // call into the same `Err`; only the former is a rejection, so classify it
+            // here rather than reporting a bad daemon call as a bad action.
+            let outcome = match outcome {
+                Err(e) if protocol.execute_action(action.clone()).is_err() => {
+                    Ok(ClientSendOutcome::Rejected {
+                        error: e.to_string(),
+                    })
+                }
+                other => other,
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("mDNS client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
         }
 
-        Ok(())
+        // Every exit path lands here: drop the command handle so the dashboard stops
+        // offering [ send ] on a dead client (a late send then fails fast).
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 }

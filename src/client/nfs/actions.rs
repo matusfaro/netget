@@ -280,6 +280,48 @@ impl Protocol for NfsClientProtocol {
         }]
     }
 
+    fn get_startup_parameters(&self) -> Vec<crate::llm::actions::ParameterDefinition> {
+        use crate::llm::actions::ParameterDefinition;
+        vec![
+            ParameterDefinition {
+                name: "portmapper_port".to_string(),
+                description: "Port to ask for the MOUNT and NFS ports on (default 111). \
+                              Override it when the server multiplexes all three RPC programs \
+                              on one port, as NetGet's own NFS server does"
+                    .to_string(),
+                type_hint: "number".to_string(),
+                required: false,
+                example: json!(111),
+            },
+            ParameterDefinition {
+                name: "mount_port".to_string(),
+                description: "MOUNT program port. Skips the portmapper lookup for MOUNT"
+                    .to_string(),
+                type_hint: "number".to_string(),
+                required: false,
+                example: json!(2049),
+            },
+            ParameterDefinition {
+                name: "nfs_port".to_string(),
+                description: "NFS program port (normally 2049). Skips the portmapper lookup \
+                              for NFS"
+                    .to_string(),
+                type_hint: "number".to_string(),
+                required: false,
+                example: json!(2049),
+            },
+            ParameterDefinition {
+                name: "privileged_source_port".to_string(),
+                description: "Bind the local end to a port below 1024, which many real NFS \
+                              servers demand and which requires root. Default true"
+                    .to_string(),
+                type_hint: "boolean".to_string(),
+                required: false,
+                example: json!(false),
+            },
+        ]
+    }
+
     fn protocol_name(&self) -> &'static str {
         "NFS"
     }
@@ -401,6 +443,7 @@ impl Client for NfsClientProtocol {
                 ctx.state,
                 ctx.status_tx,
                 ctx.client_id,
+                ctx.startup_params,
             )
             .await
         })

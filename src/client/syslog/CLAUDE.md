@@ -187,3 +187,30 @@ open_client syslog localhost:514 --protocol tcp "Send daemon error logs"
 
 - **RFC 5424**: The Syslog Protocol (https://tools.ietf.org/html/rfc5424)
 - **RFC 3164**: The BSD syslog Protocol (legacy, not implemented)
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into the running client — for syslog this is
+close to the whole point of the client, since "emit this line now" is a human action and
+until now only the LLM could ask for it.
+
+The channel is registered **before** the `syslog_client_connected` LLM call (a `manual`
+routing rule can park that event for minutes). This client has no read loop at all — it is
+fire-and-forget on both transports — so the commands are drained by a task of their own
+(`command_loop`), registered with `AppState::register_client_task`. That task is now also
+what keeps the transport alive after `connect_with_llm_actions` returns.
+
+`send_syslog_message` yields `ClientActionResult::Custom` and the transport is either a
+datagram socket or a stream, so there is no single write half for
+`command_support::handle_stream_client_command` to use; the loop body is bespoke but applies
+the action through `apply_action_result`, the same function the connected-event path uses, so
+the RFC 5424 framing exists exactly once.
+
+Outcomes:
+
+| Action | Outcome |
+|---|---|
+| `send_syslog_message` (UDP) | `Sent { bytes_sent }` — the count `send_to` returned |
+| `send_syslog_message` (TCP) | `Sent { bytes_sent }` — message length **plus 1** for the framing newline, written and flushed |
+| `disconnect` | `Disconnected`; TCP is half-closed so the collector sees EOF, and the command loop ends |
+| unknown type / bad params | `Rejected { error }` from `execute_action` |

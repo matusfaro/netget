@@ -123,3 +123,24 @@ Schema provided as base64 FileDescriptorSet (no protoc dependency).
 3. **Streaming**: Once implemented, test all 4 RPC types
 4. **Metadata testing**: Verify custom headers work
 5. **Error codes**: Test all gRPC status codes (INVALID_ARGUMENT, NOT_FOUND, etc.)
+
+## `command_channel_test.rs` — injected actions
+
+In-process, no NetGet subprocess and **zero LLM calls**: a NetGet gRPC *server* with the
+calculator schema answers through a `*` static handler, and the client's LLM points at
+`http://127.0.0.1:1`, so its `grpc_connected` call fails and the connect path has to tolerate
+that.
+
+Needs `protoc` on PATH — the gRPC server compiles its `proto_schema` by shelling out to it on
+every code path. The test skips itself with a message when `protoc` is absent rather than
+failing, because CI does not install it and does not build the `grpc` feature either.
+
+What it pins:
+
+- `has_client_handle` is true **before** anything answers the connected event.
+- `call_grpc_method calculator.Calculator/Add {a:5,b:3}` → `Sent { bytes_sent: 9 }`. That is
+  the one honest `Sent` in this family of clients: NetGet builds the gRPC frame itself, so
+  9 = 5-byte header + `0x08 0x05 0x10 0x03`. The server's access log shows `Add`.
+- an unknown action → `Rejected`; `disconnect` → `Disconnected`, handle gone.
+
+**LLM call budget: 0.**

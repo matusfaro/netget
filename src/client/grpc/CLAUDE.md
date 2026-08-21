@@ -372,3 +372,43 @@ sudo pacman -S protobuf
 | **Control Flow**   | Reactive (waits for calls)        | Proactive (LLM decides when to call) |
 | **Metadata**       | Receives from client              | Sends to server                      |
 | **Error Handling** | LLM returns error codes           | LLM receives error codes             |
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running gRPC client. The handle is
+registered **before** the `grpc_connected` LLM call, because a dashboard-created client
+defaults to a `*` → manual rule and that call can park for minutes waiting for a human.
+
+This is the archetype-(a) adoption: the `Arc<Mutex<GrpcClientData>>` the connect path already
+built holds the tonic `Channel` and the `DescriptorPool`, so a command loop reaches the same
+connection and the same schema the LLM path uses. Nothing was restructured to make this
+possible. The connected-event handler and the command loop both go through one
+`apply_grpc_action`, so the `grpc_call` decoding exists once.
+
+**Outcome semantics — `Sent { bytes_sent }`, and it is a real count.** Unlike the other
+library-driven clients, this one builds the gRPC frame itself (1 compression byte + 4 length
+bytes + the protobuf payload) and hands exactly those bytes to the channel, so
+`bytes_sent = 5 + request_bytes.len()` describes bytes that went out and were answered. The
+other outcomes: an unknown action is `Rejected`; a call the per-connection state machine
+refuses because another is in flight is
+`Executed { detail: "grpc_call S/M skipped: the client is already processing a call" }` —
+**never `Sent`**, since nothing was written; a transport or status failure is an `Err`; and
+`disconnect` is `Disconnected`.
+
+**The reply precedes the response event, deliberately.** `make_grpc_call` takes a `Dispatch`:
+the connected-event handler uses `Inline` (raise `grpc_response_received` and run whatever the
+LLM answers, as it always did), the command loop uses `Defer` — it gets the event payload
+back, replies to the caller with the byte count, and only then raises the event. Otherwise a
+manual rule parking that LLM call would hold `[ send ]`'s answer hostage for the length of a
+human's think time and the operator would see a timeout for a call that in fact succeeded. A
+*second* send during that window gets "client busy", which is what the bounded channel is for.
+
+The old 5-second idle-poll task is gone; the command loop ends when `remove_client` drops the
+command sender.
+
+### `compile_proto_text` needed a `--proto_path`
+
+The inline-`.proto`-text schema form could never load: `protoc` was invoked with an absolute
+input filename and no `-I` root, which it rejects with *"File does not reside within any path
+specified using --proto_path"* — it compares those strings literally. `--proto_path=<tempdir>`
+plus a relative filename is now passed, matching what the server side always did.

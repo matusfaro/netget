@@ -26,6 +26,10 @@ use nfs3_types::nfs3::*;
 
 use crate::client::nfs::actions::{NFS_CLIENT_CONNECTED_EVENT, NFS_CLIENT_OPERATION_RESULT_EVENT};
 
+/// The mounted NFS3 connection. Named because it appears in a dozen signatures.
+#[cfg(feature = "nfs")]
+type NfsConn = nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>;
+
 /// NFS client that connects to a remote NFS server
 pub struct NfsClient;
 
@@ -38,6 +42,7 @@ impl NfsClient {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         // Parse remote_addr into server and export path
         // Format: server:port:/export/path or server:/export/path (default port 2049)
@@ -51,8 +56,48 @@ impl NfsClient {
         // Extract just the server part (remove port if present)
         let server = server_addr.split(':').next().unwrap_or(&server_addr);
 
+        // Where to find the three RPC programs. The defaults are the real-world ones —
+        // portmapper on 111, MOUNT and NFS resolved through it, and a privileged local source
+        // port, which many servers demand. They are overridable because a server that
+        // multiplexes all three programs on one ephemeral port (NetGet's own does, through
+        // `nfsserve`) is otherwise unreachable: without an override the client asks 111 for
+        // ports no matter what address it was given.
+        let params = startup_params.as_ref();
+        let port_param = |key: &str| -> Result<Option<u16>> {
+            let raw = params
+                .map(|p| p.get_optional_u64(key))
+                .transpose()?
+                .flatten();
+            match raw {
+                None => Ok(None),
+                Some(v) if (1..=65535).contains(&v) => Ok(Some(v as u16)),
+                Some(v) => Err(anyhow::anyhow!(
+                    "NFS client '{key}' must be between 1 and 65535, got {v}"
+                )),
+            }
+        };
+        let portmapper_port = port_param("portmapper_port")?;
+        let mount_port = port_param("mount_port")?;
+        let nfs_port = port_param("nfs_port")?;
+        let privileged_source_port = params
+            .map(|p| p.get_optional_bool("privileged_source_port"))
+            .transpose()?
+            .flatten()
+            .unwrap_or(true);
+
         // Mount the NFS export
-        let connection = Nfs3ConnectionBuilder::new(TokioConnector, server, &export_path)
+        let mut builder = Nfs3ConnectionBuilder::new(TokioConnector, server, &export_path)
+            .connect_from_privileged_port(privileged_source_port);
+        if let Some(port) = portmapper_port {
+            builder = builder.portmapper_port(port);
+        }
+        if let Some(port) = mount_port {
+            builder = builder.mount_port(port);
+        }
+        if let Some(port) = nfs_port {
+            builder = builder.nfs3_port(port);
+        }
+        let connection = builder
             .mount()
             .await
             .context("Failed to mount NFS export")?;
@@ -81,6 +126,27 @@ impl NfsClient {
 
         // Spawn NFS operation handler
         let connection_arc = Arc::new(Mutex::new(connection));
+
+        // The dashboard's `[ send ]` channel, registered BEFORE the connected-event LLM call
+        // that the handler task below makes. A dashboard-created client defaults to a
+        // `*` -> manual rule, so that call can park for minutes waiting for a human;
+        // registering after it would leave the rail reading "no command channel" for the
+        // whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let command_task = tokio::spawn(Self::command_loop(
+            connection_arc.clone(),
+            fh_cache.clone(),
+            command_rx,
+            client_id,
+            llm_client.clone(),
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state
+            .register_client_task(client_id, command_task)
+            .await;
+
         let app_state_clone = app_state.clone();
         let llm_client_clone = llm_client.clone();
         let status_tx_clone = status_tx.clone();
@@ -116,9 +182,7 @@ impl NfsClient {
     /// Handle NFS operations with LLM integration
     #[cfg(feature = "nfs")]
     async fn handle_nfs_operations(
-        connection: Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: Arc<Mutex<NfsConn>>,
         fh_cache: Arc<Mutex<HashMap<String, nfs_fh3>>>,
         client_id: ClientId,
         export_path: String,
@@ -200,9 +264,7 @@ impl NfsClient {
     /// Execute a single NFS action
     #[cfg(feature = "nfs")]
     async fn execute_action(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         action: serde_json::Value,
         client_id: ClientId,
@@ -216,6 +278,8 @@ impl NfsClient {
         match action_result {
             ClientActionResult::Disconnect => {
                 info!("NFS client {} disconnecting", client_id);
+                // Stop offering [ send ] on a session that is going away.
+                app_state.remove_client_handle(client_id).await;
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
@@ -226,71 +290,21 @@ impl NfsClient {
                 return Ok(());
             }
             ClientActionResult::Custom { name, data } => {
-                // Execute NFS operation
-                let result_data = match name.as_str() {
-                    "nfs_lookup" => Self::op_lookup(connection, fh_cache, data).await?,
-                    "nfs_read_file" => Self::op_read_file(connection, fh_cache, data).await?,
-                    "nfs_write_file" => Self::op_write_file(connection, fh_cache, data).await?,
-                    "nfs_list_dir" => Self::op_list_dir(connection, fh_cache, data).await?,
-                    "nfs_get_attr" => Self::op_get_attr(connection, fh_cache, data).await?,
-                    "nfs_create_file" => Self::op_create_file(connection, fh_cache, data).await?,
-                    "nfs_mkdir" => Self::op_mkdir(connection, fh_cache, data).await?,
-                    "nfs_remove" => Self::op_remove(connection, fh_cache, data).await?,
-                    "nfs_rmdir" => Self::op_rmdir(connection, fh_cache, data).await?,
-                    _ => return Err(anyhow::anyhow!("Unknown NFS operation: {}", name)),
-                };
+                let result_data = Self::perform_op(connection, fh_cache, &name, data).await?;
 
                 info!("NFS client {} completed operation: {}", client_id, name);
 
-                // Send result event to LLM
-                let result_event = Event::new(
-                    &NFS_CLIENT_OPERATION_RESULT_EVENT,
-                    json!({
-                        "operation": name,
-                        "result": result_data
-                    }),
-                );
-
-                let instruction = app_state
-                    .get_instruction_for_client(client_id)
-                    .await
-                    .unwrap_or_default();
-                let memory = app_state
-                    .get_memory_for_client(client_id)
-                    .await
-                    .unwrap_or_default();
-
-                let llm_result = call_llm_for_client(
+                Box::pin(Self::report_operation(
+                    connection,
+                    fh_cache,
+                    &name,
+                    result_data,
+                    client_id,
                     llm_client,
                     app_state,
-                    client_id.to_string(),
-                    &instruction,
-                    &memory,
-                    Some(&result_event),
-                    protocol,
                     status_tx,
-                )
+                ))
                 .await?;
-
-                // Update memory
-                if let Some(new_memory) = llm_result.memory_updates {
-                    app_state.set_memory_for_client(client_id, new_memory).await;
-                }
-
-                // Execute follow-up actions recursively
-                for next_action in llm_result.actions {
-                    Box::pin(Self::execute_action(
-                        connection,
-                        fh_cache,
-                        next_action,
-                        client_id,
-                        llm_client,
-                        app_state,
-                        status_tx,
-                        protocol,
-                    ))
-                    .await?;
-                }
             }
             _ => {}
         }
@@ -298,12 +312,231 @@ impl NfsClient {
         Ok(())
     }
 
+    /// Raise `nfs_operation_result` for a completed operation and execute whatever the
+    /// handler answers.
+    ///
+    /// Split out of [`Self::execute_action`] so the command loop can run an injected
+    /// operation, reply with its outcome immediately, and only then let the model react - a
+    /// handler parked for a human must not hold up the next injected command.
+    #[cfg(feature = "nfs")]
+    #[allow(clippy::too_many_arguments)]
+    async fn report_operation(
+        connection: &Arc<Mutex<NfsConn>>,
+        fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
+        name: &str,
+        result_data: serde_json::Value,
+        client_id: ClientId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<()> {
+        let protocol = NfsClientProtocol::new();
+
+        let result_event = Event::new(
+            &NFS_CLIENT_OPERATION_RESULT_EVENT,
+            json!({
+                "operation": name,
+                "result": result_data
+            }),
+        );
+
+        let instruction = app_state
+            .get_instruction_for_client(client_id)
+            .await
+            .unwrap_or_default();
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        let llm_result = call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&result_event),
+            &protocol,
+            status_tx,
+        )
+        .await?;
+
+        if let Some(new_memory) = llm_result.memory_updates {
+            app_state.set_memory_for_client(client_id, new_memory).await;
+        }
+
+        for next_action in llm_result.actions {
+            Box::pin(Self::execute_action(
+                connection,
+                fh_cache,
+                next_action,
+                client_id,
+                llm_client,
+                app_state,
+                status_tx,
+                &protocol,
+            ))
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Run one NFS operation against the mounted export.
+    ///
+    /// The single place the operation table lives, so an injected dashboard command and an
+    /// LLM-produced action reach exactly the same code.
+    #[cfg(feature = "nfs")]
+    async fn perform_op(
+        connection: &Arc<Mutex<NfsConn>>,
+        fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
+        name: &str,
+        data: serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        match name {
+            "nfs_lookup" => Self::op_lookup(connection, fh_cache, data).await,
+            "nfs_read_file" => Self::op_read_file(connection, fh_cache, data).await,
+            "nfs_write_file" => Self::op_write_file(connection, fh_cache, data).await,
+            "nfs_list_dir" => Self::op_list_dir(connection, fh_cache, data).await,
+            "nfs_get_attr" => Self::op_get_attr(connection, fh_cache, data).await,
+            "nfs_create_file" => Self::op_create_file(connection, fh_cache, data).await,
+            "nfs_mkdir" => Self::op_mkdir(connection, fh_cache, data).await,
+            "nfs_remove" => Self::op_remove(connection, fh_cache, data).await,
+            "nfs_rmdir" => Self::op_rmdir(connection, fh_cache, data).await,
+            other => Err(anyhow::anyhow!("Unknown NFS operation: {}", other)),
+        }
+    }
+
+    /// Drain injected commands (the dashboard's `[ send ]`) until the channel closes - which
+    /// happens when the client is removed - or an injected `disconnect` ends the session.
+    ///
+    /// A task of its own rather than a `select!` arm: the ONC-RPC exchanges inside
+    /// `nfs3_client` read with `read_exact`, which is not cancellation-safe, and the
+    /// connection mutex is what serialises this loop against the handler task.
+    ///
+    /// Outcome semantics: `nfs3_client` frames every RPC, so this loop can honestly claim no
+    /// byte count. An operation that ran reports `Executed` naming it and summarising the
+    /// reply; one the server refused is an `Err`, never a quieter `Sent`.
+    #[cfg(feature = "nfs")]
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        connection: Arc<Mutex<NfsConn>>,
+        fh_cache: Arc<Mutex<HashMap<String, nfs_fh3>>>,
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = Arc::new(NfsClientProtocol::new());
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let mut follow_up: Option<(String, serde_json::Value)> = None;
+            let mut disconnect = false;
+
+            let outcome: Result<ClientSendOutcome> = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(ClientActionResult::Disconnect) => {
+                    disconnect = true;
+                    Ok(ClientSendOutcome::Disconnected)
+                }
+                Ok(ClientActionResult::WaitForMore) => Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_more: nothing was asked of the export".to_string(),
+                }),
+                Ok(ClientActionResult::NoAction) => Ok(ClientSendOutcome::Executed {
+                    detail: "no_action".to_string(),
+                }),
+                Ok(ClientActionResult::Custom { name, data }) => {
+                    match Self::perform_op(&connection, &fh_cache, &name, data).await {
+                        Ok(result) => {
+                            let detail = format!("{name} completed: {result}");
+                            follow_up = Some((name, result));
+                            Ok(ClientSendOutcome::Executed { detail })
+                        }
+                        Err(e) => Err(e.context(format!("injected NFS action '{name}'"))),
+                    }
+                }
+                Ok(other) => Ok(ClientSendOutcome::Executed {
+                    detail: format!("unsupported action result {other:?}"),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            if let Err(e) = &outcome {
+                error!("NFS client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
+            }
+
+            // The operation-result event goes to the model in its own task: a handler parked
+            // for a human must not block the next injected command.
+            if let Some((name, result)) = follow_up {
+                let connection = connection.clone();
+                let fh_cache = fh_cache.clone();
+                let llm_client = llm_client.clone();
+                let state = app_state.clone();
+                let tx = status_tx.clone();
+                let handle = tokio::spawn(async move {
+                    if let Err(e) = Self::report_operation(
+                        &connection,
+                        &fh_cache,
+                        &name,
+                        result,
+                        client_id,
+                        &llm_client,
+                        &state,
+                        &tx,
+                    )
+                    .await
+                    {
+                        error!("NFS client {} follow-up failed: {}", client_id, e);
+                    }
+                });
+                app_state.register_client_task(client_id, handle).await;
+            }
+        }
+
+        // Every exit lands here: drop the handle so the rail stops offering [ send ] on a
+        // session nothing is draining any more.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
     /// Resolve path to file handle
     #[cfg(feature = "nfs")]
     async fn resolve_path(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         path: &str,
     ) -> Result<nfs_fh3> {
@@ -373,9 +606,7 @@ impl NfsClient {
     /// NFS lookup operation
     #[cfg(feature = "nfs")]
     async fn op_lookup(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -392,9 +623,7 @@ impl NfsClient {
     /// NFS read file operation
     #[cfg(feature = "nfs")]
     async fn op_read_file(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -430,9 +659,7 @@ impl NfsClient {
     /// NFS write file operation
     #[cfg(feature = "nfs")]
     async fn op_write_file(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -465,9 +692,7 @@ impl NfsClient {
     /// NFS list directory operation
     #[cfg(feature = "nfs")]
     async fn op_list_dir(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -508,9 +733,7 @@ impl NfsClient {
     /// NFS get attributes operation
     #[cfg(feature = "nfs")]
     async fn op_get_attr(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -536,9 +759,7 @@ impl NfsClient {
     /// NFS create file operation
     #[cfg(feature = "nfs")]
     async fn op_create_file(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -583,9 +804,7 @@ impl NfsClient {
     /// NFS mkdir operation
     #[cfg(feature = "nfs")]
     async fn op_mkdir(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -630,9 +849,7 @@ impl NfsClient {
     /// NFS remove file operation
     #[cfg(feature = "nfs")]
     async fn op_remove(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -666,9 +883,7 @@ impl NfsClient {
     /// NFS rmdir operation
     #[cfg(feature = "nfs")]
     async fn op_rmdir(
-        connection: &Arc<
-            Mutex<nfs3_client::Nfs3Connection<nfs3_client::tokio::TokioIo<tokio::net::TcpStream>>>,
-        >,
+        connection: &Arc<Mutex<NfsConn>>,
         fh_cache: &Arc<Mutex<HashMap<String, nfs_fh3>>>,
         data: serde_json::Value,
     ) -> Result<serde_json::Value> {
@@ -732,6 +947,7 @@ impl NfsClient {
         _app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         _client_id: ClientId,
+        _startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         Log::new(Some(&status_tx)).error("NFS feature not enabled at compile time".to_string());
         Err(anyhow::anyhow!("NFS feature not enabled"))

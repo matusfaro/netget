@@ -166,3 +166,29 @@ Kafka broker over a real socket, both mutation-checked.
 - [Apache Kafka Protocol Guide](https://kafka.apache.org/protocol)
 - [`kafka-protocol` crate](https://docs.rs/kafka-protocol/) — `Cargo.toml` pins 0.14
 - Broker half: `src/server/kafka/CLAUDE.md`
+
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) and spawns `Session::command_loop`
+**before** the `kafka_connected` LLM call, which a manual `*` rule can park for minutes.
+
+Kafka frames are read with `read_exact`, which is not cancellation-safe, so commands are
+drained by their own task (registered with `register_client_task`) rather than a `select!`
+arm. The two are serialised by the connection mutex the exchange already takes.
+
+Injected actions go through `Session::perform` — the exact function `drive` uses for
+LLM-produced actions — so there is no second copy of the wire encoding.
+
+**Outcome semantics.** `KafkaConn::write_frame` records the size of the frame it just wrote in
+`last_request_bytes`, and `produce`/`fetch`/`commit`/metadata read it back **while still
+holding the connection mutex**. That is why the reply is a genuine
+`ClientSendOutcome::Sent { bytes_sent }` and not a counter snapshot racing the poll loop.
+A broker that refuses the request is an `Err`, never a quieter `Sent`; a fatal error also
+marks the client `Error` and drops the handle. A follow-up event (Produce ack, Fetch result,
+Metadata) is handed to `drive` in its own registered task rather than inline, so a handler
+parked for a human cannot block the next injected command. `close()` and `mark_error()` both
+call `remove_client_handle`, which is also what ends `command_loop`.
+
+Test: `tests/client/kafka/command_channel_test.rs` (zero LLM calls; a NetGet broker answers
+through one `*` static rule).

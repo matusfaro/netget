@@ -20,7 +20,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// IS-IS PDU types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -160,8 +161,25 @@ impl IsisClient {
 
         let protocol = Arc::new(crate::client::isis::actions::IsisClientProtocol::new());
 
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // This client makes no connected-event LLM call, so there is nothing to race here -
+        // but it is still registered before the pcap task starts, so [ send ] is live from
+        // the moment the client exists.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            protocol.clone(),
+            client_id,
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // pcap is blocking, so we run it in a blocking task
         let interface_clone = interface_name.clone();
+        let handle_state = app_state.clone();
+        let handle_status_tx = status_tx.clone();
         tokio::task::spawn_blocking(move || {
             // Find device
             let device = match Self::find_device(&interface_clone) {
@@ -313,9 +331,89 @@ impl IsisClient {
                     }
                 }
             }
+
+            // The capture is gone: drop the command handle so the dashboard stops offering
+            // [ send ] on a dead client. This also closes the command channel, which ends
+            // `command_loop`.
+            let runtime = tokio::runtime::Handle::current();
+            runtime.block_on(handle_state.remove_client_handle(client_id));
+            let _ = handle_status_tx.send("__UPDATE_UI__".to_string());
         });
 
         // Return a dummy SocketAddr (pcap doesn't have socket addresses)
         Ok("0.0.0.0:0".parse().unwrap())
+    }
+
+    /// Drain injected commands until the channel closes (client removed, or the capture
+    /// exited and dropped the handle) or an injected `stop_capture` ends the session.
+    ///
+    /// **This client can never report `Sent`, and that is not a gap in the wiring.** The
+    /// IS-IS client is a receive-only libpcap sniffer: it has no transmit handle, and its
+    /// whole vocabulary is `analyze_topology` / `wait_for_more` (both `WaitForMore` - the
+    /// analysis happens in the LLM's memory) and `stop_capture` (`Disconnect`). An injected
+    /// action is executed through the protocol's own `execute_action`, exactly as an
+    /// LLM-produced one is, and the honest outcome for everything except `stop_capture` is
+    /// `Executed` with the reason. `stop_capture` is real work: the capture loop polls the
+    /// client's status every iteration, so marking the client disconnected here stops it
+    /// within one pcap timeout (1s).
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        protocol: Arc<crate::client::isis::actions::IsisClientProtocol>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::client_trait::{Client, ClientActionResult};
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.as_ref().execute_action(action.clone()) {
+                Err(e) => ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                },
+                Ok(ClientActionResult::Disconnect) => ClientSendOutcome::Disconnected,
+                Ok(ClientActionResult::WaitForMore) => ClientSendOutcome::Executed {
+                    detail: "executed: the IS-IS client is a receive-only capture, so no PDU \
+                             is transmitted; the analysis lives in the LLM's memory"
+                        .to_string(),
+                },
+                Ok(other) => ClientSendOutcome::Executed {
+                    detail: format!(
+                        "{other:?}: the IS-IS client is a receive-only capture and transmits \
+                         no PDUs"
+                    ),
+                },
+            };
+
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null)],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, ClientSendOutcome::Disconnected);
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, Ok(outcome));
+
+            if disconnect {
+                info!(
+                    "ISIS client {} stopping capture on injected action",
+                    client_id
+                );
+                app_state.remove_client_handle(client_id).await;
+                // The capture loop checks this on every iteration and breaks out.
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
     }
 }

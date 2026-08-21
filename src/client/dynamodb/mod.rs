@@ -12,11 +12,15 @@ use tracing::{error, info};
 
 use crate::client::dynamodb::actions::DYNAMODB_CLIENT_RESPONSE_RECEIVED_EVENT;
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+use crate::utils::truncate::truncate_for_log;
 
 /// DynamoDB client that interacts with AWS DynamoDB or local instances
 pub struct DynamoDbClient;
@@ -96,21 +100,24 @@ impl DynamoDbClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Spawn background monitor task
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // This client raises no connected event, so there is no LLM call to register
+        // ahead of - but the channel still goes up before `connect` returns, which is
+        // what the dashboard waits on.
+        //
+        // The command loop replaces the 5s "has the client been removed yet" poll this
+        // task used to run: `remove_client` drops the handle, the sender goes with it,
+        // and `recv()` returns None - promptly, and without a timer.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
         let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("DynamoDB client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
+        let task_handle = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            _llm_client.clone(),
+            status_tx.clone(),
+        ));
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
@@ -119,25 +126,28 @@ impl DynamoDbClient {
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Execute a PutItem operation
-    pub async fn put_item(
+    /// Execute one DynamoDB operation by the name `execute_action` produced, and
+    /// raise the `dynamodb_response_received` event with its outcome.
+    ///
+    /// This is the single dispatch point: the command loop and any future LLM path
+    /// both come through here, so the six advertised verbs cannot drift apart from
+    /// what is actually implemented.
+    pub async fn execute_operation(
         client_id: ClientId,
-        table_name: String,
-        item: serde_json::Map<String, serde_json::Value>,
+        operation: String,
+        data: serde_json::Value,
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<serde_json::Value> {
         info!(
-            "DynamoDB client {} PutItem to table {}",
-            client_id, table_name
+            "DynamoDB client {} executing operation: {}",
+            client_id, operation
         );
 
-        // Get DynamoDB configuration
         let (region, endpoint_url, access_key_id, secret_access_key) =
             Self::get_config(&app_state, client_id).await?;
 
-        // Build AWS config
         let config = Self::build_aws_config(
             &region,
             endpoint_url.as_deref(),
@@ -146,153 +156,390 @@ impl DynamoDbClient {
         )
         .await?;
 
-        // Create DynamoDB client
-        let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
+        let ddb = aws_sdk_dynamodb::Client::new(&config);
 
-        // Convert JSON item to AttributeValue map
-        let mut attribute_map = std::collections::HashMap::new();
-        for (key, value) in item {
-            if let Some(attr_value) = Self::json_to_attribute_value(&value) {
-                attribute_map.insert(key, attr_value);
-            }
-        }
+        let result = match operation.as_str() {
+            "put_item" => Self::put_item(&ddb, &data).await,
+            "get_item" => Self::get_item(&ddb, &data).await,
+            "query" => Self::query(&ddb, &data).await,
+            "scan" => Self::scan(&ddb, &data).await,
+            "update_item" => Self::update_item(&ddb, &data).await,
+            "delete_item" => Self::delete_item(&ddb, &data).await,
+            other => Err(anyhow::anyhow!("Unknown DynamoDB operation: {}", other)),
+        };
 
-        // Execute PutItem
-        match dynamodb_client
-            .put_item()
-            .table_name(&table_name)
-            .set_item(Some(attribute_map))
-            .send()
-            .await
-        {
-            Ok(_) => {
-                info!("DynamoDB client {} PutItem succeeded", client_id);
-
-                // Call LLM with success event
-                Self::call_llm_with_response(
-                    client_id,
-                    "put_item",
-                    true,
-                    Some(serde_json::json!({"table_name": table_name})),
-                    None,
-                    &app_state,
-                    &llm_client,
-                    &status_tx,
-                )
-                .await?;
-
-                Ok(())
+        let (success, data, error_text) = match &result {
+            Ok(value) => {
+                info!("DynamoDB client {} {} succeeded", client_id, operation);
+                (true, Some(value.clone()), None)
             }
             Err(e) => {
-                error!("DynamoDB client {} PutItem failed: {}", client_id, e);
-
-                // Call LLM with error event
-                Self::call_llm_with_response(
-                    client_id,
-                    "put_item",
-                    false,
-                    None,
-                    Some(e.to_string()),
-                    &app_state,
-                    &llm_client,
-                    &status_tx,
-                )
-                .await?;
-
-                Err(e.into())
+                error!("DynamoDB client {} {} failed: {}", client_id, operation, e);
+                (false, None, Some(e.to_string()))
             }
+        };
+
+        // Raise the response event from its own registered task rather than inline. A
+        // dashboard-created client defaults to a `*` -> manual routing rule, so this LLM
+        // call can park for minutes waiting for a human; awaiting it here would wedge the
+        // command loop and make an injected action that in fact succeeded look to the
+        // dashboard like a timeout.
+        let notify_state = app_state.clone();
+        let notify = tokio::spawn(async move {
+            if let Err(e) = Self::call_llm_with_response(
+                client_id,
+                &operation,
+                success,
+                data,
+                error_text,
+                &app_state,
+                &llm_client,
+                &status_tx,
+            )
+            .await
+            {
+                error!(
+                    "DynamoDB client {} response notification failed: {}",
+                    client_id, e
+                );
+            }
+        });
+        notify_state.register_client_task(client_id, notify).await;
+
+        result
+    }
+
+    /// Read an `{":v": {"S": "x"}}` map from action data into AttributeValues.
+    fn attribute_values_from(
+        data: &serde_json::Value,
+        field: &str,
+    ) -> Option<std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>> {
+        let map = data.get(field)?.as_object()?;
+        let mut out = std::collections::HashMap::new();
+        for (key, value) in map {
+            if let Some(attr) = Self::json_to_attribute_value(value) {
+                out.insert(key.clone(), attr);
+            }
+        }
+        Some(out)
+    }
+
+    /// Read a `{"id": {"S": "x"}}` key/item map from action data.
+    fn attribute_map_from(
+        data: &serde_json::Value,
+        field: &str,
+    ) -> Result<std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>> {
+        let map = data
+            .get(field)
+            .and_then(|v| v.as_object())
+            .with_context(|| format!("Missing '{}' in DynamoDB action data", field))?;
+        let mut out = std::collections::HashMap::new();
+        for (key, value) in map {
+            if let Some(attr) = Self::json_to_attribute_value(value) {
+                out.insert(key.clone(), attr);
+            }
+        }
+        Ok(out)
+    }
+
+    fn table_name_from(data: &serde_json::Value) -> Result<String> {
+        Ok(data
+            .get("table_name")
+            .and_then(|v| v.as_str())
+            .context("Missing 'table_name' in DynamoDB action data")?
+            .to_string())
+    }
+
+    /// PutItem
+    async fn put_item(
+        ddb: &aws_sdk_dynamodb::Client,
+        data: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let table_name = Self::table_name_from(data)?;
+        let item = Self::attribute_map_from(data, "item")?;
+
+        ddb.put_item()
+            .table_name(&table_name)
+            .set_item(Some(item))
+            .send()
+            .await
+            .context("PutItem failed")?;
+
+        Ok(serde_json::json!({ "table_name": table_name, "written": true }))
+    }
+
+    /// GetItem
+    async fn get_item(
+        ddb: &aws_sdk_dynamodb::Client,
+        data: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let table_name = Self::table_name_from(data)?;
+        let key = Self::attribute_map_from(data, "key")?;
+
+        let output = ddb
+            .get_item()
+            .table_name(&table_name)
+            .set_key(Some(key))
+            .send()
+            .await
+            .context("GetItem failed")?;
+
+        let item_json = match output.item {
+            Some(item) => Self::attribute_map_to_json(&item),
+            None => serde_json::json!(null),
+        };
+
+        Ok(serde_json::json!({ "table_name": table_name, "item": item_json }))
+    }
+
+    /// Query
+    async fn query(
+        ddb: &aws_sdk_dynamodb::Client,
+        data: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let table_name = Self::table_name_from(data)?;
+        let key_condition_expression = data
+            .get("key_condition_expression")
+            .and_then(|v| v.as_str())
+            .context("Missing 'key_condition_expression' in DynamoDB action data")?;
+
+        let output = ddb
+            .query()
+            .table_name(&table_name)
+            .key_condition_expression(key_condition_expression)
+            .set_expression_attribute_values(Self::attribute_values_from(
+                data,
+                "expression_attribute_values",
+            ))
+            .send()
+            .await
+            .context("Query failed")?;
+
+        let items: Vec<serde_json::Value> = output
+            .items()
+            .iter()
+            .map(Self::attribute_map_to_json)
+            .collect();
+
+        Ok(serde_json::json!({
+            "table_name": table_name,
+            "count": items.len(),
+            "items": items,
+        }))
+    }
+
+    /// Scan
+    async fn scan(
+        ddb: &aws_sdk_dynamodb::Client,
+        data: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let table_name = Self::table_name_from(data)?;
+
+        let mut request = ddb
+            .scan()
+            .table_name(&table_name)
+            .set_expression_attribute_values(Self::attribute_values_from(
+                data,
+                "expression_attribute_values",
+            ));
+
+        if let Some(filter) = data.get("filter_expression").and_then(|v| v.as_str()) {
+            request = request.filter_expression(filter);
+        }
+
+        let output = request.send().await.context("Scan failed")?;
+
+        let items: Vec<serde_json::Value> = output
+            .items()
+            .iter()
+            .map(Self::attribute_map_to_json)
+            .collect();
+
+        Ok(serde_json::json!({
+            "table_name": table_name,
+            "count": items.len(),
+            "items": items,
+        }))
+    }
+
+    /// UpdateItem
+    async fn update_item(
+        ddb: &aws_sdk_dynamodb::Client,
+        data: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let table_name = Self::table_name_from(data)?;
+        let key = Self::attribute_map_from(data, "key")?;
+        let update_expression = data
+            .get("update_expression")
+            .and_then(|v| v.as_str())
+            .context("Missing 'update_expression' in DynamoDB action data")?;
+
+        let output = ddb
+            .update_item()
+            .table_name(&table_name)
+            .set_key(Some(key))
+            .update_expression(update_expression)
+            .set_expression_attribute_values(Self::attribute_values_from(
+                data,
+                "expression_attribute_values",
+            ))
+            .return_values(aws_sdk_dynamodb::types::ReturnValue::AllNew)
+            .send()
+            .await
+            .context("UpdateItem failed")?;
+
+        let attributes = match output.attributes {
+            Some(attrs) => Self::attribute_map_to_json(&attrs),
+            None => serde_json::json!(null),
+        };
+
+        Ok(serde_json::json!({
+            "table_name": table_name,
+            "updated": true,
+            "attributes": attributes,
+        }))
+    }
+
+    /// DeleteItem
+    async fn delete_item(
+        ddb: &aws_sdk_dynamodb::Client,
+        data: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let table_name = Self::table_name_from(data)?;
+        let key = Self::attribute_map_from(data, "key")?;
+
+        ddb.delete_item()
+            .table_name(&table_name)
+            .set_key(Some(key))
+            .send()
+            .await
+            .context("DeleteItem failed")?;
+
+        Ok(serde_json::json!({ "table_name": table_name, "deleted": true }))
+    }
+
+    /// Apply one executed action against DynamoDB. Shared by every path that can
+    /// produce an action, so an injected one behaves identically to an LLM one.
+    ///
+    /// The AWS SDK owns the socket and reports no wire byte count, so a completed
+    /// operation is `Executed { detail }` naming the operation and its result -
+    /// never `Sent`, which would be a fabricated byte count.
+    async fn apply_action(
+        result: ClientActionResult,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> ClientSendOutcome {
+        match result {
+            ClientActionResult::Custom { name, data } => {
+                match Self::execute_operation(
+                    client_id,
+                    name.clone(),
+                    data,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                )
+                .await
+                {
+                    Ok(value) => ClientSendOutcome::Executed {
+                        detail: format!(
+                            "{} completed: {}",
+                            name,
+                            truncate_for_log(&value.to_string(), 200)
+                        ),
+                    },
+                    Err(e) => {
+                        let _ = status_tx
+                            .send(format!("[ERROR] DynamoDB operation {} failed: {}", name, e));
+                        ClientSendOutcome::Executed {
+                            detail: format!(
+                                "{} failed: {}",
+                                name,
+                                truncate_for_log(&e.to_string(), 200)
+                            ),
+                        }
+                    }
+                }
+            }
+            ClientActionResult::Disconnect => ClientSendOutcome::Disconnected,
+            ClientActionResult::WaitForMore => ClientSendOutcome::Executed {
+                detail: "wait_for_more".to_string(),
+            },
+            ClientActionResult::NoAction => ClientSendOutcome::Executed {
+                detail: "no_action".to_string(),
+            },
+            ClientActionResult::SendData(_) => ClientSendOutcome::Executed {
+                detail: "send_data has no meaning for the DynamoDB client: it speaks the \
+                         DynamoDB API through the AWS SDK, not a socket this client owns"
+                    .to_string(),
+            },
+            ClientActionResult::Multiple(_) => ClientSendOutcome::Executed {
+                detail: "the DynamoDB client's own verbs never produce Multiple; nothing was \
+                         applied"
+                    .to_string(),
+            },
         }
     }
 
-    /// Execute a GetItem operation
-    pub async fn get_item(
+    /// Drain injected commands until the channel closes (the client was removed) or
+    /// an injected `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client:
+    /// every DynamoDB verb yields `ClientActionResult::Custom` and there is no write
+    /// half to put bytes on. Actions therefore go through [`Self::apply_action`], and
+    /// the outcome is logged and replied exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
         client_id: ClientId,
-        table_name: String,
-        key: serde_json::Map<String, serde_json::Value>,
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        info!(
-            "DynamoDB client {} GetItem from table {}",
-            client_id, table_name
-        );
+    ) {
+        let protocol = crate::client::dynamodb::actions::DynamoDbClientProtocol::new();
 
-        // Get DynamoDB configuration
-        let (region, endpoint_url, access_key_id, secret_access_key) =
-            Self::get_config(&app_state, client_id).await?;
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                },
+                Ok(result) => {
+                    Self::apply_action(result, client_id, &app_state, &llm_client, &status_tx).await
+                }
+            };
+            let disconnected = matches!(outcome, ClientSendOutcome::Disconnected);
 
-        // Build AWS config
-        let config = Self::build_aws_config(
-            &region,
-            endpoint_url.as_deref(),
-            access_key_id.as_deref(),
-            secret_access_key.as_deref(),
-        )
-        .await?;
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null)],
+                )
+                .await;
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, Ok(outcome));
 
-        // Create DynamoDB client
-        let dynamodb_client = aws_sdk_dynamodb::Client::new(&config);
-
-        // Convert JSON key to AttributeValue map
-        let mut key_map = std::collections::HashMap::new();
-        for (key_name, value) in key {
-            if let Some(attr_value) = Self::json_to_attribute_value(&value) {
-                key_map.insert(key_name, attr_value);
+            if disconnected {
+                info!(
+                    "DynamoDB client {} disconnecting on injected action",
+                    client_id
+                );
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
             }
         }
 
-        // Execute GetItem
-        match dynamodb_client
-            .get_item()
-            .table_name(&table_name)
-            .set_key(Some(key_map))
-            .send()
-            .await
-        {
-            Ok(output) => {
-                let item_json = if let Some(item) = output.item {
-                    Self::attribute_map_to_json(&item)
-                } else {
-                    serde_json::json!(null)
-                };
-
-                info!("DynamoDB client {} GetItem succeeded", client_id);
-
-                // Call LLM with success event
-                Self::call_llm_with_response(
-                    client_id,
-                    "get_item",
-                    true,
-                    Some(serde_json::json!({"table_name": table_name, "item": item_json})),
-                    None,
-                    &app_state,
-                    &llm_client,
-                    &status_tx,
-                )
-                .await?;
-
-                Ok(())
-            }
-            Err(e) => {
-                error!("DynamoDB client {} GetItem failed: {}", client_id, e);
-
-                // Call LLM with error event
-                Self::call_llm_with_response(
-                    client_id,
-                    "get_item",
-                    false,
-                    None,
-                    Some(e.to_string()),
-                    &app_state,
-                    &llm_client,
-                    &status_tx,
-                )
-                .await?;
-
-                Err(e.into())
-            }
-        }
+        info!("DynamoDB client {} command loop stopped", client_id);
+        // Never leave the dashboard offering [ send ] into a client that is gone.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Get DynamoDB configuration from client state

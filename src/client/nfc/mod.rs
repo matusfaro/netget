@@ -19,20 +19,28 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
-use tracing::info;
+use tokio::sync::mpsc;
+use tracing::{error, info, warn};
 
 // Re-export protocol
 pub use actions::NfcClientProtocol;
 
-/// Connection state for LLM processing
-#[derive(Debug, Clone, PartialEq)]
-enum ConnectionState {
-    Idle,
-    #[allow(dead_code)]
-    Processing,
-    #[allow(dead_code)]
-    Accumulating,
+/// What applying one action to the PC/SC reader actually did.
+///
+/// `Sent` is reported only when an APDU was really handed to a card that
+/// answered — those bytes crossed the contactless interface. Everything else
+/// says specifically why nothing did.
+pub enum NfcApplied {
+    /// This many APDU bytes reached the card; the response APDU is attached so
+    /// the caller can log it.
+    Sent {
+        bytes_sent: usize,
+        response_hex: String,
+    },
+    /// The action ran but nothing reached a card; the string says why.
+    Executed(String),
+    /// The card session was ended.
+    Disconnected,
 }
 
 /// NFC client implementation
@@ -56,72 +64,73 @@ impl NfcClient {
             .map(|s| s.to_string());
 
         // Create PC/SC context
-        #[cfg(feature = "nfc-client")]
         let ctx = pcsc::Context::establish(pcsc::Scope::User)
             .context("Failed to establish PC/SC context. Is pcscd running (Linux)?")?;
 
         // List available readers
-        #[cfg(feature = "nfc-client")]
         let readers_buf = ctx
             .list_readers_owned()
             .context("Failed to list PC/SC readers")?;
 
-        #[cfg(feature = "nfc-client")]
-        let readers: Vec<String> = readers_buf
-            .iter()
-            .map(|r| r.to_string_lossy().to_string())
-            .collect();
-
-        #[cfg(feature = "nfc-client")]
-        if readers.is_empty() {
+        if readers_buf.is_empty() {
             return Err(anyhow!(
                 "No PC/SC readers found. Please connect an NFC reader (e.g., ACR122U)"
             ));
         }
 
-        #[cfg(feature = "nfc-client")]
+        let readers: Vec<String> = readers_buf
+            .iter()
+            .map(|r| r.to_string_lossy().to_string())
+            .collect();
+
         info!("Found {} PC/SC reader(s): {:?}", readers.len(), readers);
 
-        // Select reader
-        #[cfg(feature = "nfc-client")]
-        let selected_reader = if let Some(name) = reader_name {
-            readers
+        // Select reader. Keep the `CString` form: that is what `Context::connect`
+        // wants, and round-tripping through `String` can lose a non-UTF-8 name.
+        let selected_reader: std::ffi::CString = if let Some(name) = reader_name {
+            readers_buf
                 .iter()
-                .find(|r| r.contains(&name))
+                .find(|r| r.to_string_lossy().contains(&name))
                 .ok_or_else(|| anyhow!("Reader '{}' not found", name))?
                 .clone()
         } else {
-            readers
+            readers_buf
                 .get(reader_index)
                 .ok_or_else(|| anyhow!("Reader index {} out of range", reader_index))?
                 .clone()
         };
 
-        #[cfg(feature = "nfc-client")]
-        info!("Using PC/SC reader: {}", selected_reader);
-        #[cfg(feature = "nfc-client")]
-        let _ = status_tx.send(format!("Using NFC reader: {}", selected_reader));
+        let selected_reader_name = selected_reader.to_string_lossy().to_string();
+        info!("Using PC/SC reader: {}", selected_reader_name);
+        let _ = status_tx.send(format!("Using NFC reader: {}", selected_reader_name));
 
-        // Create client state
-        #[cfg(feature = "nfc-client")]
-        let _client_state = Arc::new(Mutex::new(NfcClientState {
-            ctx: ctx.clone(),
-            reader_name: selected_reader.clone(),
-            card: None,
-            connection_state: ConnectionState::Idle,
-        }));
-
-        // TODO: Async client actions not yet supported
-        // NFC client currently only supports initial reader listing
-        // Future: Add support for async actions (connect_card, etc.) via event-driven pattern
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the readers-listed LLM call below: a dashboard-created
+        // client defaults to a `*` -> manual rule, so that call can park for minutes
+        // waiting for a human, and the operator must be able to reach the reader while
+        // it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn({
+            let ctx = ctx.clone();
+            let reader = selected_reader.clone();
+            let app_state = app_state.clone();
+            let llm_client = llm_client.clone();
+            let status_tx = status_tx.clone();
+            async move {
+                Self::command_loop(
+                    command_rx, ctx, reader, client_id, app_state, llm_client, status_tx,
+                )
+                .await;
+            }
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Send initial event to LLM: readers listed
-        #[cfg(feature = "nfc-client")]
         {
-            let readers_json: Vec<String> = readers.clone();
             let event = Event::new(
                 &NFC_READERS_LISTED_EVENT,
-                json!({ "readers": readers_json }),
+                json!({ "readers": readers.clone() }),
             );
 
             // Get default instruction from startup params or use default
@@ -132,8 +141,10 @@ impl NfcClient {
             // Create protocol instance for action definitions
             let protocol = Arc::new(NfcClientProtocol);
 
-            // Call LLM with initial event
-            let _result = call_llm_for_client(
+            // A failing readers-listed call must not kill the client: the command
+            // channel is already registered and an operator can drive the reader by
+            // hand, which is exactly the case a `*` -> manual rule sets up.
+            match call_llm_for_client(
                 &llm_client,
                 &app_state,
                 client_id.to_string(),
@@ -143,47 +154,267 @@ impl NfcClient {
                 protocol.as_ref(),
                 &status_tx,
             )
-            .await?;
-
-            // TODO: Execute returned actions when async client action support is added
+            .await
+            {
+                Ok(result) => {
+                    for action in result.actions {
+                        let applied = Self::apply_nfc_action(
+                            &ctx,
+                            &selected_reader,
+                            action.clone(),
+                            client_id,
+                            &app_state,
+                            &llm_client,
+                            &status_tx,
+                        )
+                        .await;
+                        if matches!(applied, Ok(NfcApplied::Disconnected)) {
+                            break;
+                        }
+                        if let Err(e) = applied {
+                            error!("NFC client {} action error: {}", client_id, e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("LLM error for NFC client {}: {}", client_id, e);
+                }
+            }
         }
 
         // Return dummy socket address (NFC doesn't use network sockets)
         Ok(SocketAddr::from(([127, 0, 0, 1], 0)))
     }
 
-    // TODO: Implement LLM-driven NFC card operations when async client action support is added
-    // This will include:
-    // - Async actions: connect_card, disconnect_card
-    // - Sync actions: send_apdu, read_ndef, write_ndef
-    // - Event-driven pattern: card_detected → send_apdu → apdu_response → next action
-}
+    /// Drain injected commands until the channel closes (the client was removed,
+    /// which drops the handle) or an injected `disconnect_card` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this
+    /// client: it owns no socket, and every NFC verb yields a
+    /// `ClientActionResult::Custom` that only PC/SC can carry out. So the action goes
+    /// through [`Self::apply_nfc_action`] — the same function the readers-listed LLM
+    /// path uses — and the outcome is recorded and replied the way the generic arm
+    /// does it.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        ctx: pcsc::Context,
+        reader: std::ffi::CString,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
 
-/// NFC client state
-#[cfg(feature = "nfc-client")]
-struct NfcClientState {
-    #[allow(dead_code)]
-    ctx: pcsc::Context,
-    #[allow(dead_code)]
-    reader_name: String,
-    #[allow(dead_code)]
-    card: Option<pcsc::Card>,
-    #[allow(dead_code)]
-    connection_state: ConnectionState,
-}
+        let protocol = NfcClientProtocol;
 
-// Stub implementation when feature is disabled
-#[cfg(not(feature = "nfc-client"))]
-impl NfcClient {
-    pub async fn connect_with_llm_actions(
-        _llm_client: OllamaClient,
-        _app_state: Arc<AppState>,
-        _status_tx: mpsc::UnboundedSender<String>,
-        _client_id: ClientId,
-        _startup_params: Value,
-    ) -> Result<SocketAddr> {
-        Err(anyhow!(
-            "NFC client support not compiled (feature 'nfc-client' disabled)"
-        ))
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let mut extra_log: Vec<serde_json::Value> = Vec::new();
+
+            let outcome: anyhow::Result<ClientSendOutcome> = match Self::apply_nfc_action(
+                &ctx,
+                &reader,
+                action.clone(),
+                client_id,
+                &app_state,
+                &llm_client,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(NfcApplied::Sent {
+                    bytes_sent,
+                    response_hex,
+                }) => {
+                    extra_log.push(json!({ "response_hex": response_hex }));
+                    Ok(ClientSendOutcome::Sent { bytes_sent })
+                }
+                Ok(NfcApplied::Executed(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                Ok(NfcApplied::Disconnected) => Ok(ClientSendOutcome::Disconnected),
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+            };
+
+            let mut responses = vec![match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => json!({ "error": e.to_string() }),
+            }];
+            responses.append(&mut extra_log);
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    responses,
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        // Every exit path lands here: drop the command handle so the dashboard stops
+        // offering [ send ] on a client whose loop is gone.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    /// Carry one action out against the reader. Shared by the readers-listed LLM path
+    /// and injected commands so the PC/SC calls exist exactly once.
+    ///
+    /// `Err` means the protocol rejected the action (unknown verb / bad params); a
+    /// PC/SC failure is `Ok(Executed(..))` with the reason, because the action did run.
+    async fn apply_nfc_action(
+        ctx: &pcsc::Context,
+        reader: &std::ffi::CStr,
+        action: Value,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<NfcApplied> {
+        use crate::llm::actions::client_trait::{Client, ClientActionResult};
+
+        match NfcClientProtocol.execute_action(action)? {
+            ClientActionResult::Custom { name, data } if name == "send_apdu" => {
+                let apdu_hex = data
+                    .get("apdu_hex")
+                    .and_then(|v| v.as_str())
+                    .context("Missing apdu_hex in action data")?
+                    .to_string();
+                let apdu =
+                    hex::decode(apdu_hex.trim()).context("apdu_hex is not valid hexadecimal")?;
+                let sent = apdu.len();
+
+                // PC/SC is a blocking C API: connect to whatever card is on the
+                // reader, transmit, and drop the card handle, all on a blocking
+                // thread. The handle is not kept between commands, so a card that
+                // was removed and re-presented still works.
+                let ctx = ctx.clone();
+                let reader = reader.to_owned();
+                let transmit = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+                    let card = ctx
+                        .connect(&reader, pcsc::ShareMode::Shared, pcsc::Protocols::ANY)
+                        .context("PC/SC connect failed (is a card on the reader?)")?;
+                    let mut rx = vec![0u8; pcsc::MAX_BUFFER_SIZE];
+                    let response = card
+                        .transmit(&apdu, &mut rx)
+                        .context("PC/SC transmit failed")?;
+                    Ok(response.to_vec())
+                })
+                .await
+                .context("PC/SC blocking task panicked")?;
+
+                match transmit {
+                    Ok(response) => {
+                        let response_hex = hex::encode_upper(&response);
+                        info!(
+                            "NFC client {} APDU {} bytes -> response {}",
+                            client_id, sent, response_hex
+                        );
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] NFC client {} APDU response: {}",
+                            client_id, response_hex
+                        ));
+
+                        // `nfc_apdu_response` was declared and never emitted; an
+                        // injected APDU is the first thing that actually raises it.
+                        Self::notify_apdu_response(
+                            &response, client_id, app_state, llm_client, status_tx,
+                        )
+                        .await;
+
+                        Ok(NfcApplied::Sent {
+                            bytes_sent: sent,
+                            response_hex,
+                        })
+                    }
+                    Err(e) => {
+                        warn!("NFC client {} APDU failed: {:#}", client_id, e);
+                        Ok(NfcApplied::Executed(format!(
+                            "send_apdu did not reach a card: {e:#}"
+                        )))
+                    }
+                }
+            }
+            ClientActionResult::Custom { name, .. } => Ok(NfcApplied::Executed(format!(
+                "'{name}' is declared but not implemented by the NFC client; only \
+                 send_apdu / send_apdu_raw reach the card (see src/client/nfc/CLAUDE.md)"
+            ))),
+            ClientActionResult::Disconnect => {
+                info!("NFC client {} disconnecting card session", client_id);
+                app_state
+                    .update_client_status(client_id, crate::state::ClientStatus::Disconnected)
+                    .await;
+                // Drop the command handle here rather than only in the command loop:
+                // the LLM can disconnect too, and a handle left behind would offer
+                // [ send ] into a client that is gone.
+                app_state.remove_client_handle(client_id).await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                Ok(NfcApplied::Disconnected)
+            }
+            ClientActionResult::WaitForMore => {
+                Ok(NfcApplied::Executed("wait_for_more".to_string()))
+            }
+            other => Ok(NfcApplied::Executed(format!(
+                "unhandled action result {other:?}"
+            ))),
+        }
+    }
+
+    /// Raise `nfc_apdu_response` so the model can act on what the card answered.
+    async fn notify_apdu_response(
+        response: &[u8],
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+        let (data, sw) = if response.len() >= 2 {
+            response.split_at(response.len() - 2)
+        } else {
+            (response, &[][..])
+        };
+        let event = Event::new(
+            &NFC_APDU_RESPONSE_EVENT,
+            json!({
+                "response_hex": hex::encode_upper(response),
+                "sw1": sw.first().map(|b| format!("{b:02X}")).unwrap_or_default(),
+                "sw2": sw.get(1).map(|b| format!("{b:02X}")).unwrap_or_default(),
+                "data_hex": hex::encode_upper(data),
+            }),
+        );
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+        if let Err(e) = call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            &NfcClientProtocol,
+            status_tx,
+        )
+        .await
+        {
+            error!("LLM error on nfc_apdu_response for {}: {}", client_id, e);
+        }
     }
 }

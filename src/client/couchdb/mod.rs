@@ -13,10 +13,13 @@ use crate::client::couchdb::actions::{
     COUCHDB_CLIENT_CONNECTED_EVENT, COUCHDB_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 use crate::{console_error, console_info};
 
 /// CouchDB client that connects to a CouchDB server
@@ -94,6 +97,24 @@ impl CouchDbClient {
         let client_arc = Arc::new(tokio::sync::Mutex::new(client));
         let client_for_connected = client_arc.clone();
 
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // Registered - and already being drained by its own task - BEFORE the
+        // connected-event LLM call, which a manual `*` rule can park for minutes: the
+        // operator must be able to reach the client while it waits. The couch_rs handle
+        // is already behind an Arc<Mutex<_>>, so the command task shares the very same
+        // connection the LLM path uses.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(command_loop(
+            command_rx,
+            client_id,
+            client_arc.clone(),
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with couchdb_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -129,6 +150,7 @@ impl CouchDbClient {
                             &app_state,
                             &llm_client,
                             &status_tx,
+                            Dispatch::Inline,
                         )
                         .await
                         {
@@ -152,42 +174,162 @@ impl CouchDbClient {
             }
         }
 
-        // For CouchDB, we don't have a persistent read loop like TCP clients
-        // Instead, operations are driven by LLM actions
-        // We'll spawn a task to keep the client alive and handle periodic operations
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(5));
-            loop {
-                interval.tick().await;
+        // A connect-event action may have disconnected the client; the handle must not
+        // outlive it or the dashboard offers [ send ] into a dead connection.
+        if matches!(
+            app_state.get_client(client_id).await.map(|c| c.status),
+            None | Some(ClientStatus::Disconnected)
+        ) {
+            app_state.remove_client_handle(client_id).await;
+        }
 
-                // Check if client is still connected
-                if let Some(client_instance) = app_state.get_client(client_id).await {
-                    if client_instance.status == ClientStatus::Disconnected {
-                        info!("CouchDB client {} disconnected", client_id);
-                        break;
-                    }
-                } else {
-                    // Client no longer exists
-                    break;
-                }
-
-                // Optionally poll for changes if watching a database
-                // This would require maintaining state about which databases are being watched
-                // For now, we just keep the client alive
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
-
+        // CouchDB has no persistent read loop: operations are driven by actions. The
+        // command task spawned above is what keeps the client alive - it replaces the old
+        // 5s "is the client gone yet" poll, because the command channel closes the moment
+        // the client is removed.
         Ok(local_addr)
     }
 }
 
+/// Drain injected commands until the channel closes (client removed) or an injected
+/// `disconnect` ends the session.
+///
+/// `command_support::handle_stream_client_command` cannot serve this client: it writes
+/// `SendData` to a socket, and every CouchDB verb yields `ClientActionResult::Custom`
+/// that has to go through `couch_rs`. So the action goes through
+/// [`execute_couchdb_action`] - the same function the connected-event path uses - and the
+/// outcome is recorded and replied exactly the way the generic arm does it.
+async fn command_loop(
+    mut command_rx: tokio::sync::mpsc::Receiver<ClientCommand>,
+    client_id: ClientId,
+    client: Arc<tokio::sync::Mutex<couch_rs::Client>>,
+    app_state: Arc<AppState>,
+    llm_client: OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+) {
+    let protocol = crate::client::couchdb::actions::CouchDbClientProtocol::new();
+
+    while let Some(command) = command_rx.recv().await {
+        let action = command.action.clone();
+
+        // Validate through the protocol's own vocabulary first, so an unknown or
+        // misspelled action is reported as Rejected rather than silently ignored.
+        let outcome = match protocol.execute_action(action.clone()) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(ClientActionResult::Custom { name, .. }) if name == "disconnect" => {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                Ok(ClientSendOutcome::Disconnected)
+            }
+            Ok(_) => {
+                // Awaited, not dispatched: the reported outcome describes an operation
+                // that has actually completed, and the couchdb_response_received event
+                // has already fired (and its follow-up actions run) by then.
+                let mut queue = vec![action.clone()];
+                let mut executed = 0usize;
+                let mut failure: Option<anyhow::Error> = None;
+                while let Some(next) = queue.pop() {
+                    match execute_couchdb_action(
+                        &next,
+                        client_id,
+                        &client,
+                        &app_state,
+                        &llm_client,
+                        &status_tx,
+                        Dispatch::Deferred,
+                    )
+                    .await
+                    {
+                        Ok(follow_ups) => {
+                            executed += 1;
+                            queue.extend(follow_ups.into_iter().rev());
+                        }
+                        Err(e) => {
+                            failure = Some(e);
+                            break;
+                        }
+                    }
+                }
+                match failure {
+                    Some(e) => Err(e),
+                    None => {
+                        let action_type = action
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("action");
+                        Ok(ClientSendOutcome::Executed {
+                            detail: if executed > 1 {
+                                format!(
+                                    "{action_type} executed ({} follow-up action(s) from the \
+                                     response event)",
+                                    executed - 1
+                                )
+                            } else {
+                                format!("{action_type} executed")
+                            },
+                        })
+                    }
+                }
+            }
+        };
+
+        let outcome_json = match &outcome {
+            Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+            Err(e) => serde_json::json!({"error": e.to_string()}),
+        };
+        app_state
+            .record_access_log(
+                AccessLogOwner::Client(client_id.as_u32()),
+                protocol.protocol_name(),
+                None,
+                "injected_action",
+                action,
+                vec![outcome_json],
+            )
+            .await;
+
+        let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+        if let Err(e) = &outcome {
+            error!("CouchDB client {} injected action failed: {}", client_id, e);
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        crate::client::command_support::reply(command, outcome);
+
+        if disconnect {
+            break;
+        }
+    }
+
+    info!("CouchDB client {} command loop stopped", client_id);
+    app_state.remove_client_handle(client_id).await;
+    let _ = status_tx.send("__UPDATE_UI__".to_string());
+}
+
 /// Execute a CouchDB action from the LLM
+/// Whether the `couchdb_response_received` event's LLM call runs on the caller's
+/// task or on its own.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Await the LLM call and hand its actions back, so the connected-event path
+    /// keeps draining follow-ups exactly as it always has.
+    Inline,
+    /// Raise the event from its own registered task and return no actions.
+    ///
+    /// Used by the injected-command loop. A dashboard-created client defaults to a
+    /// `*` -> manual rule, so that LLM call can park for up to 300s waiting for a
+    /// human, while the composer's SEND_TIMEOUT is 30s. Awaiting it would report a
+    /// command that in fact succeeded as a timeout, and head-of-line-block every
+    /// later command on the channel.
+    Deferred,
+}
+
 async fn execute_couchdb_action(
     action: &serde_json::Value,
     client_id: ClientId,
@@ -195,6 +337,7 @@ async fn execute_couchdb_action(
     app_state: &Arc<AppState>,
     llm_client: &OllamaClient,
     status_tx: &mpsc::UnboundedSender<String>,
+    notify: Dispatch,
 ) -> Result<Vec<serde_json::Value>> {
     let action_type = action
         .get("type")
@@ -223,6 +366,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await
                 }
@@ -237,6 +381,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await
                 }
@@ -264,6 +409,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -278,6 +424,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -299,6 +446,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -313,6 +461,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -361,6 +510,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -391,6 +541,7 @@ async fn execute_couchdb_action(
                             app_state,
                             llm_client,
                             status_tx,
+                            notify,
                         )
                         .await);
                     } else {
@@ -422,6 +573,7 @@ async fn execute_couchdb_action(
                             app_state,
                             llm_client,
                             status_tx,
+                            notify,
                         )
                         .await);
                     }
@@ -437,6 +589,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -469,6 +622,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -486,6 +640,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -500,6 +655,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -563,6 +719,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -593,6 +750,7 @@ async fn execute_couchdb_action(
                             app_state,
                             llm_client,
                             status_tx,
+                            notify,
                         )
                         .await);
                     } else {
@@ -603,7 +761,7 @@ async fn execute_couchdb_action(
                                 "Conflict updating document {}: revision mismatch",
                                 doc_id
                             );
-                            send_conflict_event(
+                            let conflict_actions = send_conflict_event(
                                 client_id,
                                 db_name,
                                 doc_id,
@@ -611,8 +769,12 @@ async fn execute_couchdb_action(
                                 app_state,
                                 llm_client,
                                 status_tx,
+                                notify,
                             )
                             .await;
+                            if !conflict_actions.is_empty() {
+                                return Ok(conflict_actions);
+                            }
                         }
 
                         console_error!(
@@ -643,6 +805,7 @@ async fn execute_couchdb_action(
                             app_state,
                             llm_client,
                             status_tx,
+                            notify,
                         )
                         .await);
                     }
@@ -658,6 +821,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -712,6 +876,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -742,6 +907,7 @@ async fn execute_couchdb_action(
                             app_state,
                             llm_client,
                             status_tx,
+                            notify,
                         )
                         .await);
                     } else {
@@ -752,7 +918,7 @@ async fn execute_couchdb_action(
                                 "Conflict deleting document {}: revision mismatch",
                                 doc_id
                             );
-                            send_conflict_event(
+                            let conflict_actions = send_conflict_event(
                                 client_id,
                                 db_name,
                                 doc_id,
@@ -760,8 +926,12 @@ async fn execute_couchdb_action(
                                 app_state,
                                 llm_client,
                                 status_tx,
+                                notify,
                             )
                             .await;
+                            if !conflict_actions.is_empty() {
+                                return Ok(conflict_actions);
+                            }
                         }
 
                         console_error!(
@@ -792,6 +962,7 @@ async fn execute_couchdb_action(
                             app_state,
                             llm_client,
                             status_tx,
+                            notify,
                         )
                         .await);
                     }
@@ -807,6 +978,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -857,6 +1029,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -882,6 +1055,7 @@ async fn execute_couchdb_action(
                             app_state,
                             llm_client,
                             status_tx,
+                            notify,
                         )
                         .await);
                     } else {
@@ -913,6 +1087,7 @@ async fn execute_couchdb_action(
                             app_state,
                             llm_client,
                             status_tx,
+                            notify,
                         )
                         .await);
                     }
@@ -928,6 +1103,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -960,6 +1136,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -983,6 +1160,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -997,6 +1175,7 @@ async fn execute_couchdb_action(
                         app_state,
                         llm_client,
                         status_tx,
+                        notify,
                     )
                     .await);
                 }
@@ -1016,6 +1195,7 @@ async fn execute_couchdb_action(
                 app_state,
                 llm_client,
                 status_tx,
+                notify,
             )
             .await);
         }
@@ -1030,6 +1210,7 @@ async fn execute_couchdb_action(
                 app_state,
                 llm_client,
                 status_tx,
+                notify,
             )
             .await);
         }
@@ -1061,6 +1242,7 @@ async fn send_response_event(
     app_state: &Arc<AppState>,
     llm_client: &OllamaClient,
     status_tx: &mpsc::UnboundedSender<String>,
+    notify: Dispatch,
 ) -> Vec<serde_json::Value> {
     if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
         let memory = app_state
@@ -1079,6 +1261,51 @@ async fn send_response_event(
         }
 
         let event = Event::new(&COUCHDB_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+
+        // Deferred: hand the event to its own registered task and answer the caller
+        // now. The command loop owes the dashboard a reply, and this LLM call may be
+        // parked for a human; see `Dispatch::Deferred`.
+        if let Dispatch::Deferred = notify {
+            let llm_client = llm_client.clone();
+            let app_state_task = app_state.clone();
+            let status_tx = status_tx.clone();
+            let handle = tokio::spawn(async move {
+                match call_llm_for_client(
+                    &llm_client,
+                    &app_state_task,
+                    client_id.to_string(),
+                    &instruction,
+                    &memory,
+                    Some(&event),
+                    &crate::client::couchdb::actions::CouchDbClientProtocol::new(),
+                    &status_tx,
+                )
+                .await
+                {
+                    Ok(result) => {
+                        if let Some(new_memory) = result.memory_updates {
+                            app_state_task
+                                .set_memory_for_client(client_id, new_memory)
+                                .await;
+                        }
+                        // Follow-up actions are deliberately dropped here: only the
+                        // client's own loop owns the CouchDB handle, and this task
+                        // runs beside it. Injected commands drain their own queue.
+                        if !result.actions.is_empty() {
+                            info!(
+                                "CouchDB client {}: {} follow-up action(s) from a deferred \
+                                 response event were not executed",
+                                client_id,
+                                result.actions.len()
+                            );
+                        }
+                    }
+                    Err(e) => error!("LLM error on deferred response event: {}", e),
+                }
+            });
+            app_state.register_client_task(client_id, handle).await;
+            return Vec::new();
+        }
 
         match call_llm_for_client(
             llm_client,
@@ -1118,7 +1345,8 @@ async fn send_conflict_event(
     app_state: &Arc<AppState>,
     llm_client: &OllamaClient,
     status_tx: &mpsc::UnboundedSender<String>,
-) {
+    notify: Dispatch,
+) -> Vec<serde_json::Value> {
     use crate::client::couchdb::actions::COUCHDB_CLIENT_CONFLICT_EVENT;
 
     if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -1136,7 +1364,36 @@ async fn send_conflict_event(
             }),
         );
 
-        let _ = call_llm_for_client(
+        // Deferred: same reasoning as in `send_response_event` -- the command loop
+        // owes the dashboard a reply and must not wait on a parked LLM call.
+        if let Dispatch::Deferred = notify {
+            let llm_client = llm_client.clone();
+            let app_state_task = app_state.clone();
+            let status_tx = status_tx.clone();
+            let handle = tokio::spawn(async move {
+                if let Err(e) = call_llm_for_client(
+                    &llm_client,
+                    &app_state_task,
+                    client_id.to_string(),
+                    &instruction,
+                    &memory,
+                    Some(&event),
+                    &crate::client::couchdb::actions::CouchDbClientProtocol::new(),
+                    &status_tx,
+                )
+                .await
+                {
+                    error!("LLM error on deferred conflict event: {}", e);
+                }
+            });
+            app_state.register_client_task(client_id, handle).await;
+            return Vec::new();
+        }
+
+        // The model's answer to a conflict is returned to the caller and queued like
+        // any other follow-up. It used to be discarded with `let _ =`, so a model
+        // resolving a 409 was silently ignored.
+        match call_llm_for_client(
             llm_client,
             app_state,
             client_id.to_string(),
@@ -1146,6 +1403,16 @@ async fn send_conflict_event(
             &crate::client::couchdb::actions::CouchDbClientProtocol::new(),
             status_tx,
         )
-        .await;
+        .await
+        {
+            Ok(result) => {
+                if let Some(new_memory) = result.memory_updates {
+                    app_state.set_memory_for_client(client_id, new_memory).await;
+                }
+                return result.actions;
+            }
+            Err(e) => error!("LLM error on conflict event: {}", e),
+        }
     }
+    Vec::new()
 }

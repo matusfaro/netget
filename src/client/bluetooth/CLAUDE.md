@@ -325,3 +325,35 @@ LLM:
 - Bluetooth Core Specification: https://www.bluetooth.com/specifications/bluetooth-core-specification/
 - BlueZ (Linux): http://www.bluez.org/
 - CoreBluetooth (macOS/iOS): https://developer.apple.com/documentation/corebluetooth
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into the running client. `command_loop` in
+`mod.rs` drains the bounded channel and runs each action through `execute_llm_action` — the
+same function the scan/connect/notification paths use, so an injected verb raises the same
+follow-up events.
+
+Everything already hangs off `Arc<Mutex<ClientData>>` (adapter + peripheral), so the command
+task just shares it. The channel is registered **before** the scan/connect task, whose first
+step is an LLM call a `*` -> manual rule can park for minutes.
+
+Outcomes:
+
+| action | `ClientSendOutcome` |
+|---|---|
+| `write_characteristic` (completed GATT write) | `Sent { bytes_sent }` |
+| `scan_devices` | `Executed { detail: "scan_devices (Ns): K devices found" }` |
+| `connect_device` | `Executed { detail: "connect_device <target>: connected" }` |
+| `discover_services` | `Executed { detail: "discover_services: K services" }` |
+| `read_characteristic` | `Executed { detail: "read_characteristic <uuid>: N bytes read" }` |
+| `subscribe_notifications` / `unsubscribe_notifications` | `Executed { detail: "… subscribed/unsubscribed" }` |
+| `disconnect` | `Disconnected` (handle dropped) |
+| unknown verb | `Rejected { error }` |
+| btleplug error (e.g. no peripheral connected) | the reply is `Err`, surfaced to the caller verbatim |
+
+`write_characteristic` is the one BLE verb that may claim `Sent`: a completed GATT write
+really went out on the radio.
+
+Lock discipline: the memory string is cloned out of `ClientData` before every
+`call_llm_for_client`. It used to be borrowed across the await, which now that a second task
+shares the mutex would stall every injected command for the length of the round-trip.

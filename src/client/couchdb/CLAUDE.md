@@ -370,3 +370,29 @@ LLM actions:
 - [couch_rs Documentation](https://docs.rs/couch_rs)
 - [CouchDB HTTP API](https://docs.couchdb.org/en/stable/api/index.html)
 - [CouchDB Document API](https://docs.couchdb.org/en/stable/api/document/common.html)
+
+## Injected actions (the dashboard's `[ send ]`)
+
+The client registers a command channel and spawns `command_loop` **before** the
+`couchdb_connected` LLM call, because a `*` -> manual rule can park that call for minutes
+and the operator must still be able to reach the client. The command task replaces the old
+5s keep-alive poll: the channel closes when the client is removed.
+
+The command loop shares the very same `Arc<Mutex<couch_rs::Client>>` the LLM path uses and
+calls the same `execute_couchdb_action`, so an injected action is indistinguishable from an
+LLM-produced one - including its `couchdb_response_received` event and the follow-up actions
+that event's handler returns, which the command loop drains exactly like the connect path.
+The action is first round-tripped through `CouchDbClientProtocol::execute_action` so an
+unknown verb is reported rather than silently ignored.
+
+`ClientSendOutcome` semantics:
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | The operation ran, e.g. `list_databases executed` (plus a count when the response event produced follow-up actions). |
+| `Rejected { error }` | The action is not one of the thirteen CouchDB verbs. |
+| `Disconnected` | `{"type":"disconnect"}`; status goes to Disconnected, the loop exits, the handle is dropped. |
+| `Err(...)` | The operation returned an error the executor could not turn into a response event. |
+
+**`Sent { bytes_sent }` is never reported**: `couch_rs` owns the HTTP connection, so a byte
+count would be invented.

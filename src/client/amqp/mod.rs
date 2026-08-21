@@ -5,15 +5,64 @@ pub use actions::AmqpClientProtocol;
 
 use crate::client::amqp::actions::AMQP_CLIENT_CONNECTED_EVENT;
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
+use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 use anyhow::{Context, Result};
+use lapin::options::BasicPublishOptions;
+use lapin::BasicProperties;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use tracing::{error, info};
+use std::time::Duration;
+use tokio::sync::{mpsc, Mutex};
+use tracing::{debug, error, info};
+
+/// The live broker connection plus every channel opened on it.
+///
+/// The channels are held here rather than dropped because a `lapin::Channel` closes when it
+/// goes out of scope — an `open_channel` whose handle was dropped would have opened and shut
+/// the channel in one breath, and the next `publish` would have had nothing to publish on.
+struct AmqpSession {
+    conn: lapin::Connection,
+    channels: Mutex<Vec<lapin::Channel>>,
+}
+
+impl AmqpSession {
+    /// A channel to publish on: the most recently opened one, or a freshly opened one when
+    /// nothing has opened a channel yet. Returns the channel and whether it was just opened.
+    async fn channel_for_publish(&self) -> Result<(lapin::Channel, bool)> {
+        // The guard is scoped to this block on purpose: the `create_channel().await` below
+        // must not run while it is held.
+        let existing = {
+            let channels = self.channels.lock().await;
+            channels
+                .last()
+                .filter(|channel| channel.status().connected())
+                .cloned()
+        };
+        if let Some(channel) = existing {
+            return Ok((channel, false));
+        }
+        let channel = self
+            .conn
+            .create_channel()
+            .await
+            .context("could not open an AMQP channel to publish on")?;
+        self.channels.lock().await.push(channel.clone());
+        Ok((channel, true))
+    }
+}
+
+/// What [`apply_action`] did with one executed action.
+enum AmqpApplied {
+    /// The method completed on the wire, but lapin reports no byte count for it.
+    Executed(String),
+    /// A `Connection.Close` was sent to the broker.
+    Disconnect,
+}
 
 /// AMQP client that connects to an AMQP broker (RabbitMQ, etc.)
 pub struct AmqpClient;
@@ -48,12 +97,32 @@ impl AmqpClient {
             client_id, remote_addr, local_addr
         );
 
+        let session = Arc::new(AmqpSession {
+            conn,
+            channels: Mutex::new(Vec::new()),
+        });
+
         // Update client state
         state
             .update_client_status(client_id, ClientStatus::Connected)
             .await;
         let _ = status_tx.send(format!("[CLIENT] AMQP client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Command channel for injected actions (the dashboard's [ send ]). Registered BEFORE
+        // the connected-event LLM call below: a manual `*` rule parks that call until a human
+        // answers it, and [ send ] has to work for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&state, client_id).await;
+        let cmd_session = session.clone();
+        let cmd_state = state.clone();
+        let cmd_status_tx = status_tx.clone();
+        let cmd_task = tokio::spawn(async move {
+            command_loop(command_rx, cmd_session, client_id, cmd_state, cmd_status_tx).await;
+        });
+        state.register_client_task(client_id, cmd_task).await;
+
+        let protocol = AmqpClientProtocol::new();
 
         // Call LLM with amqp_connected event
         if let Some(instruction) = state.get_instruction_for_client(client_id).await {
@@ -69,15 +138,48 @@ impl AmqpClient {
                 &state,
                 client_id.to_string(),
                 &instruction,
-                &String::new(),
+                "",
                 Some(&event),
-                &crate::client::amqp::actions::AmqpClientProtocol,
+                &protocol,
                 &status_tx,
             )
             .await
             {
-                Ok(_result) => {
-                    info!("AMQP client ready after connect event");
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
+                    if let Some(mem) = memory_updates {
+                        state.set_memory_for_client(client_id, mem).await;
+                    }
+                    // Actually run what the model answered with. This used to be
+                    // `Ok(_result) => info!("AMQP client ready after connect event")` — the
+                    // actions were parsed, logged and thrown away, so `open_channel` on the
+                    // connect event (the shape the protocol's own static-mode startup example
+                    // shows) did nothing at all.
+                    for action in actions {
+                        match protocol.execute_action(action) {
+                            Ok(result) => match apply_action(result, &session, client_id).await {
+                                Ok(AmqpApplied::Executed(detail)) => {
+                                    debug!("AMQP client {}: {}", client_id, detail);
+                                }
+                                Ok(AmqpApplied::Disconnect) => {
+                                    info!(
+                                        "AMQP client {} disconnecting after connect event",
+                                        client_id
+                                    );
+                                    break;
+                                }
+                                Err(e) => error!(
+                                    "AMQP client {} could not apply action: {}",
+                                    client_id, e
+                                ),
+                            },
+                            Err(e) => {
+                                error!("AMQP client {} rejected action: {}", client_id, e);
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     error!("LLM error on amqp_connected event: {}", e);
@@ -85,24 +187,218 @@ impl AmqpClient {
             }
         }
 
-        // Spawn a task to keep the connection alive
-        let client_id_clone = client_id;
-        let state_clone = state.clone();
-        let status_tx_clone = status_tx.clone();
-        tokio::spawn(async move {
-            // Just keep connection alive - LLM integration simplified
-            let _ = conn.run();
-            info!("AMQP client {} connection closed", client_id_clone);
-            state_clone
-                .update_client_status(client_id_clone, ClientStatus::Disconnected)
+        // Supervise the connection: hold the session alive and notice when the broker (or an
+        // injected disconnect) closes it.
+        //
+        // This replaces `let _ = conn.run();`, which was a **blocking** call made from inside
+        // a tokio task: `Connection::run` parks the current thread until the io loop ends, so
+        // it burned a runtime worker for the lifetime of every AMQP client and never observed
+        // the connection closing either.
+        let supervisor_state = state.clone();
+        let supervisor_status_tx = status_tx.clone();
+        let supervisor_session = session.clone();
+        let task_registrar = state.clone();
+        let handle = tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                if !supervisor_session.conn.status().connected() {
+                    break;
+                }
+                if supervisor_state.get_client(client_id).await.is_none() {
+                    break;
+                }
+            }
+            info!("AMQP client {} connection closed", client_id);
+            supervisor_state
+                .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
-            let _ = status_tx_clone.send(format!(
-                "[CLIENT] AMQP client {} disconnected",
-                client_id_clone
-            ));
-            let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
+            // Drop the command handle so the dashboard stops offering [ send ] on a dead
+            // connection; this also closes the command channel and ends `command_loop`.
+            supervisor_state.remove_client_handle(client_id).await;
+            let _ = supervisor_status_tx
+                .send(format!("[CLIENT] AMQP client {} disconnected", client_id));
+            let _ = supervisor_status_tx.send("__UPDATE_UI__".to_string());
         });
+        task_registrar.register_client_task(client_id, handle).await;
 
         Ok(local_addr)
+    }
+}
+
+/// Apply one executed action to the live broker connection.
+///
+/// Shared by the connected-event path and by injected commands, so the mapping from the
+/// client's vocabulary onto lapin exists exactly once.
+async fn apply_action(
+    action_result: ClientActionResult,
+    session: &Arc<AmqpSession>,
+    client_id: ClientId,
+) -> Result<AmqpApplied> {
+    match action_result {
+        ClientActionResult::Custom { name, data } => match name.as_str() {
+            "open_channel" => {
+                let channel = session
+                    .conn
+                    .create_channel()
+                    .await
+                    .context("Channel.Open failed")?;
+                let id = channel.id();
+                session.channels.lock().await.push(channel);
+                info!("AMQP client {} opened channel {}", client_id, id);
+                Ok(AmqpApplied::Executed(format!(
+                    "Channel.Open/Open-Ok completed; channel {id} is open"
+                )))
+            }
+            "publish" => {
+                let exchange = data
+                    .get("exchange")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let routing_key = data
+                    .get("routing_key")
+                    .and_then(|v| v.as_str())
+                    .context("publish result has no 'routing_key'")?
+                    .to_string();
+                let payload = data
+                    .get("payload")
+                    .and_then(|v| v.as_str())
+                    .context("publish result has no 'payload'")?
+                    .to_string();
+
+                let (channel, opened_now) = session.channel_for_publish().await?;
+                let channel_id = channel.id();
+                // The returned PublisherConfirm is dropped: confirm mode is not enabled, so
+                // there is no ack to wait for. The await above is what puts Basic.Publish and
+                // its content frames on the socket.
+                channel
+                    .basic_publish(
+                        exchange.as_str().into(),
+                        routing_key.as_str().into(),
+                        BasicPublishOptions::default(),
+                        payload.as_bytes(),
+                        BasicProperties::default(),
+                    )
+                    .await
+                    .with_context(|| {
+                        format!("Basic.Publish to exchange {exchange:?} key {routing_key:?} failed")
+                    })?;
+                info!(
+                    "AMQP client {} published {} bytes to exchange {:?} key {:?} on channel {}",
+                    client_id,
+                    payload.len(),
+                    exchange,
+                    routing_key,
+                    channel_id
+                );
+                Ok(AmqpApplied::Executed(format!(
+                    "Basic.Publish of {} bytes to exchange {:?} routing key {:?} on channel {}{}",
+                    payload.len(),
+                    exchange,
+                    routing_key,
+                    channel_id,
+                    if opened_now {
+                        " (opened for this publish)"
+                    } else {
+                        ""
+                    }
+                )))
+            }
+            other => Err(anyhow::anyhow!(
+                "AMQP client cannot apply custom result '{}'",
+                other
+            )),
+        },
+        ClientActionResult::Disconnect => {
+            session
+                .conn
+                .close(200, "Goodbye".into())
+                .await
+                .context("Connection.Close failed")?;
+            Ok(AmqpApplied::Disconnect)
+        }
+        ClientActionResult::WaitForMore => Ok(AmqpApplied::Executed(
+            "waiting for the next AMQP frame; nothing sent".to_string(),
+        )),
+        ClientActionResult::NoAction => {
+            Ok(AmqpApplied::Executed("no_action: nothing sent".to_string()))
+        }
+        ClientActionResult::SendData(_) => Err(anyhow::anyhow!(
+            "AMQP frames are built by lapin; there is no raw-byte channel"
+        )),
+        ClientActionResult::Multiple(_) => Err(anyhow::anyhow!(
+            "AMQP client does not support Multiple action results"
+        )),
+    }
+}
+
+/// Drain injected commands (the dashboard's \[ send \]) until the channel closes — the client
+/// was removed, or the supervisor saw the connection go — or an injected `disconnect` ends
+/// the session.
+///
+/// This client had no loop at all before, so the loop is new; what it executes is not. Every
+/// action goes through the protocol's own `execute_action` and then [`apply_action`], the same
+/// pair the connected-event path uses.
+async fn command_loop(
+    mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+    session: Arc<AmqpSession>,
+    client_id: ClientId,
+    state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
+) {
+    use crate::llm::actions::protocol_trait::Protocol;
+    use crate::state::client_handles::ClientSendOutcome;
+    use crate::state::AccessLogOwner;
+
+    let protocol = AmqpClientProtocol::new();
+
+    while let Some(command) = command_rx.recv().await {
+        let action = command.action.clone();
+        let outcome: Result<ClientSendOutcome> = match protocol.execute_action(action.clone()) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(result) => match apply_action(result, &session, client_id).await {
+                // Never `Sent`: the AMQP method really did complete on the wire, but lapin
+                // frames and writes it internally and reports no byte count, so there is no
+                // honest number to put in `bytes_sent`.
+                Ok(AmqpApplied::Executed(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                Ok(AmqpApplied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Err(e) => Err(e),
+            },
+        };
+
+        let outcome_json = match &outcome {
+            Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+            Err(e) => serde_json::json!({"error": e.to_string()}),
+        };
+        state
+            .record_access_log(
+                AccessLogOwner::Client(client_id.as_u32()),
+                protocol.protocol_name(),
+                None,
+                "injected_action",
+                action,
+                vec![outcome_json],
+            )
+            .await;
+
+        let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+        if let Err(e) = &outcome {
+            error!("AMQP client {} injected action failed: {}", client_id, e);
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        crate::client::command_support::reply(command, outcome);
+
+        if disconnect {
+            // The supervisor drops the handle on its way out too; doing it here as well means
+            // the dashboard stops offering [ send ] the moment Connection.Close went out.
+            state.remove_client_handle(client_id).await;
+            break;
+        }
     }
 }

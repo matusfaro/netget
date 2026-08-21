@@ -154,3 +154,37 @@ Client state stored in `protocol_data`:
 4. **Authentication**: HTTP Basic Auth, Kerberos, client certificates
 5. **IPP Everywhere**: Support for driverless printing
 6. **Subscription API**: Event notifications for job/printer state changes
+
+## Injected commands (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an IPP operation into a running client and gets back a truthful `ClientSendOutcome`. IPP is carried over HTTP, so this is the request/response archetype, not a persistent socket. See `src/client/command_support.rs` and `tests/client/ipp/command_channel_test.rs`.
+
+- `command_support::register_command_channel` runs **before** anything that can block for a
+  human — specifically before the `ipp_connected` `call_llm_for_client`, so `[ send ]` works even while an event is parked on a manual routing
+  rule. This is the whole point of the feature: registering late means the rail reads
+  "no command channel" for the length of the park.
+- The command loop **replaced the old 5-second `get_client().is_none()` idle poll**. When the
+  client is removed its handle is dropped, the channel closes, `recv()` returns `None` and the
+  loop exits at once — the poll was strictly slower at the same job. The loop is registered
+  with `register_client_task`, and it drops the handle on every exit path.
+- One `apply_action` is the only place actions become traffic, shared by the command loop and the `ipp_connected` handler, which spawns it (after the existing 100ms printer-readiness delay) so `connect()` can return. There is
+  no second wire path for injected actions to drift from.
+
+### Outcome semantics — what `[ send ]` reports, and why
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | **Never.** the `ipp` crate owns the HTTP request and reports no wire byte count. `print_job`'s `detail` does name the document length, and says explicitly that the IPP envelope adds an unknown number of bytes on top |
+| `Executed { detail }` | The operation ran to completion; `detail` names it (`Get-Printer-Attributes completed ...`) |
+| `Rejected { error }` | `execute_action` refused the JSON (unknown verb, missing field) |
+| `Disconnected` | `disconnect`; the loop ends, the handle is dropped and the client goes to `Disconnected` |
+| `Err(...)` | The request itself failed (transport error, non-2xx). The caller sees the error rather than a false success |
+
+**The known cost of awaiting.** `apply_action` awaits the whole operation, *including the
+response event it raises*. That is what makes the outcome truthful, but it also means the
+command loop is busy until that event has been handled — with a `*` -> manual rule, until the
+human answers it or the intercept times out (default 300s). Injected sends queue behind it on
+the bounded channel, which surfaces as "client busy" backpressure. `send_to_client`'s own
+timeout protects the caller either way.
+
+**Not wired:** `call_llm_with_response` still discards the actions the LLM returns for `ipp_response_received` (`actions: _`). That predates the command channel and is untouched by it; the injected path is currently the only way to run a follow-up `get_job_attributes` without restarting the client.

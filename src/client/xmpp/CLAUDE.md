@@ -368,3 +368,43 @@ The event loop needs to be rewritten to match tokio-xmpp 5.0's async stream patt
 - [tokio-xmpp Documentation](https://docs.rs/tokio-xmpp/)
 - [xmpp-parsers Documentation](https://docs.rs/xmpp-parsers/)
 - [XMPP Extensions (XEPs)](https://xmpp.org/extensions/)
+
+## Command channel — the dashboard's `[ send ]`
+
+Adopted. `tokio_xmpp::Client` is not clonable and is owned by the event loop task, so the command
+loop reaches the stream the way every other producer here does — through the stanza channel — but
+each request now carries an optional ack:
+
+```rust
+struct StanzaRequest { stanza: Stanza, ack: Option<oneshot::Sender<Result<(), String>>> }
+```
+
+`Client::send_stanza` resolves only once the stanza **has been written to the XMPP transport**,
+and the event loop sends that result back on the ack. So an injected send reports what really
+happened rather than "handed to a channel". The LLM path passes `ack: None` — it has no caller to
+answer and must not serialise behind the loop's next turn.
+
+Two structural changes came with it:
+
+- The channel is registered before anything else, and the `xmpp_connected` LLM call now runs in
+  **its own task**. Inline, that call blocked `connect()` itself and — worse for this feature —
+  nothing was draining the stanza channel while it waited, so an injected stanza could not have
+  been written until it finished.
+- An injected `disconnect` signals a `oneshot` the event loop selects on; the loop breaks, drops
+  the handle, sets the status and then closes the stream (bounded by a 5s timeout, because
+  `close()` waits on a peer that may never have existed).
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | the stanza reached the transport (`<message/> to a@b (5 byte body) written to the XMPP transport`), or the action puts nothing on the wire (`wait_for_more`) |
+| `Rejected { error }` | `execute_action` refused it: unknown name, missing `to`/`body` |
+| `Disconnected` | `disconnect` |
+| `Err(..)` | `send_stanza` failed, or the event loop ended before the stanza could be written |
+
+**There is deliberately no `Sent { bytes_sent }`**: tokio-xmpp serialises and writes the stanza
+internally and reports no byte count.
+
+**Gap.** `tests/client/xmpp/command_channel_test.rs` pins registration, execution, the access-log
+entry and disconnect, but **not** a stanza reaching a peer: no XMPP server this suite can start
+completes tokio-xmpp's STARTTLS/SASL negotiation, so the wire path is still only exercised by the
+`#[ignore]`d e2e test against a real prosody/ejabberd.

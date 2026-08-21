@@ -461,3 +461,33 @@ Verify the change by reading the OID back.
 - [rasn-snmp Documentation](https://docs.rs/rasn-snmp/latest/rasn_snmp/)
 - [SNMP OID Reference](http://www.oid-info.com/)
 - [Net-SNMP Tools](http://www.net-snmp.org/) - Command-line SNMP tools for testing
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into the running client. The channel is
+registered **before** the `snmp_client_connected` LLM call (a `manual` routing rule can park
+that event for minutes). SNMP has no standing read loop — each request awaits its own reply —
+so the commands are drained by a task of their own (`command_loop`), registered with
+`AppState::register_client_task`.
+
+Two refactors make the injected path identical to the LLM path rather than a second
+implementation:
+
+- `build_request(name, data, config)` is a **pure** encoder replacing the four
+  `send_*_request` helpers; both paths call it, so both put byte-identical PDUs on the wire.
+- `send_request_and_handle_response` is split into the send plus `await_response`. The command
+  loop reports its outcome the moment the datagram leaves and *then* awaits the reply, so an
+  injected caller is not made to wait out `timeout_ms * (retries + 1)` before learning whether
+  its request was sent. The response event still reaches the LLM exactly as before.
+
+Outcomes:
+
+| Action | Outcome |
+|---|---|
+| `send_snmp_get` / `getnext` / `getbulk` / `set` | `Sent { bytes_sent }` — the count `UdpSocket::send` returned |
+| `disconnect` | `Disconnected`; the command loop ends |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| unknown type, empty `oids`, GETBULK on v1 | `Rejected { error }` |
+
+A second command queues behind the first while its reply is awaited; the channel is bounded,
+so a caller gets "client busy" rather than an unbounded backlog.

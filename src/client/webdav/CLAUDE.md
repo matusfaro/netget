@@ -242,3 +242,27 @@ Target: **< 10 LLM calls** per test suite.
 - Support WebDAV extensions (CalDAV, CardDAV)
 - Implement chunked uploads for large files
 - Add lock token management for exclusive access
+
+## Injected actions (the dashboard's `[ send ]`)
+
+The client registers a command channel and spawns `WebdavClient::command_loop` **before**
+the `webdav_connected` LLM call, because a `*` -> manual rule can park that call for minutes
+and the operator must still be able to reach the client.
+
+The old `execute_webdav_action` is now `WebdavClient::apply_action`, taking an already
+executed `ClientActionResult`; the connected-event path and the command loop both call it,
+so an injected `propfind` builds the identical request (Depth/Destination/Overwrite headers,
+PROPFIND XML body) the LLM path would.
+
+`ClientSendOutcome` semantics:
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | The request ran to completion, e.g. `PROPFIND /files/ completed`. |
+| `Rejected { error }` | `execute_action` refused the action (unknown verb, missing `path`). |
+| `Disconnected` | `{"type":"disconnect"}`; status goes to Disconnected and the handle is dropped. |
+| `Err(...)` | The HTTP request failed, or the result was one this client cannot apply. |
+
+**`Sent { bytes_sent }` is never reported**: reqwest owns the socket. The request is awaited
+before the outcome is returned, so `Executed` means it really completed and
+`webdav_response_received` has already fired.

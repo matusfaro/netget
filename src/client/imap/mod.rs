@@ -22,6 +22,9 @@ use crate::protocol::Event;
 use crate::state::app_state::AppState;
 use crate::state::{ClientId, ClientStatus};
 
+/// The authenticated async-imap session. Named because it appears in four signatures.
+type ImapSession = Session<tokio_util::compat::Compat<TcpStream>>;
+
 /// IMAP client that connects to an IMAP server
 pub struct ImapClient;
 
@@ -98,6 +101,25 @@ impl ImapClient {
         let session_arc = Arc::new(Mutex::new(session));
         let protocol = Arc::new(actions::ImapClientProtocol::new());
 
+        // The dashboard's `[ send ]` channel, registered BEFORE the connected-event LLM call
+        // that the task below makes. A dashboard-created client defaults to a `*` -> manual
+        // rule, so that call can park for minutes waiting for a human; registering after it
+        // would leave the rail reading "no command channel" for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let command_task = tokio::spawn(Self::command_loop(
+            session_arc.clone(),
+            protocol.clone(),
+            command_rx,
+            client_id,
+            llm_client.clone(),
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state
+            .register_client_task(client_id, command_task)
+            .await;
+
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
         let task_registrar = app_state.clone();
@@ -166,10 +188,130 @@ impl ImapClient {
         Ok(local_addr)
     }
 
+    /// Drain injected commands (the dashboard's `[ send ]`) until the channel closes - which
+    /// happens when the client is removed - or an injected `disconnect` ends the session.
+    ///
+    /// This is a task of its own rather than a `select!` arm because there is nothing to
+    /// select against: `async_imap` owns the socket and this client has no read loop. The
+    /// task is also what keeps the session usable after the connected-event handler returns.
+    ///
+    /// Injected actions go through [`Self::handle_custom_action`] - the same function the LLM
+    /// path uses - so the IMAP command encoding exists exactly once.
+    ///
+    /// Outcome semantics: `async_imap` writes and reads the tagged commands itself, so this
+    /// loop can honestly claim no byte count. A verb that ran reports `Executed` naming it;
+    /// a verb the server refused is an `Err`, never a quieter `Sent`.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        session: Arc<Mutex<ImapSession>>,
+        protocol: Arc<ImapClientProtocol>,
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let mut disconnect = false;
+
+            let outcome: Result<ClientSendOutcome> = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(ClientActionResult::Disconnect) => {
+                    disconnect = true;
+                    Ok(ClientSendOutcome::Disconnected)
+                }
+                Ok(ClientActionResult::WaitForMore) => Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_more: nothing was asked of the server".to_string(),
+                }),
+                Ok(ClientActionResult::NoAction) => Ok(ClientSendOutcome::Executed {
+                    detail: "no_action".to_string(),
+                }),
+                Ok(ClientActionResult::Custom { name, data }) => {
+                    match Self::handle_custom_action(
+                        client_id,
+                        &session,
+                        &name,
+                        &data,
+                        &protocol,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                    )
+                    .await
+                    {
+                        Ok(()) => Ok(ClientSendOutcome::Executed {
+                            detail: format!(
+                                "{name} completed (async_imap frames the tagged command, so \
+                                 there is no byte count to report)"
+                            ),
+                        }),
+                        Err(e) => Err(e.context(format!("injected IMAP action '{name}'"))),
+                    }
+                }
+                Ok(other) => Ok(ClientSendOutcome::Executed {
+                    detail: format!("unsupported action result {other:?}"),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            if let Err(e) = &outcome {
+                error!("IMAP client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                // Best-effort LOGOUT so the server sees a clean close rather than a dropped
+                // socket. Bounded, because the session is unusable either way once we stop
+                // draining it and a server that never answers must not strand this task
+                // holding the client's command handle.
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_secs(5),
+                    session.lock().await.logout(),
+                )
+                .await;
+                break;
+            }
+        }
+
+        // Every exit lands here: drop the handle so the rail stops offering [ send ] on a
+        // session nothing is draining any more.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
     /// Execute a single IMAP action and potentially trigger more LLM calls
     async fn execute_imap_action(
         client_id: ClientId,
-        session: &Arc<Mutex<Session<tokio_util::compat::Compat<TcpStream>>>>,
+        session: &Arc<Mutex<ImapSession>>,
         protocol: &Arc<ImapClientProtocol>,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
@@ -185,6 +327,8 @@ impl ImapClient {
             }
             ClientActionResult::Disconnect => {
                 info!("IMAP client {} disconnecting", client_id);
+                // Stop offering [ send ] on a session that is going away.
+                app_state.remove_client_handle(client_id).await;
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
@@ -202,7 +346,7 @@ impl ImapClient {
     /// Handle custom IMAP actions
     async fn handle_custom_action(
         client_id: ClientId,
-        session: &Arc<Mutex<Session<tokio_util::compat::Compat<TcpStream>>>>,
+        session: &Arc<Mutex<ImapSession>>,
         action_name: &str,
         action_data: &serde_json::Value,
         _protocol: &Arc<ImapClientProtocol>,

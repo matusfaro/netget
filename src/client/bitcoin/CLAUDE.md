@@ -303,3 +303,28 @@ See `tests/client/bitcoin/CLAUDE.md` for E2E testing approach.
 - **Wallet Operations** - Can send transactions if wallet unlocked
 - **Network Exposure** - Only connect to trusted Bitcoin Core nodes
 - **Rate Limiting** - Bitcoin Core may rate-limit RPC calls
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running Bitcoin RPC client. The handle is
+registered **before** the `bitcoin_connected` LLM call, because a dashboard-created client
+defaults to a `*` → manual rule and that call can park for minutes waiting for a human.
+
+The old "poll `get_client()` every 5 s and exit when it is gone" task is gone: `remove_client`
+drops the command sender, so the command loop's `recv()` returns `None` the moment the client
+goes away, and that loop is now the client's only long-lived task. Both the connected-event
+handler and the command loop go through one `apply_action`, so the `bitcoin_rpc` decoding
+exists once — before this, the connected handler inlined its own copy of it.
+
+**Outcome semantics — `Executed`, never `Sent`.** reqwest owns the socket and never reports
+how many bytes a request serialised to, so a `Sent { bytes_sent }` here would be a number
+someone made up. The command loop **awaits** the JSON-RPC round-trip and reports
+`Executed { detail: "bitcoin_rpc 'getblockchaininfo' -> HTTP 200 (result)" }`; a request that
+never completes is an `Err`, an unknown action is `Rejected`, and `disconnect` is
+`Disconnected` (the loop ends, the status goes to `Disconnected` and the handle is dropped).
+
+The `bitcoin_response_received` event still fires, but from its own registered task rather
+than inline — otherwise a manual rule parking that LLM call would wedge the command loop for
+the length of a human's think time and `send_to_client` would time out on an RPC that in fact
+succeeded. `execute_rpc_command` is unchanged for callers; it is now `perform_rpc` (network
+only) followed by `notify_response` (the LLM event).

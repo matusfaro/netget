@@ -274,3 +274,34 @@ See `tests/client/openai/CLAUDE.md` for testing details.
 - **OpenAI API Docs**: https://platform.openai.com/docs/api-reference
 - **async-openai Crate**: https://docs.rs/async-openai/
 - **OpenAI Models**: https://platform.openai.com/docs/models
+
+## Injected actions (the dashboard's `[ send ]`)
+
+The client registers a command channel (`command_support::register_command_channel`) and
+spawns `OpenAiClient::command_loop` **before** the `openai_connected` LLM call. That order
+matters: a dashboard-created client defaults to a `*` -> manual rule, so the connect call
+can park for minutes waiting for a human, and registering afterwards would leave `[ send ]`
+reading "no command channel" for the whole park. The command task also replaces the old 5s
+"has the client been removed yet" poll - the channel closes when the client is removed.
+
+Both the connected-event path and injected commands go through one
+`OpenAiClient::apply_action`, so an injected `send_chat_completion` is byte-for-byte the
+same request the LLM would have made. (Before this, the connected-event handler discarded
+the LLM's actions entirely: it logged "ready after connect event" and never called
+`make_chat_completion`.)
+
+`ClientSendOutcome` semantics - these are deliberate, not placeholders:
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | The API call ran to completion. `detail` names the verb and model, e.g. `send_chat_completion completed (model=gpt-4)`. |
+| `Rejected { error }` | `execute_action` refused the action (unknown type, missing `messages`). |
+| `Disconnected` | `{"type":"disconnect"}`; the command loop exits and the handle is dropped. |
+| `Err(...)` | The HTTP/API call itself failed (transport error, OpenAI error response). |
+
+**`Sent { bytes_sent }` is never reported, and that is correct.** The OpenAI client owns no
+socket - `async-openai` owns the connection and does TLS framing - so any byte count would
+be invented. The injected request *is* awaited before the outcome is returned, so
+`Executed` means the request really completed and the `openai_response_received` event has
+already fired. The connect-event path still dispatches its requests to spawned tasks, so a
+slow API call cannot hold up `connect()`.

@@ -419,3 +419,35 @@ sudo pacman -S etcd
 3. **LLM-Friendly** - Structured actions (get/put/delete) not raw bytes
 4. **Incremental** - Start with basic KV, defer advanced features
 5. **Observable** - Dual logging for debugging and monitoring
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running etcd client. The handle is
+registered **before** the `etcd_connected` LLM call, because a dashboard-created client
+defaults to a `*` → manual rule and that call can park for minutes waiting for a human.
+
+**The connection model above is out of date: the session is no longer re-dialled per
+operation.** `connect_with_llm_actions` used to build an `etcd_client::Client`, bind it to
+`_etcd_client` and drop it on the next line, and every `get`/`put`/`delete` then called
+`Client::connect` again. It is now held in an `Arc<Mutex<etcd_client::Client>>` for the life
+of the client, which is what makes injected actions possible at all — a command loop that
+re-dialled would be a second connection path with its own failure modes and no relationship
+to the session the dashboard reports as "connected".
+
+**The connected-event handler used to discard the LLM's actions.** It logged
+`"LLM generated N actions on connect"` and returned; nothing executed them, so an instruction
+like "PUT /a = b on connect" silently did nothing. It now runs them through the same
+`apply_action` the command loop uses.
+
+**Outcome semantics — `Executed`, never `Sent`.** `etcd-client` owns the HTTP/2 connection
+and never reports how many bytes a request serialised to, so a byte count here would be
+invented. The detail carries what etcd actually answered:
+`etcd_put '/k' -> revision 7`, `etcd_get '/k' -> 1 key-value pair(s)`,
+`etcd_delete '/k' -> 1 key(s) deleted`. A failed operation is an `Err`, an unknown action is
+`Rejected`, and `disconnect` is `Disconnected`.
+
+The `etcd_response_received` event fires from its own registered task rather than inline, so
+a manual rule parking that LLM call cannot wedge the command loop.
+
+The old 5-second idle-poll task is gone; the command loop ends when `remove_client` drops the
+command sender.

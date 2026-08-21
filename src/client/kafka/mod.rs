@@ -138,6 +138,11 @@ struct KafkaConn {
     /// `api_key -> (min_version, max_version)` as the broker advertised it.
     versions: HashMap<i16, (i16, i16)>,
     client_id: StrBytes,
+    /// Size of the last frame this connection actually put on the wire (4-byte length
+    /// prefix included). Read while the connection mutex is still held, so an injected
+    /// action can report a byte count that is genuinely its own rather than a snapshot
+    /// racing the poll loop.
+    last_request_bytes: usize,
 }
 
 impl KafkaConn {
@@ -194,6 +199,7 @@ impl KafkaConn {
         tokio::time::timeout(IO_TIMEOUT, self.stream.write_all(body))
             .await
             .context("timed out writing Kafka frame body")??;
+        self.last_request_bytes = 4 + body.len();
         Ok(())
     }
 
@@ -359,6 +365,7 @@ impl KafkaClient {
             next_correlation_id: 1,
             versions: HashMap::new(),
             client_id: StrBytes::from_string(client_id_str.clone()),
+            last_request_bytes: 0,
         };
 
         // ---- ApiVersions ------------------------------------------------------------
@@ -447,6 +454,20 @@ impl KafkaClient {
             obj.insert("api_versions".to_string(), negotiated);
             metadata
         };
+
+        // The dashboard's `[ send ]` channel, registered BEFORE the connected-event LLM call
+        // below. A dashboard-created client defaults to a `*` -> manual rule, so that call can
+        // park for minutes waiting for a human; registering after it would leave the rail
+        // reading "no command channel" for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let command_session = session.clone();
+        let command_task = tokio::spawn(async move {
+            command_session.command_loop(command_rx).await;
+        });
+        app_state
+            .register_client_task(client_id, command_task)
+            .await;
 
         let task_registrar = app_state.clone();
         let task_handle = tokio::spawn(async move {
@@ -652,8 +673,8 @@ impl Session {
                     Ok(ClientActionResult::WaitForMore) | Ok(ClientActionResult::NoAction) => {}
                     Ok(ClientActionResult::Custom { name, data }) => {
                         match self.perform(&name, &data).await {
-                            Ok(Some(follow_up)) => queue.push_back(follow_up),
-                            Ok(None) => {}
+                            Ok((Some(follow_up), _)) => queue.push_back(follow_up),
+                            Ok((None, _)) => {}
                             Err(e) => {
                                 // A failed exchange is reported, never papered over with a
                                 // plausible-looking success the handler would act on.
@@ -689,8 +710,131 @@ impl Session {
         false
     }
 
-    /// Perform one action against the broker. Returns the event it produced, if any.
-    async fn perform(&self, name: &str, data: &serde_json::Value) -> Result<Option<Event>> {
+    /// Drain injected commands (the dashboard's `[ send ]`) until the channel closes - which
+    /// happens when the client is removed or [`Self::close`] drops the handle - or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// Kafka frames are read with `read_exact`, which is **not** cancellation-safe, so this is
+    /// its own task rather than a `select!` arm in the poll loop. The two are serialised by
+    /// the connection mutex the exchange already takes, which is also what makes the byte
+    /// count reported below unambiguously this command's own request.
+    ///
+    /// Injected actions go through [`Self::perform`] - the exact function the LLM path uses -
+    /// so there is no second copy of the wire encoding. A follow-up event (a Produce ack, a
+    /// Fetch result, Metadata) is handed to [`Self::drive`] in its own task rather than
+    /// inline, so a handler that parks for a human cannot block the next injected command.
+    async fn command_loop(
+        &self,
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = KafkaClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let mut follow_up: Option<Event> = None;
+            let mut disconnect = false;
+
+            let outcome: Result<ClientSendOutcome> = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(ClientActionResult::Disconnect) => {
+                    disconnect = true;
+                    Ok(ClientSendOutcome::Disconnected)
+                }
+                Ok(ClientActionResult::WaitForMore) => Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_more: nothing was asked of the broker".to_string(),
+                }),
+                Ok(ClientActionResult::NoAction) => Ok(ClientSendOutcome::Executed {
+                    detail: "no_action".to_string(),
+                }),
+                Ok(ClientActionResult::Custom { name, data }) => {
+                    match self.perform(&name, &data).await {
+                        Ok((event, wrote)) => {
+                            follow_up = event;
+                            Ok(ClientSendOutcome::Sent { bytes_sent: wrote })
+                        }
+                        Err(e) => {
+                            // A refused exchange is reported as a failure, never as a
+                            // plausible-looking `Sent` the operator would trust.
+                            if is_fatal(&e) {
+                                self.mark_error(&e.to_string()).await;
+                            }
+                            Err(e.context(format!("injected Kafka action '{name}'")))
+                        }
+                    }
+                }
+                Ok(other) => Ok(ClientSendOutcome::Executed {
+                    detail: format!("unsupported action result {other:?}"),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            self.app_state
+                .record_access_log(
+                    AccessLogOwner::Client(self.client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            if let Err(e) = &outcome {
+                error!(
+                    "Kafka client {} injected action failed: {}",
+                    self.client_id, e
+                );
+                let _ = self
+                    .status_tx
+                    .send(format!("[CLIENT] Kafka injected action failed: {e}"));
+            }
+            let _ = self.status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                self.close("injected disconnect").await;
+                break;
+            }
+
+            if let Some(event) = follow_up {
+                let session = self.clone();
+                let handle = tokio::spawn(async move {
+                    if session.drive(event).await {
+                        session.close("handler asked to disconnect").await;
+                    }
+                });
+                self.app_state
+                    .register_client_task(self.client_id, handle)
+                    .await;
+            }
+        }
+
+        // The channel only ends here, so this is the one exit: drop the handle so a late
+        // send fails fast instead of queueing into a dead session.
+        self.app_state.remove_client_handle(self.client_id).await;
+    }
+
+    /// Perform one action against the broker. Returns the event it produced, if any, and
+    /// the number of request bytes this action put on the wire.
+    ///
+    /// The byte count is read out while the connection mutex is still held by the operation
+    /// that wrote it, so an injected command can report `ClientSendOutcome::Sent` with a
+    /// figure that is genuinely its own request rather than a counter shared with the poll
+    /// loop.
+    async fn perform(
+        &self,
+        name: &str,
+        data: &serde_json::Value,
+    ) -> Result<(Option<Event>, usize)> {
         match name {
             "kafka_produce" => self.produce(data).await,
             "kafka_fetch" => {
@@ -717,19 +861,20 @@ impl Session {
                     });
                 let mut conn = self.conn.lock().await;
                 let metadata = KafkaClient::request_metadata(&mut conn, topics.as_deref()).await?;
+                let wrote = conn.last_request_bytes;
                 drop(conn);
-                Ok(Some(Event::new(
-                    &KAFKA_CLIENT_METADATA_RECEIVED_EVENT,
-                    metadata,
-                )))
+                Ok((
+                    Some(Event::new(&KAFKA_CLIENT_METADATA_RECEIVED_EVENT, metadata)),
+                    wrote,
+                ))
             }
-            "kafka_commit" => self.commit(data).await.map(|()| None),
+            "kafka_commit" => self.commit(data).await.map(|wrote| (None, wrote)),
             other => Err(anyhow!("unknown Kafka client action result '{other}'")),
         }
     }
 
     /// Publish one record.
-    async fn produce(&self, data: &serde_json::Value) -> Result<Option<Event>> {
+    async fn produce(&self, data: &serde_json::Value) -> Result<(Option<Event>, usize)> {
         use kafka_protocol::messages::produce_request::{PartitionProduceData, TopicProduceData};
 
         let topic = str_field(data, "topic")?;
@@ -772,6 +917,7 @@ impl Session {
             // Kafka specifies no reply for acks=0. Waiting for one would hang the exchange
             // until IO_TIMEOUT and then look like a broker failure.
             conn.send_only(ApiKey::Produce, version, &request).await?;
+            let wrote = conn.last_request_bytes;
             drop(conn);
             info!(
                 "Kafka client {} produced to {}/{} with acks=0 (no acknowledgement requested)",
@@ -780,10 +926,11 @@ impl Session {
             let _ = self.status_tx.send(format!(
                 "[CLIENT] Kafka produced to {topic}/{partition} (acks=0, unacknowledged)"
             ));
-            return Ok(None);
+            return Ok((None, wrote));
         }
 
         let response: ProduceResponse = conn.exchange(ApiKey::Produce, version, &request).await?;
+        let wrote = conn.last_request_bytes;
         drop(conn);
 
         let topic_response = response
@@ -826,17 +973,20 @@ impl Session {
             ));
         }
 
-        Ok(Some(Event::new(
-            &KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
-            serde_json::json!({
-                "topic": topic,
-                "partition": partition,
-                "base_offset": partition_response.base_offset,
-                "error_code": error_code,
-                "error_name": kafka_error_name(error_code),
-                "delivered": delivered,
-            }),
-        )))
+        Ok((
+            Some(Event::new(
+                &KAFKA_CLIENT_MESSAGE_DELIVERED_EVENT,
+                serde_json::json!({
+                    "topic": topic,
+                    "partition": partition,
+                    "base_offset": partition_response.base_offset,
+                    "error_code": error_code,
+                    "error_name": kafka_error_name(error_code),
+                    "delivered": delivered,
+                }),
+            )),
+            wrote,
+        ))
     }
 
     /// Read one partition. Returns an event only when records actually came back, so an idle
@@ -847,7 +997,7 @@ impl Session {
         partition: i32,
         offset: i64,
         max_bytes: i32,
-    ) -> Result<Option<Event>> {
+    ) -> Result<(Option<Event>, usize)> {
         use kafka_protocol::messages::fetch_request::{FetchPartition, FetchTopic};
 
         let request = FetchRequest::default()
@@ -864,6 +1014,7 @@ impl Session {
         let mut conn = self.conn.lock().await;
         let version = conn.version_for(ApiKey::Fetch, CLIENT_MAX_FETCH)?;
         let response: FetchResponse = conn.exchange(ApiKey::Fetch, version, &request).await?;
+        let wrote = conn.last_request_bytes;
         drop(conn);
 
         if response.error_code != 0 {
@@ -879,10 +1030,10 @@ impl Session {
                 "Kafka client {} fetched {}/{}: broker returned no topic",
                 self.client_id, topic, partition
             );
-            return Ok(None);
+            return Ok((None, wrote));
         };
         let Some(partition_data) = topic_response.partitions.first() else {
-            return Ok(None);
+            return Ok((None, wrote));
         };
 
         if partition_data.error_code != 0 {
@@ -914,7 +1065,7 @@ impl Session {
                 partition,
                 offset
             );
-            return Ok(None);
+            return Ok((None, wrote));
         }
 
         let last_offset = records.iter().map(|r| r.offset).max().unwrap_or(offset);
@@ -934,22 +1085,25 @@ impl Session {
             records.len()
         ));
 
-        Ok(Some(Event::new(
-            &KAFKA_CLIENT_RECORDS_RECEIVED_EVENT,
-            serde_json::json!({
-                "topic": topic,
-                "partition": partition,
-                "high_watermark": partition_data.high_watermark,
-                "next_offset": next_offset,
-                "record_count": records.len(),
-                "records": records.iter().take(MAX_EVENT_RECORDS).map(record_to_json).collect::<Vec<_>>(),
-            }),
-        )))
+        Ok((
+            Some(Event::new(
+                &KAFKA_CLIENT_RECORDS_RECEIVED_EVENT,
+                serde_json::json!({
+                    "topic": topic,
+                    "partition": partition,
+                    "high_watermark": partition_data.high_watermark,
+                    "next_offset": next_offset,
+                    "record_count": records.len(),
+                    "records": records.iter().take(MAX_EVENT_RECORDS).map(record_to_json).collect::<Vec<_>>(),
+                }),
+            )),
+            wrote,
+        ))
     }
 
     /// Commit an offset. No event: the answer is a bare error code, and raising an event for
     /// it would double the model round trips a consumer needs per batch.
-    async fn commit(&self, data: &serde_json::Value) -> Result<()> {
+    async fn commit(&self, data: &serde_json::Value) -> Result<usize> {
         use kafka_protocol::messages::offset_commit_request::{
             OffsetCommitRequestPartition, OffsetCommitRequestTopic,
         };
@@ -979,6 +1133,7 @@ impl Session {
         let response: OffsetCommitResponse = conn
             .exchange(ApiKey::OffsetCommit, version, &request)
             .await?;
+        let wrote = conn.last_request_bytes;
         drop(conn);
 
         let error_code = response
@@ -1002,7 +1157,7 @@ impl Session {
         let _ = self.status_tx.send(format!(
             "[CLIENT] Kafka committed {topic}/{partition} offset {offset}"
         ));
-        Ok(())
+        Ok(wrote)
     }
 
     /// Poll every assigned partition until the client goes away or the connection breaks.
@@ -1034,13 +1189,13 @@ impl Session {
                     )
                     .await
                 {
-                    Ok(Some(event)) => {
+                    Ok((Some(event), _)) => {
                         if self.drive(event).await {
                             self.close("handler asked to disconnect").await;
                             return;
                         }
                     }
-                    Ok(None) => {}
+                    Ok((None, _)) => {}
                     Err(e) => {
                         error!(
                             "Kafka client {} polling {}/{} failed: {}",
@@ -1086,6 +1241,8 @@ impl Session {
     }
 
     async fn mark_error(&self, message: &str) {
+        // The connection is unusable, so stop offering `[ send ]` on it.
+        self.app_state.remove_client_handle(self.client_id).await;
         self.app_state
             .update_client_status(self.client_id, ClientStatus::Error(message.to_string()))
             .await;
@@ -1100,6 +1257,8 @@ impl Session {
         // Shutting the socket down explicitly makes the broker see a clean close rather than
         // waiting for its own idle timeout.
         let _ = self.conn.lock().await.stream.shutdown().await;
+        // Dropping the handle also closes the command channel, which ends `command_loop`.
+        self.app_state.remove_client_handle(self.client_id).await;
         self.app_state
             .update_client_status(self.client_id, ClientStatus::Disconnected)
             .await;

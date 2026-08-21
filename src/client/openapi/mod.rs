@@ -14,15 +14,53 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::client::openapi::actions::{
     OPENAPI_CLIENT_CONNECTED_EVENT, OPENAPI_OPERATION_RESPONSE_EVENT,
 };
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 #[cfg(feature = "openapi")]
 use openapi_rs::model::parse::OpenAPI;
+
+/// One completed OpenAPI operation.
+///
+/// Split out of [`OpenApiClient::execute_operation`] so the injected-command loop can await
+/// the HTTP round-trip - and report a truthful outcome - without also awaiting the LLM call
+/// the `openapi_operation_response` event triggers.
+pub struct OpenApiExchange {
+    pub operation_id: String,
+    pub method: String,
+    pub path: String,
+    pub status_code: u16,
+    pub status_text: String,
+    pub headers: serde_json::Map<String, serde_json::Value>,
+    pub body: String,
+}
+
+/// What one executed action did.
+enum Applied {
+    /// The action ran; `detail` says what it did.
+    Executed(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
+
+/// How an OpenAPI operation is issued.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Spawn the whole operation and return immediately. Used by the connected-event
+    /// handler, which runs inline in `connect()` and must not block client creation on a
+    /// request that can take the full 30s timeout.
+    Spawn,
+    /// Await the HTTP exchange so the caller can report what actually happened, then raise
+    /// the response event from its own registered task. Used by the injected-command loop,
+    /// so a parked manual handler cannot wedge it for the length of a human's think time.
+    Await,
+}
 
 /// OpenAPI client that makes spec-driven requests to HTTP servers
 pub struct OpenApiClient;
@@ -114,6 +152,29 @@ impl OpenApiClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // Registered and *served* before the openapi_client_connected LLM call below:
+        // a dashboard-created client defaults to a `*` -> manual routing rule, so that
+        // call can park for minutes and [ send ] has to work for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // The command loop replaces the old 5s "is the client gone yet?" poll: when the
+        // client is removed its handle is dropped, the channel closes and `recv()`
+        // returns None, so the loop notices removal immediately instead of up to 5s later.
+        // Registered with AppState so stop_client can abort it —
+        // dropping a JoinHandle only detaches it in Tokio.
+        let command_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state
+            .register_client_task(client_id, command_task)
+            .await;
+
         // Extract operation list for LLM
         #[cfg(feature = "openapi")]
         let operations = Self::extract_operations(&parsed_spec);
@@ -173,25 +234,6 @@ impl OpenApiClient {
             }
         }
 
-        // Spawn background monitoring task
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("OpenAPI client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
-
         // Return dummy address (HTTP is connectionless)
         Ok("0.0.0.0:0".parse().unwrap())
     }
@@ -223,7 +265,11 @@ impl OpenApiClient {
         operations
     }
 
-    /// Execute actions returned by LLM
+    /// Execute actions returned by LLM.
+    ///
+    /// Each action goes through the same [`Self::apply_action`] the dashboard's
+    /// injected-command path uses; the only difference is that this path spawns it, so
+    /// `connect()` can return without waiting for the request to complete.
     async fn execute_llm_actions(
         client_id: ClientId,
         result: ClientLlmResult,
@@ -231,49 +277,95 @@ impl OpenApiClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) {
-        use crate::llm::actions::client_trait::{Client, ClientActionResult};
         let protocol = crate::client::openapi::actions::OpenApiClientProtocol;
 
         for action in result.actions {
             match protocol.execute_action(action.clone()) {
-                Ok(ClientActionResult::Custom { name, data }) => {
-                    if name == "openapi_operation" {
-                        // Execute OpenAPI operation
-                        let operation_id = data["operation_id"]
-                            .as_str()
-                            .unwrap_or_default()
-                            .to_string();
-                        let path_params = data["path_params"]
-                            .as_object()
-                            .map(|obj| {
-                                obj.iter()
-                                    .filter_map(|(k, v)| {
-                                        v.as_str().map(|s| (k.clone(), s.to_string()))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let query_params = data["query_params"]
-                            .as_object()
-                            .map(|obj| {
-                                obj.iter()
-                                    .filter_map(|(k, v)| {
-                                        v.as_str().map(|s| (k.clone(), s.to_string()))
-                                    })
-                                    .collect()
-                            })
-                            .unwrap_or_default();
-                        let headers = data["headers"].as_object().cloned();
-                        let body = data["body"].clone();
+                Ok(ClientActionResult::Disconnect) => {
+                    info!("LLM requested disconnect for OpenAPI client {}", client_id);
+                    // The command loop tears the client's handle down when the client
+                    // itself is removed; nothing to close here (OpenAPI owns no socket).
+                }
+                Ok(applied) => {
+                    // Dispatch::Spawn so connect() is not blocked on the request.
+                    match Self::apply_action(
+                        client_id,
+                        applied,
+                        Dispatch::Spawn,
+                        &app_state,
+                        &llm_client,
+                        &status_tx,
+                    )
+                    .await
+                    {
+                        Ok(Applied::Executed(detail)) => {
+                            debug!("OpenAPI client {} after connect: {}", client_id, detail)
+                        }
+                        Ok(Applied::Disconnect) => {
+                            info!("LLM requested disconnect for OpenAPI client {}", client_id)
+                        }
+                        Err(e) => error!("OpenAPI operation execution failed: {}", e),
+                    }
+                }
+                Err(e) => {
+                    error!("Action execution error: {}", e);
+                }
+            }
+        }
+    }
 
-                        let llm_clone = llm_client.clone();
+    /// Apply one already-parsed action against the live OpenAPI client.
+    ///
+    /// The single place OpenAPI actions become HTTP traffic, so an action injected from the
+    /// dashboard behaves exactly like one the model produced. Under [`Dispatch::Await`]
+    /// only the **network** half is awaited; the response event - and the LLM call it makes
+    /// - is raised from its own registered task afterwards, so a `*` -> manual routing rule
+    /// parking that event cannot wedge the command loop for the length of a human's think
+    /// time. The outcome stays truthful because it carries the status the server actually
+    /// returned, which is known before the event is raised.
+    async fn apply_action(
+        client_id: ClientId,
+        result: ClientActionResult,
+        dispatch: Dispatch,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } if name == "openapi_operation" => {
+                let operation_id = data["operation_id"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string();
+                let path_params: HashMap<String, String> = data["path_params"]
+                    .as_object()
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let query_params: HashMap<String, String> = data["query_params"]
+                    .as_object()
+                    .map(|obj| {
+                        obj.iter()
+                            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let headers = data["headers"].as_object().cloned();
+                let body = data["body"].clone();
+
+                match dispatch {
+                    Dispatch::Spawn => {
                         let state_clone = app_state.clone();
+                        let llm_clone = llm_client.clone();
                         let status_clone = status_tx.clone();
+                        let log_id = operation_id.clone();
 
                         // Registered with AppState so stop_client can abort this task —
                         // dropping a JoinHandle only detaches it in Tokio.
-                        let task_registrar = app_state.clone();
-                        let task_handle = tokio::spawn(async move {
+                        let handle = tokio::spawn(async move {
                             if let Err(e) = Self::execute_operation(
                                 client_id,
                                 operation_id,
@@ -290,29 +382,143 @@ impl OpenApiClient {
                                 error!("OpenAPI operation execution failed: {}", e);
                             }
                         });
-                        task_registrar
-                            .register_client_task(client_id, task_handle)
+                        app_state.register_client_task(client_id, handle).await;
+                        Ok(Applied::Executed(format!("operation {log_id} dispatched")))
+                    }
+                    Dispatch::Await => {
+                        let exchange = Self::perform_operation(
+                            client_id,
+                            operation_id,
+                            path_params,
+                            query_params,
+                            headers,
+                            body,
+                            app_state,
+                            status_tx,
+                        )
+                        .await?;
+                        let detail = format!(
+                            "operation {} -> {} {} -> {} ({} byte body)",
+                            exchange.operation_id,
+                            exchange.method,
+                            exchange.path,
+                            exchange.status_code,
+                            exchange.body.len()
+                        );
+
+                        let state_clone = app_state.clone();
+                        let llm_clone = llm_client.clone();
+                        let status_clone = status_tx.clone();
+                        let handle = tokio::spawn(async move {
+                            Self::notify_operation_response(
+                                client_id,
+                                exchange,
+                                state_clone,
+                                llm_clone,
+                                status_clone,
+                            )
                             .await;
+                        });
+                        app_state.register_client_task(client_id, handle).await;
+                        Ok(Applied::Executed(detail))
                     }
                 }
-                Ok(ClientActionResult::Disconnect) => {
-                    info!("LLM requested disconnect for OpenAPI client {}", client_id);
-                    // Client will be cleaned up by monitoring task
-                }
-                Ok(ClientActionResult::NoAction) => {
-                    debug!("LLM returned no action");
-                }
-                Ok(_) => {
-                    debug!("Unhandled action result for OpenAPI client");
-                }
-                Err(e) => {
-                    error!("Action execution error: {}", e);
-                }
             }
+            ClientActionResult::Custom { name, .. } => Ok(Applied::Executed(format!(
+                "unknown OpenAPI custom result '{name}' was not executed"
+            ))),
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            ClientActionResult::NoAction => Ok(Applied::Executed(
+                "no_action (list_operations / get_operation_details are answered from the \
+                 spec already sent in openapi_client_connected)"
+                    .to_string(),
+            )),
+            ClientActionResult::WaitForMore => Ok(Applied::Executed("wait_for_more".to_string())),
+            ClientActionResult::SendData(_) => Ok(Applied::Executed(
+                "OpenAPI owns no socket; raw send_data cannot be put on the wire".to_string(),
+            )),
+            ClientActionResult::Multiple(_) => Ok(Applied::Executed(
+                "OpenAPI produces no Multiple results; nothing executed".to_string(),
+            )),
         }
     }
 
-    /// Execute an OpenAPI operation
+    /// Serve injected commands until the client goes away.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        let protocol = crate::client::openapi::actions::OpenApiClientProtocol;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                // Never `Sent`: reqwest owns the socket and does not report how many bytes
+                // the request serialised to, so a byte count here would be invented.
+                // `Executed` carries the response status instead.
+                Ok(result) => match Self::apply_action(
+                    client_id,
+                    result,
+                    Dispatch::Await,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await
+                {
+                    Ok(Applied::Executed(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                    Ok(Applied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                    Err(e) => Err(e),
+                },
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("OpenAPI client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
+            }
+        }
+
+        info!("OpenAPI client {} command loop finished", client_id);
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    /// Execute an OpenAPI operation and hand the response to the LLM.
     #[allow(clippy::too_many_arguments)]
     async fn execute_operation(
         client_id: ClientId,
@@ -325,6 +531,38 @@ impl OpenApiClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        let exchange = Self::perform_operation(
+            client_id,
+            operation_id,
+            path_params,
+            query_params,
+            header_overrides,
+            body,
+            &app_state,
+            &status_tx,
+        )
+        .await?;
+        Self::notify_operation_response(client_id, exchange, app_state, llm_client, status_tx)
+            .await;
+        Ok(())
+    }
+
+    /// Resolve the operation against the spec and perform the HTTP round-trip only.
+    ///
+    /// No LLM involvement, so a caller can await this and know exactly what the server
+    /// answered. An `operation_id` the spec does not define fails here, which is why an
+    /// injected command for a missing operation reports an error rather than success.
+    #[allow(clippy::too_many_arguments)]
+    async fn perform_operation(
+        client_id: ClientId,
+        operation_id: String,
+        path_params: HashMap<String, String>,
+        query_params: HashMap<String, String>,
+        header_overrides: Option<serde_json::Map<String, serde_json::Value>>,
+        body: serde_json::Value,
+        app_state: &AppState,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<OpenApiExchange> {
         // Get spec and base URL from client
         let (spec_yaml, base_url) = app_state
             .with_client_mut(client_id, |client| {
@@ -425,66 +663,83 @@ impl OpenApiClient {
                     client_id, operation_id, status_code, status
                 );
 
-                // Call LLM with response
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol =
-                        Arc::new(crate::client::openapi::actions::OpenApiClientProtocol::new());
-                    let event = Event::new(
-                        &OPENAPI_OPERATION_RESPONSE_EVENT,
-                        serde_json::json!({
-                            "operation_id": operation_id,
-                            "method": method,
-                            "path": path,
-                            "status_code": status_code,
-                            "status_text": status.to_string(),
-                            "headers": resp_headers,
-                            "body": body_text,
-                        }),
-                    );
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                            // Note: We don't execute follow-up actions here to avoid recursive async function issues.
-                            // The LLM can handle follow-up operations by including them in the original response
-                            // or via user commands.
-                        }
-                        Err(e) => {
-                            error!("LLM error for OpenAPI client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                Ok(OpenApiExchange {
+                    operation_id,
+                    method,
+                    path,
+                    status_code,
+                    status_text: status.to_string(),
+                    headers: resp_headers,
+                    body: body_text,
+                })
             }
             Err(e) => {
-                Log::new(Some(&status_tx)).error(format!(
+                Log::new(Some(status_tx)).error(format!(
                     "OpenAPI client {} request failed for '{}': {}",
                     client_id, operation_id, e
                 ));
                 Err(e.into())
+            }
+        }
+    }
+
+    /// Hand a completed exchange to the LLM as an `openapi_operation_response` event.
+    async fn notify_operation_response(
+        client_id: ClientId,
+        exchange: OpenApiExchange,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+
+        let protocol = Arc::new(crate::client::openapi::actions::OpenApiClientProtocol::new());
+        let event = Event::new(
+            &OPENAPI_OPERATION_RESPONSE_EVENT,
+            serde_json::json!({
+                "operation_id": exchange.operation_id,
+                "method": exchange.method,
+                "path": exchange.path,
+                "status_code": exchange.status_code,
+                "status_text": exchange.status_text,
+                "headers": exchange.headers,
+                "body": exchange.body,
+            }),
+        );
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                // Update memory
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+                // Note: We don't execute follow-up actions here to avoid recursive async
+                // function issues. The LLM can handle follow-up operations by including
+                // them in the original response, or the operator can inject them.
+            }
+            Err(e) => {
+                error!("LLM error for OpenAPI client {}: {}", client_id, e);
             }
         }
     }

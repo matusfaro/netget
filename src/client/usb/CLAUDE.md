@@ -191,3 +191,33 @@ nusb errors are converted to anyhow errors and logged. Common errors:
 - [ ] Endpoint discovery (automatically find available endpoints)
 - [ ] String descriptor reading (all descriptors, not just manufacturer/product)
 - [ ] USB configuration switching (alternate settings)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into the running client. `command_loop` in
+`mod.rs` drains the bounded channel and runs each action through `apply_usb_result` — the
+same function `execute_actions` (the LLM path) uses, so an injected transfer raises the same
+`usb_*` follow-up events.
+
+The `nusb::Interface` is cheap to clone, so the command task gets its own handle to the
+already-claimed interface. The channel is registered **before** the `usb_device_opened` LLM
+call, and the command loop is now what keeps the client alive — it replaced an idle
+`sleep(60)` loop that kept the client "up" while being unable to do anything.
+
+Outcomes:
+
+| action | `ClientSendOutcome` |
+|---|---|
+| `bulk_transfer_out` (completion `Ok`) | `Sent { bytes_sent }` |
+| `control_transfer` OUT (completion `Ok`) | `Sent { bytes_sent }` |
+| `control_transfer` IN / `bulk_transfer_in` / `interrupt_transfer_in` | `Executed { detail: "… : N bytes received" }` |
+| any transfer whose completion status is `Err` | `Executed { detail: "… failed: <err>" }` |
+| `claim_interface` | `Executed { detail: "claim_interface N: already claimed at connect" }` |
+| `detach_device` | `Disconnected` (handle dropped) |
+| unknown verb | `Rejected { error }` |
+
+`Sent` is truthful here: a completed OUT transfer really put those bytes on the USB wire.
+
+Fixed on the way in: the control-OUT branch did `let _ = interface.control_out(..).await`, so
+a stalled or refused control transfer was indistinguishable from a delivered one. Both
+directions now check `completion.status`.

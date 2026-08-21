@@ -289,3 +289,35 @@ See `tests/client/ssh/CLAUDE.md` for detailed testing approach.
 - [russh-keys documentation](https://docs.rs/russh-keys/)
 - [SSH Protocol RFC 4253](https://datatracker.ietf.org/doc/html/rfc4253)
 - [OpenSSH manual](https://www.openssh.com/manual.html)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into the running client. `command_loop` in
+`mod.rs` drains the bounded channel and runs each action through `apply_ssh_result` — the
+same function the `ssh_connected` and `ssh_output_received` LLM paths use, so an injected
+`execute_command` opens a channel, execs, reads the output and raises
+`ssh_output_received` exactly like an LLM-produced one.
+
+The channel is registered **before** the `ssh_connected` LLM call, which a `*` -> manual
+routing rule can park for minutes.
+
+Outcomes:
+
+| action | `ClientSendOutcome` |
+|---|---|
+| `execute_command` | `Executed { detail: "execute_command \"…\": exit_code=N, K bytes of output" }` |
+| `disconnect` | `Disconnected` (handle dropped) |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| unknown verb | `Rejected { error }` |
+
+**SSH never reports `Sent`.** russh owns the encrypted transport, so NetGet never sees a
+wire byte count; claiming one would be a lie.
+
+Two locking rules this made load-bearing, because the command loop and the LLM path now share
+the same `Arc<Mutex<Handle<..>>>` and `Arc<Mutex<ClientData>>`:
+
+- The session guard is dropped as soon as `channel_open_session()` returns. Holding it across
+  the exec plus the follow-up LLM call self-deadlocked the recursive follow-up action (it locks
+  the same mutex) and would block every injected command for the whole round-trip.
+- The memory string is cloned out of `ClientData` before each `call_llm_for_client`, never
+  borrowed across it.

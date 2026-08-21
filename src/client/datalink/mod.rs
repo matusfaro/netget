@@ -16,7 +16,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -33,11 +34,19 @@ struct ClientData {
     memory: String,
 }
 
-/// Channel for sending frame injection commands to the pcap thread
-#[derive(Clone)]
+/// Channel for sending frame injection commands to the pcap thread.
+///
+/// libpcap is a blocking API and its handle lives on the blocking task, so nothing else can
+/// call `sendpacket`. `ack` is how an injected command learns whether the frame really went
+/// out: the pcap loop reports the result back, which is what lets the command loop answer
+/// `Sent { bytes_sent }` truthfully instead of guessing.
 struct InjectionCommand {
     frame: Vec<u8>,
+    ack: Option<tokio::sync::oneshot::Sender<std::result::Result<usize, String>>>,
 }
+
+/// How long an injected command waits for the pcap loop's acknowledgement.
+const INJECTION_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// DataLink client that injects raw Ethernet frames
 pub struct DataLinkClient;
@@ -67,6 +76,7 @@ impl DataLinkClient {
 
         // Create channel for frame injection commands
         let (inject_tx, mut inject_rx) = mpsc::unbounded_channel::<InjectionCommand>();
+        let inject_tx_cmd = inject_tx.clone();
         let inject_tx_arc = Arc::new(Mutex::new(inject_tx));
 
         // Update client state
@@ -85,6 +95,23 @@ impl DataLinkClient {
             queued_frames: Vec::new(),
             memory: String::new(),
         }));
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // This client makes no connected-event LLM call, so there is nothing to race here -
+        // but it is still registered before the pcap task starts, so [ send ] is live from
+        // the moment the client exists.
+        let protocol = Arc::new(crate::client::datalink::actions::DataLinkClientProtocol::new());
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            protocol,
+            inject_tx_cmd,
+            client_id,
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Clone for the blocking task
         let interface_clone = interface.clone();
@@ -139,7 +166,7 @@ impl DataLinkClient {
             loop {
                 // Check for injection commands (non-blocking)
                 if let Ok(cmd) = inject_rx.try_recv() {
-                    match cap.sendpacket(&cmd.frame[..]) {
+                    let result = match cap.sendpacket(&cmd.frame[..]) {
                         Ok(_) => {
                             trace!(
                                 "DataLink client {} injected frame ({} bytes)",
@@ -151,6 +178,7 @@ impl DataLinkClient {
                                 client_id,
                                 cmd.frame.len()
                             ));
+                            Ok(cmd.frame.len())
                         }
                         Err(e) => {
                             error!(
@@ -161,7 +189,11 @@ impl DataLinkClient {
                                 "[ERROR] DataLink client {} frame injection failed: {}",
                                 client_id, e
                             ));
+                            Err(e.to_string())
                         }
+                    };
+                    if let Some(ack) = cmd.ack {
+                        let _ = ack.send(result);
                     }
                 }
 
@@ -225,7 +257,7 @@ impl DataLinkClient {
                                                         match protocol.as_ref().execute_action(action) {
                                                             Ok(crate::llm::actions::client_trait::ClientActionResult::SendData(frame_bytes)) => {
                                                                 // Send frame injection command
-                                                                let _ = inject_tx_task.lock().await.send(InjectionCommand { frame: frame_bytes });
+                                                                let _ = inject_tx_task.lock().await.send(InjectionCommand { frame: frame_bytes, ack: None });
                                                             }
                                                             Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
                                                                 info!("DataLink client {} disconnecting", client_id);
@@ -281,6 +313,10 @@ impl DataLinkClient {
                 app_state_clone
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
+                // The pcap handle is gone: drop the command handle so the dashboard stops
+                // offering [ send ] on a client that can no longer inject anything. This
+                // also closes the command channel, which ends `command_loop`.
+                app_state_clone.remove_client_handle(client_id).await;
                 let _ = status_tx_clone.send(format!(
                     "[CLIENT] DataLink client {} disconnected",
                     client_id
@@ -292,6 +328,146 @@ impl DataLinkClient {
         // For DataLink, we return a dummy socket address since we're not using TCP/UDP
         // The interface name is stored in the client metadata
         Ok(SocketAddr::from(([127, 0, 0, 1], 0)))
+    }
+
+    /// Drain injected commands until the channel closes (client removed, or the pcap loop
+    /// exited and dropped the handle) or an injected `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this client:
+    /// there is no `AsyncWrite` half at all. `inject_frame` yields
+    /// `ClientActionResult::SendData`, which is handed to the same pcap injection queue the
+    /// LLM path uses; the pcap loop acknowledges the `sendpacket` call so the reply can be
+    /// truthful.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        protocol: Arc<crate::client::datalink::actions::DataLinkClientProtocol>,
+        inject_tx: mpsc::UnboundedSender<InjectionCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = Self::execute_injected_action(&protocol, &inject_tx, &action).await;
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!(
+                    "DataLink client {} injected action failed: {}",
+                    client_id, e
+                );
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
+    }
+
+    /// Execute one injected action and report exactly what happened to it.
+    ///
+    /// - `Sent { bytes_sent }` only after the pcap loop has acknowledged a successful
+    ///   `sendpacket` for that many bytes.
+    /// - `Executed { detail }` when the frame could not be handed over at all - which is
+    ///   what an unprivileged run looks like, because the capture never opened.
+    /// - `Rejected { error }` for an action the protocol refuses (unknown type, bad hex).
+    /// - `Err` when pcap accepted the frame and failed to transmit it.
+    async fn execute_injected_action(
+        protocol: &Arc<crate::client::datalink::actions::DataLinkClientProtocol>,
+        inject_tx: &mpsc::UnboundedSender<InjectionCommand>,
+        action: &serde_json::Value,
+    ) -> Result<ClientSendOutcome> {
+        use crate::llm::actions::client_trait::{Client, ClientActionResult};
+
+        let result = match protocol.as_ref().execute_action(action.clone()) {
+            Ok(result) => result,
+            Err(e) => {
+                return Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                })
+            }
+        };
+
+        let frame = match result {
+            ClientActionResult::SendData(frame) => frame,
+            ClientActionResult::Disconnect => return Ok(ClientSendOutcome::Disconnected),
+            ClientActionResult::WaitForMore => {
+                return Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_more".to_string(),
+                })
+            }
+            other => {
+                return Ok(ClientSendOutcome::Executed {
+                    detail: format!("{other:?} injects no frame"),
+                })
+            }
+        };
+
+        let frame_len = frame.len();
+        let (ack_tx, ack_rx) = tokio::sync::oneshot::channel();
+        if inject_tx
+            .send(InjectionCommand {
+                frame,
+                ack: Some(ack_tx),
+            })
+            .is_err()
+        {
+            // The blocking task returned before opening a capture (no such device, or -
+            // the usual case off-root - libpcap could not open the interface), so the
+            // injection queue's receiver is gone.
+            return Ok(ClientSendOutcome::Executed {
+                detail: format!(
+                    "{frame_len}-byte frame built but not injected: the pcap capture is not \
+                     open (raw frame injection needs root / BPF access)"
+                ),
+            });
+        }
+
+        match tokio::time::timeout(INJECTION_ACK_TIMEOUT, ack_rx).await {
+            Ok(Ok(Ok(bytes_sent))) => Ok(ClientSendOutcome::Sent { bytes_sent }),
+            Ok(Ok(Err(e))) => Err(anyhow::anyhow!("pcap sendpacket failed: {e}")),
+            Ok(Err(_)) => Ok(ClientSendOutcome::Executed {
+                detail: format!(
+                    "{frame_len}-byte frame not injected: it was handed to the pcap loop, \
+                     which exited without reporting the result"
+                ),
+            }),
+            Err(_) => Ok(ClientSendOutcome::Executed {
+                detail: format!(
+                    "{frame_len}-byte frame not confirmed injected: the pcap loop did not \
+                     acknowledge it within {}s",
+                    INJECTION_ACK_TIMEOUT.as_secs()
+                ),
+            }),
+        }
     }
 
     /// Find a network device by name

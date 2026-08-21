@@ -245,3 +245,38 @@ SELECT * FROM users WHERE id > 0
 - [tiberius GitHub](https://github.com/prisma/tiberius)
 - [MS-TDS] Tabular Data Stream Protocol - Microsoft specification
 - [SQL Server TDS versions](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tds/): 7.0 (SQL 7.0), 7.1 (SQL 2000), 7.2 (SQL 2005), 7.3 (SQL 2008), 7.4 (SQL 2012+)
+
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel and spawns `command_loop` **before**
+the `mssql_connected` LLM call, which a manual `*` rule can park for minutes.
+
+That task is also what keeps the connection alive: before it existed the only `Arc` to the
+tiberius client was a local in `connect_with_llm_actions`, so the socket was dropped the
+moment that function returned.
+
+The query path was split into `apply_action` (runs it, no LLM call) and `follow_up` (raises
+`mssql_query_result` / `mssql_error` and executes the answer). The connected-event path and
+the command loop both call `apply_action`, so the query path exists once. The command loop
+replies first and spawns `follow_up` in its own registered task, so a parked handler cannot
+block the next injected command.
+
+**Outcome semantics.** tiberius owns the TDS framing, so there is no byte count this loop can
+honestly claim: a query that ran reports `Executed { detail: "execute_query '<sql>': N row(s),
+M column(s)" }`. A query the server refused is an `Err`. An injected `disconnect` replies
+`Disconnected`, drops the handle and marks the client disconnected.
+
+Two fixes were needed before any of this could be exercised, and both had hidden each other:
+
+- The client left tiberius at its default `EncryptionLevel::Required` (set whenever a TLS
+  backend is compiled in, and NetGet pulls tiberius with `native-tls`). NetGet's own MSSQL
+  server answers PRELOGIN with `ENCRYPT_NOT_SUP`, so the negotiation landed on
+  `EncryptionLevel::On` and the client attempted a TLS handshake the server cannot do. It now
+  sets `EncryptionLevel::NotSupported`, as the server's own tests already did.
+- With that fixed, the server's `COLMETADATA` `Flags` turned out to be `[0x00, 0x02]` — bit 9,
+  which no TDS flag occupies — so tiberius rejected every result set with
+  "column metadata: invalid flags". `fNullable` is bit 0, i.e. `[0x01, 0x00]`.
+
+Test: `tests/client/mssql/command_channel_test.rs` (zero LLM calls; a NetGet MSSQL server
+answers `mssql_query` through a `*` static rule — its PRELOGIN/LOGIN7 handshake is pure Rust
+and raises no event).

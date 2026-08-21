@@ -12,11 +12,13 @@ use tracing::{error, info, trace, warn};
 
 use crate::client::bootp::actions::{BOOTP_CLIENT_CONNECTED_EVENT, BOOTP_REPLY_RECEIVED_EVENT};
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 #[cfg(feature = "bootp")]
 use dhcproto::v4;
@@ -43,6 +45,18 @@ struct BootpReply {
     server_ip: Ipv4Addr,
     gateway_ip: Ipv4Addr,
     boot_filename: String,
+}
+
+/// What applying one executed action did. Shared by the LLM paths and the
+/// command channel so an injected action reports the same truth the LLM path
+/// puts on the wire.
+enum Applied {
+    /// A datagram reached the wire, with its real byte count.
+    Sent(usize),
+    /// The action ran but wrote nothing.
+    Executed(String),
+    /// The session should end.
+    Disconnect,
 }
 
 /// BOOTP client that sends requests to a BOOTP/DHCP server
@@ -110,6 +124,16 @@ impl BootpClient {
         let app_state_clone = Arc::clone(&app_state);
         let status_tx_clone = status_tx.clone();
 
+        // Command channel: lets the dashboard (and any programmatic caller) inject
+        // actions into this client via AppState::send_to_client.
+        //
+        // Registered BEFORE the connected event is handled: a `manual` routing rule can
+        // park that event at the dashboard for minutes, and until registration the UI
+        // reports "no command channel" - reading as a protocol limitation when it is
+        // only a queue.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
         // Send initial connected event to LLM
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let protocol = Arc::new(crate::client::bootp::actions::BootpClientProtocol::new());
@@ -172,9 +196,41 @@ impl BootpClient {
         let task_registrar = app_state.clone();
         let task_handle = tokio::spawn(async move {
             let mut buffer = vec![0u8; 1500]; // BOOTP packets are typically ~300 bytes
+            let cmd_protocol = Arc::new(crate::client::bootp::actions::BootpClientProtocol::new());
 
             loop {
-                match socket_clone.recv_from(&mut buffer).await {
+                // `UdpSocket::recv_from` is cancellation-safe, so the command arm can
+                // share this select! with the read - losing the race never drops a
+                // datagram.
+                let recv_result = tokio::select! {
+                    result = socket_clone.recv_from(&mut buffer) => result,
+                    Some(cmd) = command_rx.recv() => {
+                        if Self::handle_injected_command(
+                            cmd,
+                            &socket_clone,
+                            server_addr,
+                            &cmd_protocol,
+                            &app_state_clone,
+                            &status_tx_clone,
+                            client_id,
+                        )
+                        .await
+                        {
+                            app_state_clone
+                                .update_client_status(client_id, ClientStatus::Disconnected)
+                                .await;
+                            let _ = status_tx_clone.send(format!(
+                                "[CLIENT] BOOTP client {} disconnected (injected action)",
+                                client_id
+                            ));
+                            let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
+                            break;
+                        }
+                        continue;
+                    }
+                };
+
+                match recv_result {
                     Ok((n, peer)) => {
                         trace!(
                             "BOOTP client {} received {} bytes from {}",
@@ -298,6 +354,11 @@ impl BootpClient {
                     }
                 }
             }
+
+            // Every exit path lands here: drop the command handle so the dashboard
+            // stops offering [ send ] on a dead client (a late send then fails fast).
+            app_state_clone.remove_client_handle(client_id).await;
+            let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
         });
         task_registrar
             .register_client_task(client_id, task_handle)
@@ -306,7 +367,8 @@ impl BootpClient {
         Ok(local_addr)
     }
 
-    /// Execute a BOOTP client action
+    /// Execute a BOOTP client action (LLM path: rejection and wire failure are
+    /// both just logged by the caller).
     async fn execute_bootp_action(
         action: serde_json::Value,
         socket: &Arc<UdpSocket>,
@@ -314,10 +376,22 @@ impl BootpClient {
         protocol: &Arc<BootpClientProtocol>,
         status_tx: &mpsc::UnboundedSender<String>,
         client_id: ClientId,
-    ) -> Result<()> {
-        use crate::llm::actions::client_trait::{Client, ClientActionResult};
+    ) -> Result<Applied> {
+        let result = protocol.as_ref().execute_action(action)?;
+        Self::apply_action_result(result, socket, server_addr, status_tx, client_id).await
+    }
 
-        match protocol.as_ref().execute_action(action)? {
+    /// Put one executed action on the wire. Shared by the connected-event path, the
+    /// read loop and injected commands, so the BOOTP encoding and the choice of
+    /// destination exist exactly once.
+    async fn apply_action_result(
+        result: ClientActionResult,
+        socket: &Arc<UdpSocket>,
+        server_addr: SocketAddr,
+        status_tx: &mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+    ) -> Result<Applied> {
+        match result {
             ClientActionResult::Custom { name, data } if name == "send_bootp_request" => {
                 let client_mac = data["client_mac"].as_str().context("Missing client_mac")?;
                 let broadcast = data["broadcast"].as_bool().unwrap_or(true);
@@ -335,21 +409,89 @@ impl BootpClient {
                     server_addr
                 };
 
-                socket.send_to(&bootp_request, target).await?;
+                // The byte count reported to an injected caller is the one the kernel
+                // accepted, not the length we hoped to send.
+                let sent = socket.send_to(&bootp_request, target).await?;
                 trace!("BOOTP client {} sent request to {}", client_id, target);
                 let _ = status_tx.send(format!("[CLIENT] BOOTP request sent to {}", target));
+                Ok(Applied::Sent(sent))
             }
+            ClientActionResult::Custom { name, .. } => Ok(Applied::Executed(format!(
+                "custom result '{name}' is not a BOOTP wire verb"
+            ))),
             ClientActionResult::Disconnect => {
                 info!("BOOTP client {} disconnecting", client_id);
-                // UDP is connectionless, nothing to do
+                // UDP is connectionless: there is no socket to shut down, so the only
+                // effect is ending the receive loop.
+                Ok(Applied::Disconnect)
             }
-            ClientActionResult::WaitForMore => {
-                // Do nothing, just wait
-            }
-            _ => {}
+            ClientActionResult::WaitForMore => Ok(Applied::Executed("wait_for_more".to_string())),
+            ClientActionResult::NoAction => Ok(Applied::Executed("no_action".to_string())),
+            other => Ok(Applied::Executed(format!("no wire effect: {other:?}"))),
         }
+    }
 
-        Ok(())
+    /// Apply one injected action, record it in the access log exactly as
+    /// `command_support::handle_stream_client_command` does for stream clients, and
+    /// reply on the command's oneshot. Returns `true` when the receive loop should
+    /// stop.
+    ///
+    /// This is bespoke rather than the generic helper because every BOOTP verb
+    /// yields `ClientActionResult::Custom` and the destination (unicast vs the
+    /// limited broadcast address) is a property of the action, not of a write half.
+    async fn handle_injected_command(
+        command: ClientCommand,
+        socket: &Arc<UdpSocket>,
+        server_addr: SocketAddr,
+        protocol: &Arc<BootpClientProtocol>,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+    ) -> bool {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let action = command.action.clone();
+        let outcome = match protocol.as_ref().execute_action(action.clone()) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(result) => {
+                Self::apply_action_result(result, socket, server_addr, status_tx, client_id)
+                    .await
+                    .map(|applied| match applied {
+                        Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                        Applied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                        Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    })
+            }
+        };
+
+        let outcome_json = match &outcome {
+            Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+            Err(e) => serde_json::json!({"error": e.to_string()}),
+        };
+        app_state
+            .record_access_log(
+                AccessLogOwner::Client(client_id.as_u32()),
+                protocol.protocol_name(),
+                None,
+                "injected_action",
+                action,
+                vec![outcome_json],
+            )
+            .await;
+
+        let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+        if let Err(e) = &outcome {
+            error!("BOOTP client {} injected action failed: {}", client_id, e);
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        crate::client::command_support::reply(command, outcome);
+        disconnect
     }
 
     /// Parse MAC address from string format (00:11:22:33:44:55)

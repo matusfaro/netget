@@ -7,17 +7,21 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info};
 
 use crate::client::elasticsearch::actions::{
     ELASTICSEARCH_CLIENT_CONNECTED_EVENT, ELASTICSEARCH_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+use crate::utils::truncate::truncate_for_log;
 
 /// Elasticsearch client that interacts with Elasticsearch clusters
 pub struct ElasticsearchClient;
@@ -75,6 +79,25 @@ impl ElasticsearchClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // Registered BEFORE the connected-event LLM call below: a dashboard-created
+        // client defaults to a `*` -> manual routing rule, which parks that call until
+        // a human answers, and [ send ] has to work for the whole park.
+        //
+        // The command loop also replaces the 5s "has the client been removed yet"
+        // poll this client used to run: `remove_client` drops the handle, the sender
+        // goes with it, and `recv()` returns None - promptly, and without a timer.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with connected event to get initial instructions
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let protocol = Arc::new(ElasticsearchClientProtocol::new());
@@ -111,78 +134,36 @@ impl ElasticsearchClient {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
 
-                    // Execute initial actions
-                    use crate::llm::actions::client_trait::{Client, ClientActionResult};
+                    // Execute initial actions through the same path injected
+                    // commands use, so the two cannot diverge. Spawned (and
+                    // registered) rather than awaited: `connect` must return
+                    // promptly, and an in-flight request has to die with the client.
                     for action in actions {
-                        match protocol.execute_action(action) {
-                            Ok(ClientActionResult::Custom { name, data }) => match name.as_str() {
-                                "index_document" => {
-                                    let index = data
-                                        .get("index")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("unknown")
-                                        .to_string();
-                                    let id = data
-                                        .get("id")
-                                        .and_then(|v| v.as_str())
-                                        .map(|s| s.to_string());
-                                    let document = data
-                                        .get("document")
-                                        .cloned()
-                                        .unwrap_or(serde_json::json!({}));
-
-                                    tokio::spawn(Self::index_document(
-                                        client_id,
-                                        index,
-                                        id,
-                                        document,
-                                        app_state.clone(),
-                                        llm_client.clone(),
-                                        status_tx.clone(),
-                                    ));
-                                }
-                                "search" => {
-                                    let index = data
-                                        .get("index")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or("unknown")
-                                        .to_string();
-                                    let query =
-                                        data.get("query").cloned().unwrap_or(serde_json::json!({}));
-
-                                    tokio::spawn(Self::search(
-                                        client_id,
-                                        index,
-                                        query,
-                                        app_state.clone(),
-                                        llm_client.clone(),
-                                        status_tx.clone(),
-                                    ));
-                                }
-                                _ => {
-                                    info!("Ignoring action {} during initial connection", name);
-                                }
-                            },
-                            Ok(ClientActionResult::NoAction) => {
-                                // LLM chose to take no action
-                            }
-                            Ok(ClientActionResult::Multiple(_)) => {
-                                // Multiple actions not supported for initial connection
-                                warn!("Multiple actions not supported during initial connection");
-                            }
-                            Ok(ClientActionResult::Disconnect) => {
-                                // Ignore disconnect during initial connection
-                            }
-                            Ok(ClientActionResult::WaitForMore) => {
-                                // Ignore wait for more during initial connection
-                            }
-                            Ok(ClientActionResult::SendData(_)) => {
-                                // Not applicable for Elasticsearch (HTTP-based)
-                            }
+                        let result = match protocol.execute_action(action) {
+                            Ok(result) => result,
                             Err(e) => {
                                 error!("Failed to execute initial action: {}", e);
+                                continue;
                             }
-                        }
+                        };
+                        let state_clone = app_state.clone();
+                        let llm_clone = llm_client.clone();
+                        let status_clone = status_tx.clone();
+                        let handle = tokio::spawn(async move {
+                            let outcome = Self::apply_action(
+                                result,
+                                client_id,
+                                &state_clone,
+                                &llm_clone,
+                                &status_clone,
+                            )
+                            .await;
+                            debug!(
+                                "Elasticsearch client {} connect action: {:?}",
+                                client_id, outcome
+                            );
+                        });
+                        app_state.register_client_task(client_id, handle).await;
                     }
                 }
                 Err(e) => {
@@ -193,25 +174,6 @@ impl ElasticsearchClient {
                 }
             }
         }
-
-        // Spawn background monitoring task
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("Elasticsearch client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
 
         // Return dummy address (Elasticsearch is HTTP-based)
         Ok("0.0.0.0:0".parse().unwrap())
@@ -226,7 +188,7 @@ impl ElasticsearchClient {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<u16> {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
 
         let url = if let Some(doc_id) = &id {
@@ -259,16 +221,23 @@ impl ElasticsearchClient {
             client_id, status_code
         );
 
-        Self::call_llm_with_response(
+        // Raise the response event from its own registered task rather than inline.
+        // A dashboard-created client defaults to a `*` -> manual routing rule, so this
+        // LLM call can park for minutes waiting for a human; awaiting it here would
+        // wedge the command loop and make an injected action that in fact succeeded
+        // look to the dashboard like a timeout.
+        let notify = Self::spawn_response_notification(
             client_id,
             "index_document".to_string(),
             status_code,
             response_body,
-            app_state,
+            app_state.clone(),
             llm_client,
             status_tx,
-        )
-        .await
+        );
+        app_state.register_client_task(client_id, notify).await;
+
+        Ok(status_code)
     }
 
     /// Search documents in Elasticsearch
@@ -279,7 +248,7 @@ impl ElasticsearchClient {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<u16> {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
         let url = format!("{}/{}/_search", cluster_url, index);
 
@@ -317,16 +286,23 @@ impl ElasticsearchClient {
                 .unwrap_or(0)
         );
 
-        Self::call_llm_with_response(
+        // Raise the response event from its own registered task rather than inline.
+        // A dashboard-created client defaults to a `*` -> manual routing rule, so this
+        // LLM call can park for minutes waiting for a human; awaiting it here would
+        // wedge the command loop and make an injected action that in fact succeeded
+        // look to the dashboard like a timeout.
+        let notify = Self::spawn_response_notification(
             client_id,
             "search".to_string(),
             status_code,
             response_body,
-            app_state,
+            app_state.clone(),
             llm_client,
             status_tx,
-        )
-        .await
+        );
+        app_state.register_client_task(client_id, notify).await;
+
+        Ok(status_code)
     }
 
     /// Get a document by ID
@@ -337,7 +313,7 @@ impl ElasticsearchClient {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<u16> {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
         let url = format!("{}/{}/_doc/{}", cluster_url, index, id);
 
@@ -359,16 +335,23 @@ impl ElasticsearchClient {
             .await
             .unwrap_or(serde_json::json!({"error": "Failed to parse response"}));
 
-        Self::call_llm_with_response(
+        // Raise the response event from its own registered task rather than inline.
+        // A dashboard-created client defaults to a `*` -> manual routing rule, so this
+        // LLM call can park for minutes waiting for a human; awaiting it here would
+        // wedge the command loop and make an injected action that in fact succeeded
+        // look to the dashboard like a timeout.
+        let notify = Self::spawn_response_notification(
             client_id,
             "get_document".to_string(),
             status_code,
             response_body,
-            app_state,
+            app_state.clone(),
             llm_client,
             status_tx,
-        )
-        .await
+        );
+        app_state.register_client_task(client_id, notify).await;
+
+        Ok(status_code)
     }
 
     /// Delete a document by ID
@@ -379,7 +362,7 @@ impl ElasticsearchClient {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<u16> {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
         let url = format!("{}/{}/_doc/{}", cluster_url, index, id);
 
@@ -401,16 +384,23 @@ impl ElasticsearchClient {
             .await
             .unwrap_or(serde_json::json!({"error": "Failed to parse response"}));
 
-        Self::call_llm_with_response(
+        // Raise the response event from its own registered task rather than inline.
+        // A dashboard-created client defaults to a `*` -> manual routing rule, so this
+        // LLM call can park for minutes waiting for a human; awaiting it here would
+        // wedge the command loop and make an injected action that in fact succeeded
+        // look to the dashboard like a timeout.
+        let notify = Self::spawn_response_notification(
             client_id,
             "delete_document".to_string(),
             status_code,
             response_body,
-            app_state,
+            app_state.clone(),
             llm_client,
             status_tx,
-        )
-        .await
+        );
+        app_state.register_client_task(client_id, notify).await;
+
+        Ok(status_code)
     }
 
     /// Execute bulk operations
@@ -420,7 +410,7 @@ impl ElasticsearchClient {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<u16> {
         let cluster_url = Self::get_cluster_url(&app_state, client_id).await?;
         let url = format!("{}/_bulk", cluster_url);
 
@@ -508,16 +498,237 @@ impl ElasticsearchClient {
             .await
             .unwrap_or(serde_json::json!({"error": "Failed to parse response"}));
 
-        Self::call_llm_with_response(
+        // Raise the response event from its own registered task rather than inline.
+        // A dashboard-created client defaults to a `*` -> manual routing rule, so this
+        // LLM call can park for minutes waiting for a human; awaiting it here would
+        // wedge the command loop and make an injected action that in fact succeeded
+        // look to the dashboard like a timeout.
+        let notify = Self::spawn_response_notification(
             client_id,
             "bulk_operation".to_string(),
             status_code,
             response_body,
-            app_state,
+            app_state.clone(),
             llm_client,
             status_tx,
-        )
-        .await
+        );
+        app_state.register_client_task(client_id, notify).await;
+
+        Ok(status_code)
+    }
+
+    /// Apply one executed action against the cluster. Shared by the
+    /// connected-event LLM path and by injected commands, so the two cannot
+    /// diverge - and so every advertised verb is reachable from both. (The
+    /// connect path used to dispatch only `index_document` and `search`, silently
+    /// dropping `get_document`, `delete_document` and `bulk_operation`.)
+    ///
+    /// `reqwest` reports no wire byte count for a request it framed itself, so a
+    /// completed operation is `Executed { detail }` naming the operation and the
+    /// HTTP status it got back - never `Sent`, which would be a fabricated count.
+    async fn apply_action(
+        result: ClientActionResult,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> ClientSendOutcome {
+        let (name, data) = match result {
+            ClientActionResult::Custom { name, data } => (name, data),
+            ClientActionResult::Disconnect => return ClientSendOutcome::Disconnected,
+            ClientActionResult::WaitForMore => {
+                return ClientSendOutcome::Executed {
+                    detail: "wait_for_more".to_string(),
+                }
+            }
+            ClientActionResult::NoAction => {
+                return ClientSendOutcome::Executed {
+                    detail: "no_action".to_string(),
+                }
+            }
+            ClientActionResult::SendData(_) => {
+                return ClientSendOutcome::Executed {
+                    detail: "send_data has no meaning for the Elasticsearch client: it speaks \
+                             the Elasticsearch REST API over reqwest, not a socket this client \
+                             owns"
+                        .to_string(),
+                }
+            }
+            ClientActionResult::Multiple(_) => {
+                return ClientSendOutcome::Executed {
+                    detail: "the Elasticsearch client's own verbs never produce Multiple; \
+                             nothing was applied"
+                        .to_string(),
+                }
+            }
+        };
+
+        let index = data
+            .get("index")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let id = data
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let outcome = match name.as_str() {
+            "index_document" => {
+                let document = data
+                    .get("document")
+                    .cloned()
+                    .unwrap_or(serde_json::json!({}));
+                Self::index_document(
+                    client_id,
+                    index.clone(),
+                    id,
+                    document,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                )
+                .await
+            }
+            "search" => {
+                let query = data.get("query").cloned().unwrap_or(serde_json::json!({}));
+                Self::search(
+                    client_id,
+                    index.clone(),
+                    query,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                )
+                .await
+            }
+            "get_document" => match id {
+                Some(id) => {
+                    Self::get_document(
+                        client_id,
+                        index.clone(),
+                        id,
+                        app_state.clone(),
+                        llm_client.clone(),
+                        status_tx.clone(),
+                    )
+                    .await
+                }
+                None => Err(anyhow::anyhow!("get_document requires an 'id'")),
+            },
+            "delete_document" => match id {
+                Some(id) => {
+                    Self::delete_document(
+                        client_id,
+                        index.clone(),
+                        id,
+                        app_state.clone(),
+                        llm_client.clone(),
+                        status_tx.clone(),
+                    )
+                    .await
+                }
+                None => Err(anyhow::anyhow!("delete_document requires an 'id'")),
+            },
+            "bulk_operation" => {
+                let operations = data
+                    .get("operations")
+                    .and_then(|v| v.as_array())
+                    .cloned()
+                    .unwrap_or_default();
+                Self::bulk_operation(
+                    client_id,
+                    operations,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                )
+                .await
+            }
+            other => Err(anyhow::anyhow!(
+                "Unknown Elasticsearch operation: {}",
+                other
+            )),
+        };
+
+        match outcome {
+            Ok(status_code) => ClientSendOutcome::Executed {
+                detail: format!("{} completed: HTTP {}", name, status_code),
+            },
+            Err(e) => {
+                error!(
+                    "Elasticsearch client {} operation {} failed: {}",
+                    client_id, name, e
+                );
+                let _ = status_tx.send(format!(
+                    "[ERROR] Elasticsearch operation {} failed: {}",
+                    name, e
+                ));
+                ClientSendOutcome::Executed {
+                    detail: format!("{} failed: {}", name, truncate_for_log(&e.to_string(), 200)),
+                }
+            }
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed)
+    /// or an injected `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client:
+    /// every Elasticsearch verb yields `ClientActionResult::Custom` and there is no
+    /// write half to put bytes on. Actions therefore go through
+    /// [`Self::apply_action`] - the same function the LLM path uses - and the
+    /// outcome is logged and replied exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = ElasticsearchClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                },
+                Ok(result) => {
+                    Self::apply_action(result, client_id, &app_state, &llm_client, &status_tx).await
+                }
+            };
+            let disconnected = matches!(outcome, ClientSendOutcome::Disconnected);
+
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null)],
+                )
+                .await;
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, Ok(outcome));
+
+            if disconnected {
+                info!(
+                    "Elasticsearch client {} disconnecting on injected action",
+                    client_id
+                );
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
+            }
+        }
+
+        info!("Elasticsearch client {} command loop stopped", client_id);
+        // Never leave the dashboard offering [ send ] into a client that is gone.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Helper: Get cluster URL from client state
@@ -532,6 +743,38 @@ impl ElasticsearchClient {
             .await
             .flatten()
             .context("No cluster URL found")
+    }
+
+    /// Raise `elasticsearch_response_received` off the caller's task. Never awaited by a
+    /// caller that holds the command loop: an event handler may park this call for a human
+    /// answer.
+    fn spawn_response_notification(
+        client_id: ClientId,
+        operation: String,
+        status_code: u16,
+        response: serde_json::Value,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            if let Err(e) = Self::call_llm_with_response(
+                client_id,
+                operation,
+                status_code,
+                response,
+                app_state,
+                llm_client,
+                status_tx,
+            )
+            .await
+            {
+                error!(
+                    "Elasticsearch client {} response notification failed: {}",
+                    client_id, e
+                );
+            }
+        })
     }
 
     /// Helper: Call LLM with response

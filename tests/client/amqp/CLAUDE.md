@@ -55,3 +55,19 @@ Channel open, queue declare, bind, publish, consume and acknowledge from the cli
 drive. The broker side of all of those is covered by `tests/server/amqp/e2e_test.rs`, which
 drives it with a real lapin client. Also not covered: TLS (5671), SASL beyond PLAIN, publisher
 confirms, and multiple channels.
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+Same shape as `e2e_test.rs` — a NetGet broker and a real lapin client over a real socket — but
+built with `ServerForm`/`ClientForm` and **static** handlers instead of a mocked Ollama, so it
+costs **0 LLM calls** (the client's LLM URL is `http://127.0.0.1:1` and its `amqp_connected` call
+fails, which the client must tolerate).
+
+Broker handlers: `amqp_connection_open` → `amqp_connection_open_ok` (without it lapin's connect
+never returns), `*` → no actions (Basic.Publish owes nothing on the wire outside confirm mode).
+
+Asserts: the command handle exists before anything is sent; `open_channel` returns `Executed`
+naming `Channel.Open` (a real round trip — lapin waits for `Open-Ok`); `publish` returns
+`Executed` naming `Basic.Publish`; the routing key appears in the **broker's** access log, which
+is the proof the frames crossed the socket; an unknown action is `Rejected`; `disconnect` returns
+`Disconnected` and the handle goes.

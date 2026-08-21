@@ -283,3 +283,29 @@ LLM can decide how to handle errors:
 - Retry with different model
 - Disconnect
 - Log and continue
+
+## Injected actions (the dashboard's `[ send ]`)
+
+The client registers a command channel and spawns `OllamaClientImpl::command_loop`
+**before** the `ollama_connected` LLM call, because a `*` -> manual rule can park that call
+for minutes and the operator must still be able to reach the client. The command task also
+replaces the old 5s "has the client been removed yet" poll.
+
+Both the connected-event path and injected commands go through one
+`OllamaClientImpl::apply_action`, which maps every `Custom` result to its request function
+(`send_generate_request`, `send_chat_request`, `generate_embeddings`, `list_models`). Before
+this, the connected-event handler discarded the LLM's actions entirely - it logged "ready
+after connect event" and never called `make_generate_request`.
+
+`ClientSendOutcome` semantics:
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | The API call ran to completion, e.g. `send_generate_request completed (model=llama2)`. |
+| `Rejected { error }` | `execute_action` refused the action (unknown type, missing required `model`). |
+| `Disconnected` | `{"type":"disconnect"}`; the command loop exits and the handle is dropped. |
+| `Err(...)` | The HTTP call failed, or Ollama answered with an error body. |
+
+**`Sent { bytes_sent }` is never reported**: reqwest owns the socket, so a byte count would
+be invented. The request is awaited before the outcome is returned, so `Executed` means it
+really completed and `ollama_response_received` has already fired.

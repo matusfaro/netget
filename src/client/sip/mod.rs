@@ -16,7 +16,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -96,13 +97,38 @@ impl SipClient {
             }),
         );
 
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the connected-event LLM call: a manual `*` routing rule can
+        // park that call for minutes, and the operator must be able to reach the client
+        // while it waits. `recv` is cancellation-safe, so a `select!` arm in the read loop
+        // would also be sound - but the read loop can sit inside a multi-minute LLM call,
+        // and injected commands must not queue behind it. Hence a separate task; the UDP
+        // socket is an `Arc<UdpSocket>` and `send` takes `&self`, so both tasks can write.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            socket.clone(),
+            protocol.clone(),
+            client_data.clone(),
+            client_id,
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+            // Copy the memory out and drop the guard: passing `&guard.memory` straight into the
+            // call would hold the mutex for the whole LLM round-trip, and an injected command
+            // (which needs the same mutex for the Call-ID / tag / CSeq state) would queue behind
+            // it - defeating the point of running the command loop as its own task.
+            let memory = client_data.lock().await.memory.clone();
             match call_llm_for_client(
                 &llm_client,
                 &app_state,
                 client_id.to_string(),
                 &instruction,
-                &client_data.lock().await.memory,
+                &memory,
                 Some(&event),
                 protocol.as_ref(),
                 &status_tx,
@@ -120,7 +146,7 @@ impl SipClient {
 
                     // Execute initial actions (e.g., REGISTER)
                     for action in actions {
-                        Self::execute_sip_action(
+                        if let Err(e) = Self::execute_sip_action(
                             action,
                             &socket,
                             &protocol,
@@ -128,7 +154,10 @@ impl SipClient {
                             client_id,
                             &status_tx,
                         )
-                        .await;
+                        .await
+                        {
+                            error!("SIP client {} send error: {}", client_id, e);
+                        }
                     }
                 }
                 Err(e) => {
@@ -216,12 +245,15 @@ impl SipClient {
                                         }),
                                     );
 
+                                    // Copied out so the mutex is not held across the LLM
+                                    // round-trip (see the connect path).
+                                    let memory = client_data_clone.lock().await.memory.clone();
                                     match call_llm_for_client(
                                         &llm_clone,
                                         &state_clone,
                                         client_id.to_string(),
                                         &instruction,
-                                        &client_data_clone.lock().await.memory,
+                                        &memory,
                                         Some(&event),
                                         protocol_clone.as_ref(),
                                         &status_clone,
@@ -239,7 +271,7 @@ impl SipClient {
 
                                             // Execute actions
                                             for action in actions {
-                                                Self::execute_sip_action(
+                                                if let Err(e) = Self::execute_sip_action(
                                                     action,
                                                     &socket_clone,
                                                     &protocol_clone,
@@ -247,7 +279,13 @@ impl SipClient {
                                                     client_id,
                                                     &status_clone,
                                                 )
-                                                .await;
+                                                .await
+                                                {
+                                                    error!(
+                                                        "SIP client {} send error: {}",
+                                                        client_id, e
+                                                    );
+                                                }
                                             }
                                         }
                                         Err(e) => {
@@ -340,12 +378,16 @@ impl SipClient {
                                                     }),
                                                 );
 
+                                                // Copied out so the mutex is not held across
+                                                // the LLM round-trip (see the connect path).
+                                                let memory =
+                                                    client_data_clone.lock().await.memory.clone();
                                                 match call_llm_for_client(
                                                     &llm_clone,
                                                     &state_clone,
                                                     client_id.to_string(),
                                                     &instruction,
-                                                    &client_data_clone.lock().await.memory,
+                                                    &memory,
                                                     Some(&event),
                                                     protocol_clone.as_ref(),
                                                     &status_clone,
@@ -362,15 +404,22 @@ impl SipClient {
                                                         }
 
                                                         for action in actions {
-                                                            Self::execute_sip_action(
-                                                                action,
-                                                                &socket_clone,
-                                                                &protocol_clone,
-                                                                &client_data_clone,
-                                                                client_id,
-                                                                &status_clone,
-                                                            )
-                                                            .await;
+                                                            if let Err(e) =
+                                                                Self::execute_sip_action(
+                                                                    action,
+                                                                    &socket_clone,
+                                                                    &protocol_clone,
+                                                                    &client_data_clone,
+                                                                    client_id,
+                                                                    &status_clone,
+                                                                )
+                                                                .await
+                                                            {
+                                                                error!(
+                                                                    "SIP client {} send error: {}",
+                                                                    client_id, e
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                     Err(e) => {
@@ -407,6 +456,11 @@ impl SipClient {
                     }
                 }
             }
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead client. This also closes the command channel,
+            // which ends `command_loop`.
+            state_clone.remove_client_handle(client_id).await;
+            let _ = status_clone.send("__UPDATE_UI__".to_string());
         });
         task_registrar
             .register_client_task(client_id, task_handle)
@@ -415,7 +469,84 @@ impl SipClient {
         Ok(local_addr)
     }
 
-    /// Execute SIP action
+    /// Drain injected commands until the channel closes (client removed, or the read loop
+    /// exited and dropped the handle) or an injected `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot run this client's
+    /// vocabulary - every SIP verb yields `ClientActionResult::Custom` and the request line,
+    /// Call-ID, tags and CSeq come from per-client state - so the action goes through
+    /// [`Self::execute_sip_action`], the same function the LLM path uses, and the outcome is
+    /// recorded and replied exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        socket: Arc<UdpSocket>,
+        protocol: Arc<SipClientProtocol>,
+        client_data: Arc<Mutex<ClientData>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = Self::execute_sip_action(
+                action.clone(),
+                &socket,
+                &protocol,
+                &client_data,
+                client_id,
+                &status_tx,
+            )
+            .await;
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("SIP client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // SIP over UDP has no connection to close, so the honest end of an injected
+                // `disconnect` is: stop accepting commands, drop the handle, and mark the
+                // client disconnected. The recv loop's socket is released when the client is
+                // removed (`stop_client` aborts both registered tasks).
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
+    }
+
+    /// Execute one SIP action and report what actually reached the wire.
+    ///
+    /// Shared by the connected-event path, the read loop and injected commands, so the SIP
+    /// request encoding (and the Call-ID / tag / CSeq bookkeeping that goes with it) exists
+    /// exactly once. `Err` means the datagram could not be sent; the outcome variants are
+    /// the truthful report of what happened otherwise.
     async fn execute_sip_action(
         action: serde_json::Value,
         socket: &Arc<UdpSocket>,
@@ -423,11 +554,21 @@ impl SipClient {
         client_data: &Arc<Mutex<ClientData>>,
         client_id: ClientId,
         status_tx: &mpsc::UnboundedSender<String>,
-    ) {
+    ) -> Result<ClientSendOutcome> {
         use crate::llm::actions::client_trait::{Client, ClientActionResult};
 
-        match protocol.as_ref().execute_action(action.clone()) {
-            Ok(ClientActionResult::Custom { name, data }) => {
+        let result = match protocol.as_ref().execute_action(action.clone()) {
+            Ok(result) => result,
+            Err(e) => {
+                error!("Action execution error for SIP client {}: {}", client_id, e);
+                return Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                });
+            }
+        };
+
+        match result {
+            ClientActionResult::Custom { name, data } => {
                 match name.as_str() {
                     "sip_register" | "sip_invite" | "sip_ack" | "sip_bye" | "sip_options"
                     | "sip_cancel" => {
@@ -447,8 +588,8 @@ impl SipClient {
                         let request = Self::build_sip_request(
                             &name,
                             &data,
-                            &client_data_lock.call_id.as_ref().unwrap(),
-                            &client_data_lock.from_tag.as_ref().unwrap(),
+                            client_data_lock.call_id.as_ref().unwrap(),
+                            client_data_lock.from_tag.as_ref().unwrap(),
                             client_data_lock.to_tag.as_ref(),
                             client_data_lock.cseq,
                         );
@@ -457,33 +598,36 @@ impl SipClient {
                         drop(client_data_lock);
 
                         // Send request
-                        match socket.send(&request).await {
-                            Ok(sent) => {
-                                info!("SIP client {} sent {} bytes", client_id, sent);
-                                let _ = status_tx.send(format!(
-                                    "[CLIENT] SIP client {} sent {} request",
-                                    client_id, name
-                                ));
-                            }
-                            Err(e) => {
-                                error!("SIP client {} send error: {}", client_id, e);
-                            }
-                        }
+                        let sent = socket
+                            .send(&request)
+                            .await
+                            .with_context(|| format!("SIP client {} send failed", client_id))?;
+                        info!("SIP client {} sent {} bytes", client_id, sent);
+                        let _ = status_tx.send(format!(
+                            "[CLIENT] SIP client {} sent {} request",
+                            client_id, name
+                        ));
+                        Ok(ClientSendOutcome::Sent { bytes_sent: sent })
                     }
-                    _ => {}
+                    other => Ok(ClientSendOutcome::Executed {
+                        detail: format!("custom result '{other}' builds no SIP request"),
+                    }),
                 }
             }
-            Ok(ClientActionResult::Disconnect) => {
+            ClientActionResult::Disconnect => {
                 info!("SIP client {} disconnecting", client_id);
                 let _ = status_tx.send(format!("[CLIENT] SIP client {} disconnecting", client_id));
+                Ok(ClientSendOutcome::Disconnected)
             }
-            Ok(ClientActionResult::WaitForMore) => {
+            ClientActionResult::WaitForMore => {
                 trace!("SIP client {} waiting for more data", client_id);
+                Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_more".to_string(),
+                })
             }
-            Ok(_) => {}
-            Err(e) => {
-                error!("Action execution error for SIP client {}: {}", client_id, e);
-            }
+            other => Ok(ClientSendOutcome::Executed {
+                detail: format!("{other:?} sends no SIP request"),
+            }),
         }
     }
 

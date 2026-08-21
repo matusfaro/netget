@@ -28,9 +28,35 @@ use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId as NetGetClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId as NetGetClientId, ClientStatus};
 
 type TokenResponseType = StandardTokenResponse<EmptyExtraTokenFields, BasicTokenType>;
+
+/// What [`OAuth2Client::apply_action`] did with one executed action.
+///
+/// OAuth2 flows are HTTPS request/response through the `oauth2` crate, so NetGet owns no
+/// socket whose byte count could be reported. The description is deliberately built from
+/// what is *observably* true afterwards - in particular whether a token was actually
+/// stored - so a flow that failed can never read as a success. Nothing on this path may
+/// invent a code or a token; only a provider response can produce one.
+enum Applied {
+    /// The action ran; the string describes the effect.
+    Ran(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
+
+/// Whether an event is reported to the LLM inline or from its own task.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Raise it here and now. Used by the connected-event LLM path.
+    Inline,
+    /// Hand it to a registered task. Used by the injected-command loop, so a manual
+    /// (human-answered) routing rule on `oauth2_token_obtained` / `oauth2_error` cannot
+    /// hold up the command's outcome, or the next injected command.
+    Deferred,
+}
 
 /// OAuth2 client for authentication flows
 pub struct OAuth2Client;
@@ -48,6 +74,23 @@ impl OAuth2Client {
             "OAuth2 client {} initializing for {}",
             client_id, remote_addr
         );
+
+        // Every OAuth2 flow reads its configuration out of `protocol_data`, but the generic
+        // creation path (dashboard form, MCP, `open_client`) only stores the validated
+        // startup params on the client and leaves `protocol_data` empty - so a client
+        // created that way arrived here unconfigured. Seed the fields once, without
+        // overwriting anything a caller already put there.
+        app_state
+            .with_client_mut(client_id, |client| {
+                if let Some(serde_json::Value::Object(params)) = client.startup_params.clone() {
+                    for (key, value) in params {
+                        if client.get_protocol_field(&key).is_none() {
+                            client.set_protocol_field(key, value);
+                        }
+                    }
+                }
+            })
+            .await;
 
         // Get startup parameters from protocol data
         let (oauth_client_id, oauth_client_secret, auth_url_opt, token_url, scopes_opt) = app_state
@@ -140,6 +183,21 @@ impl OAuth2Client {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ exchange_password ],
+        // [ refresh_token ], ...). Registered BEFORE the connected-event LLM call below,
+        // which is awaited inline and which a manual `*` routing rule can park for minutes
+        // - the operator must be able to drive the flow while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let protocol = Arc::new(OAuth2ClientProtocol::new());
@@ -177,18 +235,31 @@ impl OAuth2Client {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
 
-                    // Execute actions
+                    // Execute actions through the same path injected commands use.
                     for action in actions {
-                        if let Err(e) = Self::execute_llm_action(
+                        use crate::llm::actions::client_trait::Client;
+                        let result = match protocol.execute_action(action) {
+                            Ok(result) => result,
+                            Err(e) => {
+                                error!("OAuth2 client {} rejected action: {}", client_id, e);
+                                continue;
+                            }
+                        };
+                        match Self::apply_action(
+                            result,
+                            Dispatch::Inline,
                             client_id,
-                            action,
                             app_state.clone(),
                             llm_client.clone(),
                             status_tx.clone(),
                         )
                         .await
                         {
-                            error!("Failed to execute OAuth2 action: {}", e);
+                            Ok(Applied::Ran(detail)) => {
+                                info!("OAuth2 client {}: {}", client_id, detail)
+                            }
+                            Ok(Applied::Disconnect) => break,
+                            Err(e) => error!("Failed to execute OAuth2 action: {}", e),
                         }
                     }
                 }
@@ -198,80 +269,170 @@ impl OAuth2Client {
             }
         }
 
-        // Spawn background task to monitor client
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("OAuth2 client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
+        // No idle-poll task: the command loop is this client's long-lived task and it ends
+        // when the client is removed (`remove_client` drops the command sender). The old
+        // poll was also never registered, so stop_client could not abort it.
 
         // Return dummy local address (OAuth2 is HTTP-based)
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Execute an LLM action
-    async fn execute_llm_action(
+    /// Run one executed action. Shared by the connected-event LLM path and by injected
+    /// commands, so a flow is driven by exactly one implementation whoever asked for it.
+    ///
+    /// The description returned by [`Applied::Ran`] is built from what is observably true
+    /// *after* the flow ran - crucially, whether the provider's answer actually produced a
+    /// stored access token. Nothing here can mint a code or a token on its own: a failed
+    /// exchange reports the failure, it never reads as a success.
+    async fn apply_action(
+        action_result: ClientActionResult,
+        dispatch: Dispatch,
         client_id: NetGetClientId,
-        action: serde_json::Value,
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        use crate::llm::actions::client_trait::Client;
-
-        let protocol = OAuth2ClientProtocol::new();
-        let action_result = protocol.execute_action(action)?;
-
+    ) -> Result<Applied> {
         match action_result {
             ClientActionResult::Custom { name, data } => match name.as_str() {
                 "oauth2_exchange_password" => {
-                    Self::exchange_password(client_id, data, app_state, llm_client, status_tx)
-                        .await?;
+                    Self::exchange_password(
+                        client_id,
+                        data,
+                        app_state.clone(),
+                        llm_client,
+                        status_tx,
+                        dispatch,
+                    )
+                    .await?;
+                    Ok(Applied::Ran(
+                        Self::token_state_detail(&name, client_id, &app_state).await,
+                    ))
                 }
                 "oauth2_exchange_client_credentials" => {
                     Self::exchange_client_credentials(
-                        client_id, data, app_state, llm_client, status_tx,
+                        client_id,
+                        data,
+                        app_state.clone(),
+                        llm_client,
+                        status_tx,
+                        dispatch,
                     )
                     .await?;
+                    Ok(Applied::Ran(
+                        Self::token_state_detail(&name, client_id, &app_state).await,
+                    ))
                 }
                 "oauth2_start_device_code" => {
-                    Self::start_device_code_flow(client_id, data, app_state, llm_client, status_tx)
-                        .await?;
+                    Self::start_device_code_flow(
+                        client_id,
+                        data,
+                        app_state.clone(),
+                        llm_client,
+                        status_tx,
+                        dispatch,
+                    )
+                    .await?;
+                    let has_code = app_state
+                        .with_client_mut(client_id, |client| {
+                            client.get_protocol_field("device_code").is_some()
+                        })
+                        .await
+                        .unwrap_or(false);
+                    Ok(Applied::Ran(if has_code {
+                        "oauth2_start_device_code: device code issued, polling started".to_string()
+                    } else {
+                        "oauth2_start_device_code: provider issued no device code".to_string()
+                    }))
                 }
                 "oauth2_poll_device_code" => {
-                    Self::poll_device_code(client_id, app_state, llm_client, status_tx).await?;
+                    Self::poll_device_code(
+                        client_id,
+                        app_state.clone(),
+                        llm_client,
+                        status_tx,
+                        dispatch,
+                    )
+                    .await?;
+                    Ok(Applied::Ran(
+                        Self::token_state_detail(&name, client_id, &app_state).await,
+                    ))
                 }
                 "oauth2_refresh_token" => {
-                    Self::refresh_token(client_id, app_state, llm_client, status_tx).await?;
+                    Self::refresh_token(
+                        client_id,
+                        app_state.clone(),
+                        llm_client,
+                        status_tx,
+                        dispatch,
+                    )
+                    .await?;
+                    Ok(Applied::Ran(
+                        Self::token_state_detail(&name, client_id, &app_state).await,
+                    ))
                 }
                 "oauth2_generate_auth_url" => {
                     Self::generate_auth_url(client_id, data, app_state, status_tx).await?;
+                    Ok(Applied::Ran(
+                        "oauth2_generate_auth_url: authorization URL built (nothing sent; the \
+                         user's browser carries it)"
+                            .to_string(),
+                    ))
                 }
                 "oauth2_exchange_code" => {
-                    Self::exchange_code(client_id, data, app_state, llm_client, status_tx).await?;
+                    Self::exchange_code(
+                        client_id,
+                        data,
+                        app_state.clone(),
+                        llm_client,
+                        status_tx,
+                        dispatch,
+                    )
+                    .await?;
+                    Ok(Applied::Ran(
+                        Self::token_state_detail(&name, client_id, &app_state).await,
+                    ))
                 }
-                _ => {
-                    error!("Unknown OAuth2 custom action: {}", name);
-                }
+                other => Err(anyhow::anyhow!(
+                    "OAuth2 client cannot execute custom result '{}'",
+                    other
+                )),
             },
             ClientActionResult::Disconnect => {
                 info!("OAuth2 client {} disconnecting", client_id);
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                Ok(Applied::Disconnect)
             }
-            _ => {
-                // Other action types not used for OAuth2
-            }
+            // WaitForMore / NoAction / SendData / nested Multiple: OAuth2 has no socket of
+            // its own, so none of these produce a flow.
+            _ => Ok(Applied::Ran(
+                "no OAuth2 flow run (action produced no request)".to_string(),
+            )),
         }
+    }
 
-        Ok(())
+    /// Describe a token flow by what it left behind - never by assuming it worked.
+    async fn token_state_detail(
+        name: &str,
+        client_id: NetGetClientId,
+        app_state: &Arc<AppState>,
+    ) -> String {
+        let has_token = app_state
+            .with_client_mut(client_id, |client| {
+                client.get_protocol_field("access_token").is_some()
+            })
+            .await
+            .unwrap_or(false);
+        if has_token {
+            format!("{name}: completed, an access token is stored")
+        } else {
+            format!(
+                "{name}: completed but no access token was stored - the provider did not \
+                 issue one (see the oauth2_error event and netget.log)"
+            )
+        }
     }
 
     /// Build OAuth2 client from stored config
@@ -315,6 +476,7 @@ impl OAuth2Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         let username = data["username"]
             .as_str()
@@ -387,6 +549,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -397,6 +560,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -412,6 +576,7 @@ impl OAuth2Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         let scopes_str = data["scopes"].as_str().map(|s| s.to_string());
 
@@ -477,6 +642,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -487,6 +653,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -502,6 +669,7 @@ impl OAuth2Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         let scopes_str = data["scopes"].as_str().map(|s| s.to_string());
 
@@ -589,7 +757,6 @@ impl OAuth2Client {
                     .await;
 
                 // Call LLM with device code event
-                let protocol = Arc::new(OAuth2ClientProtocol::new());
                 let event = Event::new(
                     &OAUTH2_DEVICE_CODE_EVENT,
                     serde_json::json!({
@@ -599,40 +766,15 @@ impl OAuth2Client {
                         "interval": interval,
                     }),
                 );
-
-                let instruction = app_state
-                    .get_instruction_for_client(client_id)
-                    .await
-                    .unwrap_or_default();
-                let memory = app_state
-                    .get_memory_for_client(client_id)
-                    .await
-                    .unwrap_or_default();
-
-                match call_llm_for_client(
-                    &llm_client,
-                    &app_state,
-                    client_id.to_string(),
-                    &instruction,
-                    &memory,
-                    Some(&event),
-                    protocol.as_ref(),
-                    &status_tx,
+                Self::notify_event(
+                    client_id,
+                    event,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                    dispatch,
                 )
-                .await
-                {
-                    Ok(ClientLlmResult {
-                        actions: _,
-                        memory_updates,
-                    }) => {
-                        if let Some(mem) = memory_updates {
-                            app_state.set_memory_for_client(client_id, mem).await;
-                        }
-                    }
-                    Err(e) => {
-                        error!("LLM error for OAuth2 client {}: {}", client_id, e);
-                    }
-                }
+                .await;
 
                 // Spawn polling task
                 let app_state_clone = app_state.clone();
@@ -648,6 +790,9 @@ impl OAuth2Client {
                             app_state_clone.clone(),
                             llm_client_clone.clone(),
                             status_tx_clone.clone(),
+                            // The polling task is nobody's injected command: report its
+                            // token event inline, in its own task.
+                            Dispatch::Inline,
                         )
                         .await
                         {
@@ -676,6 +821,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -690,6 +836,7 @@ impl OAuth2Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         // Get device code and OAuth client config
         let (device_code_str, oauth_client_id, oauth_client_secret, _auth_url, token_url) =
@@ -794,7 +941,6 @@ impl OAuth2Client {
                         info!("OAuth2 client {} device code token obtained", client_id);
 
                         // Call LLM with token obtained event
-                        let protocol = Arc::new(OAuth2ClientProtocol::new());
                         let event = Event::new(
                             &OAUTH2_TOKEN_OBTAINED_EVENT,
                             serde_json::json!({
@@ -805,35 +951,15 @@ impl OAuth2Client {
                                 "scope": scope,
                             }),
                         );
-
-                        let instruction = app_state
-                            .get_instruction_for_client(client_id)
-                            .await
-                            .unwrap_or_default();
-                        let memory = app_state
-                            .get_memory_for_client(client_id)
-                            .await
-                            .unwrap_or_default();
-
-                        if let Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) = call_llm_for_client(
-                            &llm_client,
-                            &app_state,
-                            client_id.to_string(),
-                            &instruction,
-                            &memory,
-                            Some(&event),
-                            protocol.as_ref(),
-                            &status_tx,
+                        Self::notify_event(
+                            client_id,
+                            event,
+                            app_state.clone(),
+                            llm_client.clone(),
+                            status_tx.clone(),
+                            dispatch,
                         )
-                        .await
-                        {
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                        }
+                        .await;
                     }
                 } else {
                     // Check for authorization_pending error
@@ -860,6 +986,7 @@ impl OAuth2Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         info!("OAuth2 client {} refreshing token", client_id);
 
@@ -916,6 +1043,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -926,6 +1054,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -1040,6 +1169,7 @@ impl OAuth2Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         let code = data["code"].as_str().context("Missing code")?.to_string();
 
@@ -1111,6 +1241,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -1121,6 +1252,7 @@ impl OAuth2Client {
                     app_state,
                     llm_client,
                     status_tx,
+                    dispatch,
                 )
                 .await?;
             }
@@ -1136,6 +1268,7 @@ impl OAuth2Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         let access_token = token_response.access_token().secret().to_string();
         let token_type = token_response.token_type().as_ref().to_string();
@@ -1180,7 +1313,6 @@ impl OAuth2Client {
             .await;
 
         // Call LLM with token obtained event
-        let protocol = Arc::new(OAuth2ClientProtocol::new());
         let event = Event::new(
             &OAUTH2_TOKEN_OBTAINED_EVENT,
             serde_json::json!({
@@ -1191,40 +1323,7 @@ impl OAuth2Client {
                 "scope": scopes,
             }),
         );
-
-        let instruction = app_state
-            .get_instruction_for_client(client_id)
-            .await
-            .unwrap_or_default();
-        let memory = app_state
-            .get_memory_for_client(client_id)
-            .await
-            .unwrap_or_default();
-
-        match call_llm_for_client(
-            &llm_client,
-            &app_state,
-            client_id.to_string(),
-            &instruction,
-            &memory,
-            Some(&event),
-            protocol.as_ref(),
-            &status_tx,
-        )
-        .await
-        {
-            Ok(ClientLlmResult {
-                actions: _,
-                memory_updates,
-            }) => {
-                if let Some(mem) = memory_updates {
-                    app_state.set_memory_for_client(client_id, mem).await;
-                }
-            }
-            Err(e) => {
-                error!("LLM error for OAuth2 client {}: {}", client_id, e);
-            }
-        }
+        Self::notify_event(client_id, event, app_state, llm_client, status_tx, dispatch).await;
 
         Ok(())
     }
@@ -1236,11 +1335,11 @@ impl OAuth2Client {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         Log::new(Some(&status_tx)).error(format!("OAuth2 client {} error: {}", client_id, error));
 
         // Call LLM with error event
-        let protocol = Arc::new(OAuth2ClientProtocol::new());
         let event = Event::new(
             &OAUTH2_ERROR_EVENT,
             serde_json::json!({
@@ -1248,7 +1347,44 @@ impl OAuth2Client {
                 "error_description": "",
             }),
         );
+        Self::notify_event(client_id, event, app_state, llm_client, status_tx, dispatch).await;
 
+        Ok(())
+    }
+
+    /// Report one event to the LLM, inline or from a registered task.
+    async fn notify_event(
+        client_id: NetGetClientId,
+        event: Event,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
+    ) {
+        match dispatch {
+            Dispatch::Inline => {
+                Self::raise_event(client_id, event, app_state, llm_client, status_tx).await
+            }
+            Dispatch::Deferred => {
+                let registrar = app_state.clone();
+                let handle = tokio::spawn(Self::raise_event(
+                    client_id, event, app_state, llm_client, status_tx,
+                ));
+                // Registered so stop_client aborts an in-flight LLM call for this event.
+                registrar.register_client_task(client_id, handle).await;
+            }
+        }
+    }
+
+    /// The event -> LLM round-trip itself.
+    async fn raise_event(
+        client_id: NetGetClientId,
+        event: Event,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = Arc::new(OAuth2ClientProtocol::new());
         let instruction = app_state
             .get_instruction_for_client(client_id)
             .await
@@ -1282,7 +1418,83 @@ impl OAuth2Client {
                 error!("LLM error for OAuth2 client {}: {}", client_id, e);
             }
         }
+    }
 
-        Ok(())
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// The flow itself is awaited, so the reported [`ClientSendOutcome`] describes what the
+    /// provider actually did; only the resulting `oauth2_token_obtained` / `oauth2_error`
+    /// event is handed to its own task, so a manual routing rule waiting on a human cannot
+    /// hold up the reply. An action the protocol rejects is reported as `Rejected` and an
+    /// action that ran without producing a token says so - there is no path here that can
+    /// report success for a flow that did not complete.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: NetGetClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::client_trait::Client;
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let protocol = OAuth2ClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(
+                    result,
+                    Dispatch::Deferred,
+                    client_id,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                )
+                .await
+                .map(|applied| match applied {
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    Applied::Ran(detail) => ClientSendOutcome::Executed { detail },
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("OAuth2 client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        info!("OAuth2 client {} command loop ended", client_id);
     }
 }

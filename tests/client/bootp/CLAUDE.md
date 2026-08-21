@@ -414,3 +414,24 @@ sudo dhcpd -f -d -cf test-dhcpd.conf lo
 - **Server requirement:** dnsmasq or isc-dhcp-server
 - **Privilege requirement:** sudo for port 68 (or use fallback)
 - **Test coverage:** Request/reply, broadcast, MAC handling, error cases
+
+## `command_channel_test.rs`
+
+Covers the dashboard's `[ send ]` path: `AppState::send_to_client` injects an action from
+outside the client's own loop and the wire effect is asserted.
+
+**LLM budget: 0 calls.** Every client event is routed to a `*` static handler that answers
+with no actions (`try_execute_client_event_handler` runs before the budget debit), and the
+client's LLM points at `http://127.0.0.1:1` as a second belt. No mock Ollama server is
+needed or started.
+
+`wait_for_client_handle` polls `AppState::has_client_handle` before the first send. That is
+the regression guard for "register the channel **before** the connected-event LLM call" — if
+registration moves after it, a parked connect event makes this poll time out.
+
+The receiver is a plain `tokio::net::UdpSocket` on `127.0.0.1:0`, not a NetGet BOOTP server:
+a BOOTP server binds privileged port 67 and this suite must run unprivileged. A raw socket is
+also the stricter assertion — the test compares the reported `Sent { bytes_sent }` against the
+datagram length actually received, and checks the `op` byte and the `chaddr` it injected.
+Asserted outcomes: `Rejected` for an unknown action, `Sent` for `send_bootp_request` with
+`broadcast: false`, `Disconnected` for `disconnect`, and no command handle afterwards.

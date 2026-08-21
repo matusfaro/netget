@@ -11,12 +11,15 @@ use tracing::{error, info};
 
 use crate::client::llm_budget::call_llm_for_client;
 use crate::client::webdav::actions::WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// WebDAV client that makes requests to remote WebDAV servers
 pub struct WebdavClient;
@@ -65,6 +68,21 @@ impl WebdavClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // Registered - and already being drained by its own task - BEFORE the
+        // connected-event LLM call, which a manual `*` rule can park for minutes: the
+        // operator must be able to reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            _llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Send initial connected event to LLM
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
@@ -110,18 +128,24 @@ impl WebdavClient {
 
                         // Execute actions
                         for action in actions {
-                            if let Err(e) = Self::execute_webdav_action(
-                                action,
-                                &protocol,
-                                &_llm_client,
-                                &app_state,
-                                &status_tx,
-                                client_id,
-                                &instruction,
-                            )
-                            .await
-                            {
-                                error!("Failed to execute WebDAV action: {}", e);
+                            match protocol.as_ref().execute_action(action.clone()) {
+                                Ok(result) => {
+                                    if let Err(e) = Self::apply_action(
+                                        result,
+                                        Dispatch::Spawn,
+                                        &_llm_client,
+                                        &app_state,
+                                        &status_tx,
+                                        client_id,
+                                    )
+                                    .await
+                                    {
+                                        error!("Failed to execute WebDAV action: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("WebDAV action execution error: {}", e);
+                                }
                             }
                         }
                     }
@@ -139,20 +163,95 @@ impl WebdavClient {
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Execute a WebDAV action from the LLM
-    async fn execute_webdav_action(
-        action: serde_json::Value,
-        protocol: &Arc<WebdavClientProtocol>,
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client: it writes
+    /// `SendData` to a socket, and every WebDAV verb yields `ClientActionResult::Custom`
+    /// that has to become an HTTP request. So the action goes through
+    /// [`Self::apply_action`] - the same function the connected-event path uses - and the
+    /// outcome is recorded and replied exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = crate::client::webdav::actions::WebdavClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                // Dispatch::Await: the request is awaited, so the reported outcome
+                // describes a round-trip that has actually completed. The
+                // webdav_response_received event is delivered from its own registered
+                // task, so a manual handler parked for a human's think time cannot wedge
+                // this loop or time out the dashboard's [ send ].
+                Ok(result) => Self::apply_action(
+                    result,
+                    Dispatch::Await,
+                    &llm_client,
+                    &app_state,
+                    &status_tx,
+                    client_id,
+                )
+                .await
+                .map(|applied| match applied {
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    Applied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("WebDAV client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        info!("WebDAV client {} command loop stopped", client_id);
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    /// Apply one already-executed action result. The single place a WebDAV request is
+    /// built and sent from, so an injected action behaves exactly like an LLM-produced one.
+    async fn apply_action(
+        result: ClientActionResult,
+        dispatch: Dispatch,
         llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         client_id: ClientId,
-        _instruction: &str,
-    ) -> Result<()> {
-        use crate::llm::actions::client_trait::{Client, ClientActionResult};
-
-        let result = protocol.as_ref().execute_action(action)?;
-
+    ) -> Result<Applied> {
         match result {
             ClientActionResult::Custom { name, data } if name == "webdav_request" => {
                 let method = data
@@ -236,35 +335,75 @@ impl WebdavClient {
                     None
                 };
 
-                // Make the WebDAV request
-                Self::make_request(
-                    client_id,
-                    method,
-                    path,
-                    Some(headers),
-                    body,
-                    Arc::clone(app_state),
-                    llm_client.clone(),
-                    status_tx.clone(),
-                )
-                .await?;
+                match dispatch {
+                    Dispatch::Spawn => {
+                        let state_clone = Arc::clone(app_state);
+                        let llm_clone = llm_client.clone();
+                        let status_clone = status_tx.clone();
+                        let (spawn_method, spawn_path) = (method.clone(), path.clone());
+                        let request_handle = tokio::spawn(async move {
+                            if let Err(e) = WebdavClient::make_request(
+                                client_id,
+                                spawn_method,
+                                spawn_path,
+                                Some(headers),
+                                body,
+                                state_clone,
+                                llm_clone,
+                                status_clone,
+                            )
+                            .await
+                            {
+                                error!("WebDAV request failed: {}", e);
+                            }
+                        });
+                        app_state
+                            .register_client_task(client_id, request_handle)
+                            .await;
+                        Ok(Applied::Executed(format!("{method} {path} dispatched")))
+                    }
+                    Dispatch::Await => {
+                        let exchange = Self::perform_request(
+                            client_id,
+                            method.clone(),
+                            path.clone(),
+                            Some(headers),
+                            body,
+                            app_state,
+                            status_tx,
+                        )
+                        .await?;
+                        let detail = format!(
+                            "{method} {path} completed -> {} ({} byte body)",
+                            exchange.status_code, exchange.body_len
+                        );
+                        Self::spawn_notify(
+                            client_id,
+                            exchange.event_data,
+                            app_state,
+                            llm_client,
+                            status_tx,
+                        )
+                        .await;
+                        Ok(Applied::Executed(detail))
+                    }
+                }
             }
             ClientActionResult::Disconnect => {
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
+                app_state.remove_client_handle(client_id).await;
                 Log::new(Some(status_tx)).info(format!("WebDAV client {} disconnected", client_id));
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
+                Ok(Applied::Disconnect)
             }
-            _ => {
-                return Err(anyhow::anyhow!("Unexpected action result: {:?}", result));
-            }
+            other => Err(anyhow::anyhow!("Unexpected action result: {:?}", other)),
         }
-
-        Ok(())
     }
 
-    /// Make a WebDAV request
+    /// Make a WebDAV request and hand the response to the LLM.
+    #[allow(clippy::too_many_arguments)]
     pub async fn make_request(
         client_id: ClientId,
         method: String,
@@ -275,6 +414,112 @@ impl WebdavClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        let exchange = Self::perform_request(
+            client_id, method, path, headers, body, &app_state, &status_tx,
+        )
+        .await?;
+        Self::notify_response(
+            client_id,
+            exchange.event_data,
+            app_state,
+            llm_client,
+            status_tx,
+        )
+        .await;
+        Ok(())
+    }
+
+    /// Deliver one exchange's `webdav_response_received` event from **its own registered
+    /// task** and return immediately.
+    ///
+    /// This is the point of the perform/notify split. The injected-command loop already
+    /// holds the truthful network result and must reply to the operator before that
+    /// event's handler runs: a dashboard-created client defaults to a `*` -> manual rule,
+    /// so the handler can park for a human's think time (300s by default), far longer
+    /// than the composer's 30s send timeout.
+    async fn spawn_notify(
+        client_id: ClientId,
+        event_data: serde_json::Value,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        let state_clone = Arc::clone(app_state);
+        let llm_clone = llm_client.clone();
+        let status_clone = status_tx.clone();
+        let notify_handle = tokio::spawn(async move {
+            WebdavClient::notify_response(
+                client_id,
+                event_data,
+                state_clone,
+                llm_clone,
+                status_clone,
+            )
+            .await;
+        });
+        // Registered so the notification - and the LLM call it makes - is aborted when
+        // the client is stopped.
+        app_state
+            .register_client_task(client_id, notify_handle)
+            .await;
+    }
+
+    /// Fire one `webdav_response_received` event at the LLM and apply any memory update.
+    async fn notify_response(
+        client_id: ClientId,
+        event_data: serde_json::Value,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+        let protocol = Arc::new(crate::client::webdav::actions::WebdavClientProtocol::new());
+        let event = Event::new(&WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for WebDAV client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    /// Perform the WebDAV round-trip only. No LLM involvement, so a caller can await this
+    /// and know exactly what the server answered.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn perform_request(
+        client_id: ClientId,
+        method: String,
+        path: String,
+        headers: Option<Vec<(String, String)>>,
+        body: Option<String>,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<WebdavExchange> {
         // Get base URL from client
         let base_url = app_state
             .with_client_mut(client_id, |client| {
@@ -357,57 +602,23 @@ impl WebdavClient {
                     client_id, status_code, status
                 );
 
-                // Call LLM with response
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol =
-                        Arc::new(crate::client::webdav::actions::WebdavClientProtocol::new());
-                    let event = Event::new(
-                        &WEBDAV_CLIENT_RESPONSE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "method": method,
-                            "status_code": status_code,
-                            "status_text": status.to_string(),
-                            "headers": resp_headers,
-                            "body": body_text,
-                        }),
-                    );
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("LLM error for WebDAV client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                // Built here, delivered by `notify_response` - inline for the LLM path,
+                // from its own task for the injected-command path.
+                let body_len = body_text.len();
+                Ok(WebdavExchange {
+                    status_code,
+                    body_len,
+                    event_data: serde_json::json!({
+                        "method": method,
+                        "status_code": status_code,
+                        "status_text": status.to_string(),
+                        "headers": resp_headers,
+                        "body": body_text,
+                    }),
+                })
             }
             Err(e) => {
-                Log::new(Some(&status_tx))
+                Log::new(Some(status_tx))
                     .error(format!("WebDAV client {} request failed: {}", client_id, e));
                 Err(e.into())
             }
@@ -442,4 +653,37 @@ impl WebdavClient {
             }
         }
     }
+}
+
+/// How a WebDAV request is issued.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Spawn the request and return immediately. Used by the connected-event handler.
+    Spawn,
+    /// Await the round-trip so the caller can report what actually happened. Used by the
+    /// injected-command loop. The response event is still delivered to the LLM, from its
+    /// own registered task, so a parked manual handler cannot wedge the command loop.
+    Await,
+}
+
+/// One completed WebDAV exchange.
+///
+/// Split out of [`WebdavClient::make_request`] so the injected-command loop can await the
+/// network round-trip - and report a truthful outcome - without also awaiting the LLM call
+/// the response event triggers.
+pub struct WebdavExchange {
+    pub status_code: u16,
+    pub body_len: usize,
+    /// The `webdav_response_received` payload this exchange produced.
+    pub event_data: serde_json::Value,
+}
+
+/// What [`WebdavClient::apply_action`] did with one action. The WebDAV client owns no
+/// socket - reqwest does - so there is no honest byte count to report, only "the request
+/// ran" or "the session should end".
+enum Applied {
+    /// The action ran; the string says what, for the injected action's outcome detail.
+    Executed(String),
+    /// The session should end.
+    Disconnect,
 }

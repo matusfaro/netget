@@ -214,33 +214,32 @@ impl WebSocketClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        let (mut sink, mut stream) = ws_stream.split();
+        let (sink, mut stream) = ws_stream.split();
+        // The sink is shared rather than owned by the writer task: the injected-command loop
+        // writes through it too, and it needs `send`'s own result to report a truthful
+        // outcome instead of "queued somewhere". A frame is written under the lock, so the
+        // two producers can never interleave halves of a frame.
+        let sink = Arc::new(Mutex::new(sink));
         let (out_tx, mut out_rx) = mpsc::unbounded_channel::<WsOut>();
 
         // One writer for the connection, so frames produced by different handlers cannot
-        // interleave and no lock is held across the send.
+        // interleave and no lock is held across an LLM call.
+        let writer_sink = sink.clone();
         let writer_handle = tokio::spawn(async move {
             while let Some(out) = out_rx.recv().await {
                 let closing = matches!(out, WsOut::Close { .. });
-                let message = match out {
-                    WsOut::Text(t) => Message::Text(t),
-                    WsOut::Binary(b) => Message::Binary(b),
-                    WsOut::Ping(p) => Message::Ping(p),
-                    WsOut::Close { code, reason } => Message::Close(Some(CloseFrame {
-                        code: CloseCode::from(code),
-                        reason: reason.into(),
-                    })),
-                };
-                if let Err(e) = sink.send(message).await {
+                let message = ws_out_to_message(out);
+                let mut guard = writer_sink.lock().await;
+                if let Err(e) = guard.send(message).await {
                     debug!("WebSocket client write failed: {}", e);
                     break;
                 }
                 if closing {
-                    let _ = sink.flush().await;
+                    let _ = guard.flush().await;
                     break;
                 }
             }
-            let _ = sink.flush().await;
+            let _ = writer_sink.lock().await.flush().await;
         });
 
         let data = Arc::new(Mutex::new(ClientData {
@@ -249,6 +248,19 @@ impl WebSocketClient {
             pending: None,
             memory: String::new(),
         }));
+
+        // Command channel for injected actions (the dashboard's [ send ]). Registered BEFORE
+        // the connected-event LLM call below, which a manual `*` rule can park for minutes —
+        // the operator has to be able to push a frame out while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_sink = sink.clone();
+        let cmd_state = app_state.clone();
+        let cmd_status_tx = status_tx.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(command_rx, cmd_sink, client_id, cmd_state, cmd_status_tx).await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // websocket_client_connected — the client's chance to speak first.
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -375,6 +387,10 @@ impl WebSocketClient {
             read_state
                 .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead connection, and so the command loop's channel
+            // closes and its task ends.
+            read_state.remove_client_handle(client_id).await;
             let _ = read_status_tx.send(format!("[CLIENT] WebSocket client {client_id} closed"));
             let _ = read_status_tx.send("__UPDATE_UI__".to_string());
         });
@@ -387,6 +403,130 @@ impl WebSocketClient {
         drop(out_tx);
 
         Ok(local_addr)
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed, or the read
+    /// loop exited) or an injected close/disconnect ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this client:
+    /// its write half is a `Sink<Message>`, not an `AsyncWrite`, and every wire verb yields
+    /// `ClientActionResult::Custom`. So the action is executed through the protocol's **own**
+    /// `execute_action` — the same code the LLM path runs, including the RFC 6455 validation
+    /// of close codes and ping payload lengths — against a private frame channel that this
+    /// loop then drains and writes itself. That is what makes a truthful byte count possible:
+    /// the frames are written and flushed here, not handed to another task.
+    async fn command_loop<S>(
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        sink: Arc<Mutex<S>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) where
+        S: futures::Sink<Message> + Unpin + Send,
+        S::Error: std::fmt::Display,
+    {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        // A private frame channel, drained synchronously below, so `execute_action` produces
+        // exactly the frames this command asked for and nothing else can be attributed to it.
+        let (frame_tx, mut frame_rx) = mpsc::unbounded_channel::<WsOut>();
+        let protocol = WebSocketClientProtocol::for_connection(frame_tx);
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let executed = protocol.execute_action(action.clone());
+
+            // Whatever `execute_action` queued belongs to this command.
+            let mut frames: Vec<WsOut> = Vec::new();
+            while let Ok(frame) = frame_rx.try_recv() {
+                frames.push(frame);
+            }
+
+            let mut bytes_sent = 0usize;
+            let mut write_error: Option<String> = None;
+            for frame in frames {
+                // Payload bytes: the RFC 6455 header and the client mask are added by the
+                // framing layer and are not reported here.
+                let payload_len = match &frame {
+                    WsOut::Text(t) => t.len(),
+                    WsOut::Binary(b) => b.len(),
+                    WsOut::Ping(p) => p.len(),
+                    WsOut::Close { reason, .. } => reason.len(),
+                };
+                let message = ws_out_to_message(frame);
+                let mut guard = sink.lock().await;
+                match guard.send(message).await {
+                    // `SinkExt::send` flushes, so the bytes really are on the socket.
+                    Ok(()) => bytes_sent += payload_len,
+                    Err(e) => {
+                        write_error = Some(e.to_string());
+                        break;
+                    }
+                }
+            }
+
+            let outcome: anyhow::Result<ClientSendOutcome> = match (&executed, &write_error) {
+                (_, Some(e)) => Err(anyhow::anyhow!("WebSocket write failed: {e}")),
+                (Err(e), None) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                (Ok(ClientActionResult::Disconnect), None) => Ok(ClientSendOutcome::Disconnected),
+                (Ok(ClientActionResult::WaitForMore), None) => Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_websocket_data: nothing written".to_string(),
+                }),
+                (Ok(_), None) => {
+                    if bytes_sent > 0 {
+                        Ok(ClientSendOutcome::Sent { bytes_sent })
+                    } else {
+                        Ok(ClientSendOutcome::Executed {
+                            detail: "executed; the frame carried an empty payload".to_string(),
+                        })
+                    }
+                }
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!(
+                    "WebSocket client {} injected action failed: {}",
+                    client_id, e
+                );
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {client_id} injected action failed: {e}"
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect || write_error.is_some() {
+                // `close_websocket` already put the closing frame on the wire above; closing
+                // the sink ends the TCP side so the read loop sees the connection go away.
+                let _ = sink.lock().await.close().await;
+                // Drop the handle here rather than waiting for the read loop: it may still be
+                // inside the `websocket_client_closed` LLM call, and this client cannot accept
+                // another command either way.
+                app_state.remove_client_handle(client_id).await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -554,5 +694,19 @@ impl WebSocketClient {
             }
             Err(e) => debug!("WebSocket client close handler failed: {}", e),
         }
+    }
+}
+
+/// Turn one outbound frame request into a tungstenite message. Shared by the writer task and
+/// the injected-command loop so the two cannot encode a frame differently.
+fn ws_out_to_message(out: WsOut) -> Message {
+    match out {
+        WsOut::Text(t) => Message::Text(t),
+        WsOut::Binary(b) => Message::Binary(b),
+        WsOut::Ping(p) => Message::Ping(p),
+        WsOut::Close { code, reason } => Message::Close(Some(CloseFrame {
+            code: CloseCode::from(code),
+            reason: reason.into(),
+        })),
     }
 }

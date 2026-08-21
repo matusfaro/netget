@@ -345,3 +345,39 @@ Recommended test setup:
 - **Global Secondary Indexes** - Query GSIs
 - **Conditional Operations** - ConditionExpression support
 - **DynamoDB Streams** - Real-time change data capture
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running DynamoDB client.
+`connect_with_llm_actions` registers the channel (`command_support::register_command_channel`)
+and spawns a registered `command_loop` task in place of the old 5s "has this client been removed
+yet" poll — dropping the client drops the handle and `recv()` returns `None` immediately.
+
+**This closed a larger hole than the channel itself.** The client had no dispatcher at all:
+`execute_action` advertised six verbs, `put_item` and `get_item` existed as standalone
+functions nothing called, and `query`, `scan`, `update_item` and `delete_item` had no
+implementation. `DynamoDbClient::execute_operation` is now the single dispatch point and all six
+verbs are implemented against the SDK, so an advertised verb can no longer be silently swallowed.
+
+Outcome semantics — the AWS SDK owns the socket and reports no wire byte count, so **`Sent` is
+never returned**:
+
+| Situation | `ClientSendOutcome` |
+|---|---|
+| `execute_action` refused it | `Rejected { error }` |
+| Operation ran and the service answered | `Executed { detail: "put_item completed: {…}" }` |
+| Operation ran and the service or the SDK failed | `Executed { detail: "put_item failed: …" }` |
+| `disconnect` | `Disconnected` (loop ends, handle removed) |
+
+The DynamoDB call itself is **awaited** in the loop, so the detail is a real result. The
+`dynamodb_response_received` event is raised from its own registered task, so an event handler
+that parks for a human answer cannot wedge the command loop.
+
+**Known gap (not closed here):** this client still raises no `dynamodb_connected` event —
+`connect_with_llm_actions` never calls `call_llm_for_client` — so the injected/command path is
+currently the *only* way an action reaches the wire. The LLM cannot drive this client until a
+connected-event call is added.
+
+Test: `tests/client/dynamodb/command_channel_test.rs` (no LLM, no AWS — `endpoint_url` is a
+loopback listener). Note that `tests/client/mod.rs` gates `pub mod dynamodb` on the **`dynamo`**
+feature alias, not `dynamodb`, so the directory only compiles when `dynamo` is enabled.

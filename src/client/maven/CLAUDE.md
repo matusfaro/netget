@@ -222,3 +222,37 @@ Expected flow:
 - **LLM Latency**: Each artifact download triggers LLM call (~1-5s per artifact)
 - **Parallel Downloads**: Not implemented - sequential artifact downloads
 - **Memory Usage**: POM and metadata XML stored temporarily in memory for LLM analysis
+
+## Injected commands (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running Maven client and gets back a truthful `ClientSendOutcome`. See `src/client/command_support.rs` and `tests/client/maven/command_channel_test.rs`.
+
+- `command_support::register_command_channel` runs **before** anything that can block for a
+  human — specifically before the `maven_connected` `call_llm_for_client`, so `[ send ]` works even while an event is parked on a manual routing
+  rule. This is the whole point of the feature: registering late means the rail reads
+  "no command channel" for the length of the park.
+- The command loop **replaced the old 5-second `get_client().is_none()` idle poll**. When the
+  client is removed its handle is dropped, the channel closes, `recv()` returns `None` and the
+  loop exits at once — the poll was strictly slower at the same job. The loop is registered
+  with `register_client_task`, and it drops the handle on every exit path.
+- One `apply_action` is the only place actions become traffic, shared by the command loop, the `maven_connected` handler and the three response-event handlers (`maven_artifact_downloaded`, `maven_pom_received`, `maven_metadata_received`), which reach it through the thin `execute_maven_action` spawner. There is
+  no second wire path for injected actions to drift from.
+
+### Outcome semantics — what `[ send ]` reports, and why
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | **Never.** `reqwest` does not report how many bytes reached the wire, and inventing a number would be a lie |
+| `Executed { detail }` | The operation ran to completion; `detail` names it (`download_pom org.example:demo:1.0 completed ...`) |
+| `Rejected { error }` | `execute_action` refused the JSON (unknown verb, missing field) |
+| `Disconnected` | `disconnect`; the loop ends, the handle is dropped and the client goes to `Disconnected` |
+| `Err(...)` | The request itself failed (transport error, non-2xx). The caller sees the error rather than a false success |
+
+**The known cost of awaiting.** `apply_action` awaits the whole operation, *including the
+response event it raises*. That is what makes the outcome truthful, but it also means the
+command loop is busy until that event has been handled — with a `*` -> manual rule, until the
+human answers it or the intercept times out (default 300s). Injected sends queue behind it on
+the bounded channel, which surfaces as "client busy" backpressure. `send_to_client`'s own
+timeout protects the caller either way.
+
+**Not wired:** nothing, but note why `execute_maven_action` is a **synchronous** spawner rather than an `async fn`: it is called from inside the very operations `apply_action` awaits (each response event dispatches actions back through it), and an `async fn` there would make the future type infinitely recursive. It registers the spawned handle from a second tiny task for the same reason — `register_client_task` is async. Previously those inner spawns were never registered at all, so an artifact download kicked off by a response event outlived `stop_client`.

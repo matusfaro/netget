@@ -202,6 +202,34 @@ The client must XOR-decode relay addresses from responses and XOR-encode peer ad
 3. **Permission Created Event** → LLM confirms "Relay ready at 203.0.113.5:54321, peer 192.168.1.100:5000 permitted"
 4. **Data Received Event** (from peer) → LLM processes and may generate `send_turn_data` response
 
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) **before** the `turn_client_connected`
+LLM call, which a manual routing rule can park for minutes. Commands are drained by a
+separate `command_loop` task (registered with `register_client_task`) so an injected
+Allocate/Send does not queue behind an in-flight LLM call in the read loop; both tasks write
+through the same `Arc<UdpSocket>` (`send_to` takes `&self`).
+
+Every TURN verb yields `ClientActionResult::Custom`, so the generic
+`handle_stream_client_command` cannot serve this client. `command_loop` routes the action
+through `handle_action_result` - the same function the LLM path uses, so the STUN/TURN
+encoding exists exactly once - and reports:
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | the datagram left the socket; the count is `UdpSocket::send_to`'s return value |
+| `Rejected { error }` | `execute_action` refused it (unknown verb, bad `peer_address`, bad hex) |
+| `Executed { detail }` | `wait_for_more`, or a `Custom` result that builds no TURN message |
+| `Disconnected` | an injected `disconnect`, **after** its Refresh(lifetime=0) has gone out |
+
+An `Err` (surfaced by `send_to_client`) means the message could not be built or the datagram
+could not be sent. After a `disconnect` the command loop drops the handle, marks the client
+disconnected and stops; the recv loop's socket is released when the client is removed. The
+handle is also removed when the read loop exits. Test:
+`tests/client/turn/command_channel_test.rs` (zero LLM calls; asserts the Allocate and Send
+indication really arrive at a peer socket, with the byte counts the outcomes claim).
+
 ## Limitations
 
 ### Current Limitations

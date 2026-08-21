@@ -139,6 +139,31 @@ IS-IS PDU:
 - Routing protocol monitoring
 - Network visualization
 
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) before the pcap task starts and spawns
+a `command_loop` task (registered with `register_client_task`). This client makes no
+connected-event LLM call, so there is no park to race.
+
+**This client can never report `Sent`, and that is the honest answer, not a gap in the
+wiring.** The IS-IS client is a receive-only sniffer: it opens a capture and never a transmit
+path, so no injected action can put a PDU on the wire. Injected actions are still executed
+through the protocol's own `execute_action`, exactly as LLM-produced ones are:
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | `analyze_topology` / `wait_for_more` - `detail` says the client is receive-only and transmits nothing |
+| `Rejected { error }` | any verb the protocol does not define (including anything that would "send" a PDU) |
+| `Disconnected` | an injected `stop_capture` |
+
+`stop_capture` is real work: the command loop marks the client disconnected, and the capture
+loop checks that status on every iteration, so the capture stops within one pcap timeout
+(1s). The handle is dropped there and when the capture loop exits.
+
+Test: `tests/client/isis/command_channel_test.rs` (zero LLM calls, privilege-independent -
+none of these outcomes touches the pcap handle).
+
 ## Limitations
 
 ### Implementation Limitations

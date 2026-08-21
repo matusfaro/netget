@@ -20,7 +20,8 @@ use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -86,6 +87,37 @@ impl TurnClient {
             }),
         );
 
+        let socket_arc = Arc::new(socket);
+
+        // Initialize client data
+        let client_data = Arc::new(Mutex::new(ClientData {
+            state: ConnectionState::Idle,
+            queued_events: Vec::new(),
+            memory: String::new(),
+            relay_address: None,
+        }));
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the connected-event LLM call: a manual `*` routing rule can
+        // park that call for minutes, and the operator must be able to reach the client
+        // while it waits. It gets its own task rather than a `select!` arm in the read
+        // loop, so an injected Allocate/Send does not queue behind an in-flight LLM call;
+        // the socket is an `Arc<UdpSocket>` and `send_to` takes `&self`, so both tasks can
+        // write to it.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            socket_arc.clone(),
+            remote_sock_addr,
+            protocol.clone(),
+            client_data.clone(),
+            client_id,
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             match call_llm_for_client(
                 &llm_client,
@@ -111,16 +143,6 @@ impl TurnClient {
                 }
             }
         }
-
-        let socket_arc = Arc::new(socket);
-
-        // Initialize client data
-        let client_data = Arc::new(Mutex::new(ClientData {
-            state: ConnectionState::Idle,
-            queued_events: Vec::new(),
-            memory: String::new(),
-            relay_address: None,
-        }));
 
         // Spawn read loop for receiving TURN responses
         let socket_clone = socket_arc.clone();
@@ -278,18 +300,21 @@ impl TurnClient {
                                                         .execute_action(action)
                                                     {
                                                         Ok(action_result) => {
-                                                            if let Err(e) =
-                                                                Self::handle_action_result(
-                                                                    action_result,
-                                                                    &socket_clone,
-                                                                    remote_sock_addr,
-                                                                    &client_data_clone,
-                                                                    &status_clone,
-                                                                    client_id,
-                                                                )
-                                                                .await
+                                                            match Self::handle_action_result(
+                                                                action_result,
+                                                                &socket_clone,
+                                                                remote_sock_addr,
+                                                                &client_data_clone,
+                                                                &status_clone,
+                                                                client_id,
+                                                            )
+                                                            .await
                                                             {
-                                                                error!("TURN client {} action execution failed: {}", client_id, e);
+                                                                Ok(outcome) => debug!(
+                                                                    "TURN client {} action outcome: {:?}",
+                                                                    client_id, outcome
+                                                                ),
+                                                                Err(e) => error!("TURN client {} action execution failed: {}", client_id, e),
                                                             }
                                                         }
                                                         Err(e) => {
@@ -336,6 +361,11 @@ impl TurnClient {
                     }
                 }
             }
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead client. This also closes the command channel,
+            // which ends `command_loop`.
+            app_state_clone.remove_client_handle(client_id).await;
+            let _ = status_clone.send("__UPDATE_UI__".to_string());
         });
         task_registrar
             .register_client_task(client_id, task_handle)
@@ -344,7 +374,96 @@ impl TurnClient {
         Ok(local_addr)
     }
 
-    /// Handle action result from LLM
+    /// Drain injected commands until the channel closes (client removed, or the read loop
+    /// exited and dropped the handle) or an injected `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot run this client's
+    /// vocabulary - every TURN verb yields `ClientActionResult::Custom` and has to be encoded
+    /// as a STUN/TURN message - so the action goes through [`Self::handle_action_result`],
+    /// the same function the LLM path uses, and the outcome is recorded and replied exactly
+    /// the way the generic arm does it.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        socket: Arc<UdpSocket>,
+        remote_addr: SocketAddr,
+        protocol: Arc<TurnClientProtocol>,
+        client_data: Arc<Mutex<ClientData>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::client_trait::Client;
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.as_ref().execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(action_result) => {
+                    Self::handle_action_result(
+                        action_result,
+                        &socket,
+                        remote_addr,
+                        &client_data,
+                        &status_tx,
+                        client_id,
+                    )
+                    .await
+                }
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("TURN client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // The Refresh(lifetime=0) that deletes the allocation has already gone out
+                // (that is what `handle_action_result` does for Disconnect). TURN runs over
+                // an unconnected UDP socket, so there is nothing further to close: stop
+                // accepting commands, drop the handle and mark the client disconnected. The
+                // recv loop's socket is released when the client is removed (`stop_client`
+                // aborts both registered tasks).
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
+    }
+
+    /// Encode one executed action as a TURN message and put it on the wire.
+    ///
+    /// Shared by the LLM path and injected commands so the STUN/TURN encoding exists exactly
+    /// once. The returned [`ClientSendOutcome`] reports what actually reached the wire:
+    /// `Sent` carries the real datagram length, `Executed` means the result produced no TURN
+    /// message, and `Err` means the datagram could not be built or sent.
     async fn handle_action_result(
         action_result: crate::llm::actions::client_trait::ClientActionResult,
         socket: &Arc<UdpSocket>,
@@ -352,7 +471,7 @@ impl TurnClient {
         _client_data: &Arc<Mutex<ClientData>>,
         status_tx: &mpsc::UnboundedSender<String>,
         client_id: ClientId,
-    ) -> Result<()> {
+    ) -> Result<ClientSendOutcome> {
         use crate::llm::actions::client_trait::ClientActionResult;
 
         match action_result {
@@ -364,12 +483,13 @@ impl TurnClient {
                         .unwrap_or(600);
 
                     let message = Self::build_allocate_request(lifetime as u32)?;
-                    socket.send_to(&message, remote_addr).await?;
+                    let sent = socket.send_to(&message, remote_addr).await?;
 
                     Log::new(Some(status_tx)).debug(format!(
                         "TURN client {} sent Allocate request (lifetime: {}s)",
                         client_id, lifetime
                     ));
+                    Ok(ClientSendOutcome::Sent { bytes_sent: sent })
                 }
                 "create_permission" => {
                     let peer_address = data
@@ -381,12 +501,13 @@ impl TurnClient {
                         peer_address.parse().context("Invalid peer_address")?;
 
                     let message = Self::build_create_permission_request(peer_addr)?;
-                    socket.send_to(&message, remote_addr).await?;
+                    let sent = socket.send_to(&message, remote_addr).await?;
 
                     Log::new(Some(status_tx)).debug(format!(
                         "TURN client {} sent CreatePermission for {}",
                         client_id, peer_addr
                     ));
+                    Ok(ClientSendOutcome::Sent { bytes_sent: sent })
                 }
                 "send_indication" => {
                     let peer_address = data
@@ -408,7 +529,7 @@ impl TurnClient {
                         .context("Missing or invalid data")?;
 
                     let message = Self::build_send_indication(peer_addr, &send_data)?;
-                    socket.send_to(&message, remote_addr).await?;
+                    let sent = socket.send_to(&message, remote_addr).await?;
 
                     Log::new(Some(status_tx)).debug(format!(
                         "TURN client {} sent {} bytes via SendIndication to {}",
@@ -416,6 +537,7 @@ impl TurnClient {
                         send_data.len(),
                         peer_addr
                     ));
+                    Ok(ClientSendOutcome::Sent { bytes_sent: sent })
                 }
                 "refresh" => {
                     let lifetime = data
@@ -424,15 +546,19 @@ impl TurnClient {
                         .unwrap_or(600);
 
                     let message = Self::build_refresh_request(lifetime as u32)?;
-                    socket.send_to(&message, remote_addr).await?;
+                    let sent = socket.send_to(&message, remote_addr).await?;
 
                     Log::new(Some(status_tx)).debug(format!(
                         "TURN client {} sent Refresh request (lifetime: {}s)",
                         client_id, lifetime
                     ));
+                    Ok(ClientSendOutcome::Sent { bytes_sent: sent })
                 }
-                _ => {
-                    debug!("TURN client {} unknown custom action: {}", client_id, name);
+                other => {
+                    debug!("TURN client {} unknown custom action: {}", client_id, other);
+                    Ok(ClientSendOutcome::Executed {
+                        detail: format!("custom result '{other}' builds no TURN message"),
+                    })
                 }
             },
             ClientActionResult::Disconnect => {
@@ -444,11 +570,12 @@ impl TurnClient {
                     "TURN client {} disconnecting (sent Refresh with lifetime=0)",
                     client_id
                 ));
+                Ok(ClientSendOutcome::Disconnected)
             }
-            _ => {}
+            other => Ok(ClientSendOutcome::Executed {
+                detail: format!("{other:?} sends no TURN message"),
+            }),
         }
-
-        Ok(())
     }
 
     /// Build TURN Allocate Request message

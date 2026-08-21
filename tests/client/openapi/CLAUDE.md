@@ -196,3 +196,24 @@ NETGET_USE_OLLAMA=1 cargo test --no-default-features --features openapi --test c
 - **Missing operation**: `operation_id` typo or not in spec
 - **Path params**: Forgot to escape `{id}` in spec (`{{id}}` in YAML)
 - **Port mismatch**: Server port not in spec's `servers.url`
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+One test, **zero LLM calls**. The client's LLM points at `http://127.0.0.1:1`, so the
+connected-event call (where there is one) and every response-event call fail immediately;
+tolerating that failure is part of what the test verifies.
+
+The API is a throwaway `TcpListener` on 127.0.0.1 that speaks just enough HTTP/1.1 and records the request lines it saw; the spec is built inline with `servers: [http://127.0.0.1:{port}]`. **Nothing contacts an external endpoint.**
+
+What it asserts, in order:
+
+1. `wait_for_client_handle` — the regression guard for "register the channel before the
+   connected-event LLM call". Without it, a manual routing rule would leave `[ send ]` dead
+   for the length of the park.
+2. The injected action returns `Executed`, **not** `Sent` — `reqwest` reports no wire byte count, so a number would be invented.
+3. The stub API really saw `GET /users`, and `getUser` with `path_params: {"id": "42"}` really became `GET /users/42` — spec resolution and substitution run on the injected path because it *is* the LLM path.
+4. The client's access log gained an `injected_action` entry, so injected traffic shows up in
+   the request pane exactly like LLM-produced traffic.
+5. An unknown verb comes back `Rejected`, not silently swallowed. An `operation_id` absent from the spec comes back as `Err`, never a false `Executed`.
+6. `disconnect` returns `Disconnected`, the command loop exits, the handle is dropped and the
+   client's status becomes `Disconnected`.

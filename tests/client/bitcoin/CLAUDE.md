@@ -116,3 +116,25 @@ None at this time.
     - Test multi-step queries (get block hash → get block)
     - Test mempool monitoring loop
     - Test transaction analysis workflow
+
+## `command_channel_test.rs` — injected actions
+
+In-process, no NetGet subprocess and **zero LLM calls**: the client's LLM points at
+`http://127.0.0.1:1`, so its `bitcoin_connected` call fails and the connect path has to
+tolerate that — verifying it does is part of the test.
+
+There is no NetGet "Bitcoin RPC" *server* protocol (`src/server/bitcoin` speaks the P2P wire
+protocol, not JSON-RPC over HTTP), so the peer is a ~40-line HTTP/1.1 responder bound to
+127.0.0.1 that records the JSON-RPC bodies it receives.
+
+What it pins:
+
+- `has_client_handle` is true **before** anything answers the connected event — the
+  regression guard for "register the channel first".
+- `get_blockchain_info` → `Executed { detail }` naming the method and HTTP status, and the
+  stub really received `getblockchaininfo`. Asserting `Executed` rather than `Sent` is
+  deliberate: reqwest reports no byte count, so a `Sent` here would be invented.
+- an unknown action → `Rejected`, not silence.
+- `disconnect` → `Disconnected`, then status `Disconnected` and the handle gone.
+
+**LLM call budget: 0.**

@@ -476,3 +476,32 @@ See `tests/client/bootp/CLAUDE.md` for detailed testing approach.
 ```
 "Discover all BOOTP servers on network and compare their responses"
 ```
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into the running client. The channel is
+registered in `connect_with_llm_actions` **before** the `bootp_client_connected` LLM call,
+because a `manual` routing rule can park that event for minutes and the operator must be
+able to reach the client while it waits.
+
+`UdpSocket::recv_from` is cancellation-safe, so the command arm is a `tokio::select!` arm in
+the receive loop rather than a separate task — a command never races the loop's own writes,
+and losing the race never drops a datagram.
+
+Every verb yields `ClientActionResult::Custom`, so the arm body is bespoke
+(`handle_injected_command`) rather than `command_support::handle_stream_client_command`, but
+it applies the action through `apply_action_result` — the same function the LLM path uses, so
+an injected request is byte-identical to an LLM-produced one and honours the same `broadcast`
+flag.
+
+Outcomes:
+
+| Action | Outcome |
+|---|---|
+| `send_bootp_request` | `Sent { bytes_sent }` — the count `send_to` returned, not the buffer length |
+| `disconnect` | `Disconnected`; the receive loop ends (UDP has no socket to shut down) |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| unknown type / bad params | `Rejected { error }` from `execute_action` |
+
+The handle is dropped on every exit path of the receive loop, so the dashboard stops
+offering `[ send ]` on a dead client.

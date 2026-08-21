@@ -53,8 +53,10 @@ downgraded.
 
 Same Idle → Processing → Accumulating machine as the server, with the same
 `wait_for_websocket_data` semantics (hold this message, join the next of the same kind onto it).
-One writer task owns the `SplitSink`; every action sends a `WsOut` down an `mpsc` channel, so no
-lock is held across an `.await`.
+The `SplitSink` lives behind an `Arc<Mutex<_>>`. LLM-produced actions send a `WsOut` down an
+`mpsc` channel that a single writer task drains, so no lock is held across an LLM call; injected
+commands write through the same sink themselves (see below). A frame is written under the lock,
+so the two producers can never interleave halves of a frame.
 
 ## Validation
 
@@ -75,3 +77,28 @@ comes back byte-for-byte when the event's `data` and `encoding` are fed straight
 - The repo-wide client limitation applies: `remove_client()` does not stop the network loop
   (`register_client_task` is called, so `stop_client` aborts it, but see
   `CLIENT_PROTOCOL_FEASIBILITY.md` for the general state of clients).
+
+## Command channel — the dashboard's `[ send ]`
+
+Adopted. `AppState::send_to_client(client_id, action, timeout)` executes an action inside the
+running client and answers with a `ClientSendOutcome`.
+
+- The channel is registered **before** the `websocket_client_connected` LLM call, which a manual
+  `*` rule parks until a human answers it. `tests/client/websocket/command_channel_test.rs`
+  guards that with `wait_for_client_handle` before it sends anything.
+- `command_loop` (in `mod.rs`) executes the action through
+  `WebSocketClientProtocol::for_connection` against a **private** frame channel it drains
+  synchronously, then writes those frames itself through the shared sink. So the frame encoding,
+  the hex decoding and the RFC 6455 validation are the protocol's own — there is no second
+  implementation — while the write result is still this loop's to report.
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | frames written **and flushed** (`SinkExt::send` flushes). The count is the frame **payload** — the RFC 6455 header and the 4-byte client mask are added by the framing layer and are not counted |
+| `Executed { detail }` | the action ran but the payload was empty (a bare ping), or it was `wait_for_websocket_data` |
+| `Rejected { error }` | `execute_action` refused it: unknown name, a reserved close code, a ping payload over 125 bytes |
+| `Disconnected` | `close_websocket` (the closing frame goes out first) or `disconnect` |
+
+On disconnect — and on a write error — the loop closes the sink and drops the command handle
+itself rather than waiting for the read loop, which may still be inside the
+`websocket_client_closed` LLM call.

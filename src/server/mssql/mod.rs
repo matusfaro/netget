@@ -719,7 +719,12 @@ impl MssqlHandler {
             let col_name = col.get("name").and_then(|v| v.as_str()).unwrap_or("column");
 
             response.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]); // UserType
-            response.extend_from_slice(&[0x00, 0x02]); // Flags: nullable
+            // Flags is a little-endian USHORT and fNullable is bit 0, so the bytes are
+            // 01 00. This used to be `[0x00, 0x02]`, i.e. bit 9 - which no TDS flag
+            // occupies, so a real client (tiberius) rejected every result set with
+            // "column metadata: invalid flags". It went unnoticed because NetGet's own
+            // MSSQL client could not complete the handshake at all.
+            response.extend_from_slice(&[0x01, 0x00]); // Flags: fNullable
             col_type.write_type_info(&mut response);
 
             // Column name is a B_VARCHAR: length in UTF-16 code units, then UTF-16LE.

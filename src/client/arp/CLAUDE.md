@@ -272,6 +272,43 @@ ARP is stateless at the protocol level:
 - Packets received during Processing are queued (Accumulating state)
 - Ollama lock serializes LLM calls across all clients
 
+### Dashboard injection (`[ send ]`)
+
+`start_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) **before** the `arp_client_started` LLM
+call, which a manual routing rule can park for minutes, and spawns a `command_loop` task
+(registered with `register_client_task`).
+
+There is no `AsyncWrite` half here, so the generic `handle_stream_client_command` cannot be
+used. The frame-injection channel to the pcap thread is now created in the async function
+rather than inside `spawn_blocking`, so the LLM path and an injected command hand frames to
+**the same** dedicated injection thread through the same queue, and both build them with the
+same `build_packet_for_custom_result`. Each queued frame carries an optional
+`oneshot` acknowledgement, which is what makes a truthful outcome possible:
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | the injection thread acknowledged a successful `sendpacket` for that many bytes |
+| `Executed { detail }` | the frame could not be handed over, or was not acknowledged - `detail` names the reason |
+| `Rejected { error }` | unknown verb, or MAC/IP fields that cannot become a frame |
+| `Disconnected` | an injected `stop_capture` |
+
+**Unprivileged runs land in `Executed`, deliberately.** libpcap needs root (`/dev/bpf*` on
+macOS, `CAP_NET_RAW` on Linux); when the capture fails to open, the blocking task returns and
+the queue's receiver is gone, so the reply says the frame was built but not injected and why.
+Note what is *not* done: on that failure path the handle is deliberately left registered, so
+an injection gets that specific explanation instead of the generic "this client has no
+command channel". The handle is removed when the capture loop exits and on an injected
+`stop_capture`.
+
+**Known gap**: `stop_capture` marks the client disconnected but the pcap capture loop does
+not poll the client's status (unlike the IS-IS client's), so it keeps running until the
+client is removed. Fixing that is a change to the capture loop, not to the command channel.
+
+Test: `tests/client/arp/command_channel_test.rs` (zero LLM calls). The privileged half -
+`Sent { bytes_sent: 42 }` from a real acknowledged injection - is `#[ignore]`d there because
+it needs root.
+
 ## Known Limitations
 
 ### 1. Requires Root/Admin Privileges

@@ -457,3 +457,45 @@ The WebRTC client integrates with NetGet's WebRTC Signaling Server:
 - [WebRTC Signaling MDN](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Signaling_and_video_calling)
 - [Perfect Negotiation Pattern](https://developer.mozilla.org/en-US/docs/Web/API/WebRTC_API/Perfect_negotiation)
 - [tokio-tungstenite Documentation](https://docs.rs/tokio-tungstenite/)
+
+---
+
+# Command channel and ICE configuration (August 2026)
+
+## `ice_servers` is read now
+
+It was declared in `get_startup_parameters()` and never read — `connect_with_llm_actions` did not
+take startup parameters at all — so the Google STUN server was hardcoded into every client. It is
+now the default and nothing more; an explicitly empty array (`"ice_servers": []`) means host
+candidates only, which is what a purely local peer wants and what
+`tests/client/webrtc/command_channel_test.rs` uses so that nothing leaves the machine.
+
+## Command channel — the dashboard's `[ send ]`
+
+Adopted, archetype **(a)**: the `RTCPeerConnection` and every `RTCDataChannel` already live
+behind `Arc`s that outlive `connect()`, so the command loop holds clones and nothing needed
+restructuring. The channel is registered **before** signaling runs, because the WebSocket mode
+makes an LLM call on `webrtc_signaling_connected` that a manual `*` rule can park.
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | `send_message` / `send_binary` on an open channel. Real: `RTCDataChannel::send` returns the number of bytes it wrote to the SCTP stream |
+| `Executed { detail }` | `create_channel` (created on the live peer connection, opens when the connection is established), `apply_answer` (`set_remote_description` succeeded), `wait_for_more` |
+| `Rejected { error }` | unknown action, an unknown channel label, or an `answer_json` that is not an SDP answer |
+| `Disconnected` | `disconnect`; every channel and the peer connection are closed |
+| `Err(..)` | the channel exists but is not open, or `create_data_channel` / `set_remote_description` failed. The error names the channel and its `ready_state` — a send on a channel nobody answered must fail loudly, not report a fake `Sent` |
+
+`execute_action` folds `send_message`/`send_binary` into a bare `SendData` and drops the `channel`
+parameter it declares, so the command loop reads `channel` from the action itself and defaults to
+`netget`, the channel `connect()` always creates.
+
+**Gap: `send_offer` is not executed.** It answers
+`Executed { detail: "send_offer was NOT sent: …" }` and says so. The signaling WebSocket sink is
+owned by `websocket_signaling`'s own task and is unreachable from the command loop, and in manual
+mode there is no signaling connection at all. It has never worked from the LLM path either — the
+`Custom` result was dropped on the floor there — so this is a pre-existing gap now made visible
+rather than a new one.
+
+**What the test does not cover.** A data channel carrying bytes needs a real second peer and
+there is none in-tree, so `Sent { bytes_sent }` is exercised by no test; what is pinned is that
+the failure to send is reported rather than faked.

@@ -355,3 +355,40 @@ DHCP client is NOT a good candidate for scripting:
 - [DHCP Message Types (IANA)](https://www.iana.org/assignments/bootp-dhcp-parameters/bootp-dhcp-parameters.xhtml)
 - [DHCP Options (IANA)](https://www.iana.org/assignments/bootp-dhcp-parameters/bootp-dhcp-parameters.xhtml#options)
 - [CLIENT_PROTOCOL_FEASIBILITY.md](../../../CLIENT_PROTOCOL_FEASIBILITY.md) - DHCP client feasibility analysis
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into the running client. The channel is
+registered in `connect_with_llm_actions` **before** the `dhcp_client_connected` LLM call,
+because a `manual` routing rule can park that event for minutes and the operator must be able
+to reach the client while it waits.
+
+`UdpSocket::recv_from` is cancellation-safe, so the command arm is a `tokio::select!` arm in
+the receive loop rather than a separate task.
+
+The connect path and the receive loop used to carry two near-identical copies of the
+`dhcp_discover` / `dhcp_request` / `dhcp_inform` encoding. Both now go through one
+`apply_action_result`, which the command arm also calls, so an injected packet is
+byte-identical to an LLM-produced one. Its `unicast_target` argument is the only difference
+the two call sites ever had: the configured server on the connect path, the peer that just
+answered us in the receive loop. `dhcp_inform` is always unicast (a client sending INFORM
+already has an address); `dhcp_discover` / `dhcp_request` honour the action's `broadcast`
+flag, default `true`.
+
+Outcomes:
+
+| Action | Outcome |
+|---|---|
+| `dhcp_discover` / `dhcp_request` / `dhcp_inform` | `Sent { bytes_sent }` — the count `send_to` returned |
+| `disconnect` | `Disconnected`; the receive loop ends |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| unknown type / bad params | `Rejected { error }` from `execute_action` |
+
+### Port 68 is preferred, not required
+
+The client tried to bind `0.0.0.0:68` and returned `Err` when it could not. Port 68 is
+privileged, so that made the DHCP client unusable for every unprivileged run — including the
+dashboard's own `[ + new client ]` — and untestable without root. It now falls back to an
+ephemeral port with a `WARN`, mirroring the BOOTP client. The cost is real: a server that
+replies by broadcasting to port 68, which RFC 2131 allows when the BROADCAST flag is set,
+will not be heard on an ephemeral port. Unicast replies to our source port are.

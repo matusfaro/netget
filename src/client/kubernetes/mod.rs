@@ -11,12 +11,16 @@ use tracing::{error, info};
 
 use crate::client::kubernetes::actions::K8S_CLIENT_RESOURCE_RECEIVED_EVENT;
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+use crate::utils::truncate::truncate_for_log;
 
 /// Kubernetes client that interacts with Kubernetes API server
 pub struct KubernetesClient;
@@ -39,7 +43,7 @@ impl KubernetesClient {
         );
 
         // Try to create a Kubernetes client using default kubeconfig
-        let _k8s_client = if remote_addr == "default" || remote_addr == "~/.kube/config" {
+        let k8s_client = if remote_addr == "default" || remote_addr == "~/.kube/config" {
             // Use default kubeconfig
             match kube::Client::try_default().await {
                 Ok(client) => {
@@ -87,21 +91,27 @@ impl KubernetesClient {
             .info(format!("Kubernetes client {} ready for cluster", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Spawn a background task to monitor for client disconnection
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        //
+        // The `kube::Client` built above is carried into the command task rather than
+        // discarded: it is cheaply cloneable and internally shared, so both paths use
+        // one configured handle instead of re-running `try_default()` (and re-reading
+        // the kubeconfig) per operation.
+        //
+        // The command loop also replaces the 5s "has the client been removed yet"
+        // poll: `remove_client` drops the handle, the sender goes with it, and
+        // `recv()` returns None - promptly, and without a timer.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
         let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("Kubernetes client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
+        let task_handle = tokio::spawn(Self::command_loop(
+            command_rx,
+            k8s_client,
+            client_id,
+            app_state.clone(),
+            _llm_client.clone(),
+            status_tx.clone(),
+        ));
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
@@ -110,8 +120,13 @@ impl KubernetesClient {
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Execute a Kubernetes API operation
+    /// Execute a Kubernetes API operation against an already-configured client.
+    ///
+    /// Takes the `kube::Client` rather than calling `try_default()` itself, so the
+    /// handle built once at connect time is the one every operation uses.
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute_operation(
+        k8s_client: &kube::Client,
         client_id: ClientId,
         operation: String,
         resource_type: String,
@@ -122,16 +137,7 @@ impl KubernetesClient {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        // Get Kubernetes client
-        let k8s_client = match kube::Client::try_default().await {
-            Ok(client) => client,
-            Err(e) => {
-                error!("Failed to get Kubernetes client: {}", e);
-                return Err(e.into());
-            }
-        };
-
+    ) -> Result<serde_json::Value> {
         // Determine namespace
         let ns = if let Some(n) = namespace {
             n
@@ -155,24 +161,24 @@ impl KubernetesClient {
 
         // Execute operation based on resource type and operation
         let result = match (operation.as_str(), resource_type.as_str()) {
-            ("list", "pods") => Self::list_pods(&k8s_client, &ns, label_selector.as_deref()).await,
+            ("list", "pods") => Self::list_pods(k8s_client, &ns, label_selector.as_deref()).await,
             ("get", "pod") => {
                 if let Some(pod_name) = name {
-                    Self::get_pod(&k8s_client, &ns, &pod_name).await
+                    Self::get_pod(k8s_client, &ns, &pod_name).await
                 } else {
                     Err(anyhow::anyhow!("Pod name required for get operation"))
                 }
             }
             ("logs", "pod") => {
                 if let Some(pod_name) = name {
-                    Self::get_pod_logs(&k8s_client, &ns, &pod_name).await
+                    Self::get_pod_logs(k8s_client, &ns, &pod_name).await
                 } else {
                     Err(anyhow::anyhow!("Pod name required for logs operation"))
                 }
             }
             ("create", "pod") => {
                 if let Some(pod_spec) = data {
-                    Self::create_pod(&k8s_client, &ns, pod_spec).await
+                    Self::create_pod(k8s_client, &ns, pod_spec).await
                 } else {
                     Err(anyhow::anyhow!(
                         "Pod specification required for create operation"
@@ -181,16 +187,16 @@ impl KubernetesClient {
             }
             ("delete", "pod") => {
                 if let Some(pod_name) = name {
-                    Self::delete_pod(&k8s_client, &ns, &pod_name).await
+                    Self::delete_pod(k8s_client, &ns, &pod_name).await
                 } else {
                     Err(anyhow::anyhow!("Pod name required for delete operation"))
                 }
             }
             ("list", "deployments") => {
-                Self::list_deployments(&k8s_client, &ns, label_selector.as_deref()).await
+                Self::list_deployments(k8s_client, &ns, label_selector.as_deref()).await
             }
             ("list", "services") => {
-                Self::list_services(&k8s_client, &ns, label_selector.as_deref()).await
+                Self::list_services(k8s_client, &ns, label_selector.as_deref()).await
             }
             _ => Err(anyhow::anyhow!(
                 "Unsupported operation '{}' on resource type '{}'",
@@ -203,54 +209,27 @@ impl KubernetesClient {
             Ok(response) => {
                 info!("Kubernetes client {} operation successful", client_id);
 
-                // Call LLM with response
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(
-                        crate::client::kubernetes::actions::KubernetesClientProtocol::new(),
-                    );
-                    let event = Event::new(
-                        &K8S_CLIENT_RESOURCE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "operation": operation,
-                            "resource_type": resource_type,
-                            "namespace": ns,
-                            "response": response,
-                        }),
-                    );
+                // Raise the response event from its own registered task rather than
+                // inline. A dashboard-created client defaults to a `*` -> manual routing
+                // rule, so this LLM call can park for minutes waiting for a human;
+                // awaiting it here would wedge the command loop and make an injected
+                // action that in fact succeeded look to the dashboard like a timeout.
+                let event_data = serde_json::json!({
+                    "operation": operation,
+                    "resource_type": resource_type,
+                    "namespace": ns,
+                    "response": response,
+                });
+                let notify = tokio::spawn(Self::notify_response(
+                    client_id,
+                    event_data,
+                    app_state.clone(),
+                    llm_client,
+                    status_tx,
+                ));
+                app_state.register_client_task(client_id, notify).await;
 
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("LLM error for Kubernetes client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                Ok(response)
             }
             Err(e) => {
                 Log::new(Some(&status_tx)).error(format!(
@@ -260,6 +239,218 @@ impl KubernetesClient {
                 Err(e)
             }
         }
+    }
+
+    /// Raise `k8s_resource_received` and fold in any memory update. Spawned, never
+    /// awaited by a caller that holds the command loop: an event handler may park this
+    /// call for a human answer.
+    async fn notify_response(
+        client_id: ClientId,
+        event_data: serde_json::Value,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+        let protocol = crate::client::kubernetes::actions::KubernetesClientProtocol::new();
+        let event = Event::new(&K8S_CLIENT_RESOURCE_RECEIVED_EVENT, event_data);
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            &protocol,
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for Kubernetes client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    /// Apply one executed action against the cluster. Shared by every path that can
+    /// produce an action, so an injected one behaves identically to an LLM one.
+    ///
+    /// `kube` owns the socket and reports no wire byte count, so a completed
+    /// operation is `Executed { detail }` naming the operation and its result -
+    /// never `Sent`, which would be a fabricated byte count.
+    async fn apply_action(
+        result: ClientActionResult,
+        k8s_client: &kube::Client,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> ClientSendOutcome {
+        match result {
+            ClientActionResult::Custom { name, data } if name == "k8s_operation" => {
+                let operation = data
+                    .get("operation")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let resource_type = data
+                    .get("resource_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default()
+                    .to_string();
+                let namespace = data
+                    .get("namespace")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let resource_name = data
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let label_selector = data
+                    .get("label_selector")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                // `execute_action` names the pod body "spec"; the operation takes it
+                // as its generic `data` payload.
+                let spec = data.get("spec").cloned().filter(|v| !v.is_null());
+
+                let label = format!("{} {}", operation, resource_type);
+                match Self::execute_operation(
+                    k8s_client,
+                    client_id,
+                    operation,
+                    resource_type,
+                    namespace,
+                    resource_name,
+                    spec,
+                    label_selector,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                )
+                .await
+                {
+                    Ok(value) => ClientSendOutcome::Executed {
+                        detail: format!(
+                            "{} completed: {}",
+                            label,
+                            truncate_for_log(&value.to_string(), 200)
+                        ),
+                    },
+                    Err(e) => ClientSendOutcome::Executed {
+                        detail: format!(
+                            "{} failed: {}",
+                            label,
+                            truncate_for_log(&e.to_string(), 200)
+                        ),
+                    },
+                }
+            }
+            ClientActionResult::Custom { name, .. } => ClientSendOutcome::Executed {
+                detail: format!("unknown Kubernetes result '{}' was not applied", name),
+            },
+            ClientActionResult::Disconnect => ClientSendOutcome::Disconnected,
+            ClientActionResult::WaitForMore => ClientSendOutcome::Executed {
+                detail: "wait_for_more".to_string(),
+            },
+            ClientActionResult::NoAction => ClientSendOutcome::Executed {
+                detail: "no_action".to_string(),
+            },
+            ClientActionResult::SendData(_) => ClientSendOutcome::Executed {
+                detail: "send_data has no meaning for the Kubernetes client: it speaks the \
+                         apiserver REST API through `kube`, not a socket this client owns"
+                    .to_string(),
+            },
+            ClientActionResult::Multiple(_) => ClientSendOutcome::Executed {
+                detail: "the Kubernetes client's own verbs never produce Multiple; nothing was \
+                         applied"
+                    .to_string(),
+            },
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or
+    /// an injected `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client:
+    /// every Kubernetes verb yields `ClientActionResult::Custom` and there is no
+    /// write half to put bytes on. Actions therefore go through
+    /// [`Self::apply_action`], and the outcome is logged and replied exactly the way
+    /// the generic arm does it.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        k8s_client: kube::Client,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = crate::client::kubernetes::actions::KubernetesClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                },
+                Ok(result) => {
+                    Self::apply_action(
+                        result,
+                        &k8s_client,
+                        client_id,
+                        &app_state,
+                        &llm_client,
+                        &status_tx,
+                    )
+                    .await
+                }
+            };
+            let disconnected = matches!(outcome, ClientSendOutcome::Disconnected);
+
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null)],
+                )
+                .await;
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, Ok(outcome));
+
+            if disconnected {
+                info!(
+                    "Kubernetes client {} disconnecting on injected action",
+                    client_id
+                );
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
+            }
+        }
+
+        info!("Kubernetes client {} command loop stopped", client_id);
+        // Never leave the dashboard offering [ send ] into a client that is gone.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// List pods in a namespace

@@ -301,3 +301,29 @@ Implement in-process mock DHCP server to avoid privilege requirements
 - [CLIENT_PROTOCOL_FEASIBILITY.md](../../../CLIENT_PROTOCOL_FEASIBILITY.md#dhcp-🟡)
 - [RFC 2131: Dynamic Host Configuration Protocol](https://datatracker.ietf.org/doc/html/rfc2131)
 - [Test Infrastructure Fixes](../../../TEST_INFRASTRUCTURE_FIXES.md)
+
+## `command_channel_test.rs`
+
+Covers the dashboard's `[ send ]` path: `AppState::send_to_client` injects an action from
+outside the client's own loop and the wire effect is asserted.
+
+**LLM budget: 0 calls.** Every client event is routed to a `*` static handler that answers
+with no actions (`try_execute_client_event_handler` runs before the budget debit), and the
+client's LLM points at `http://127.0.0.1:1` as a second belt. No mock Ollama server is
+needed or started.
+
+`wait_for_client_handle` polls `AppState::has_client_handle` before the first send. That is
+the regression guard for "register the channel **before** the connected-event LLM call" — if
+registration moves after it, a parked connect event makes this poll time out.
+
+## `command_channel_test.rs` — and why it is not `#[ignore]`
+
+The three E2E tests above are `#[ignore]`d because the DHCP client demanded port 68. It now
+falls back to an ephemeral port when 68 is unavailable, so this test runs unprivileged like
+any other. The receiver is a plain `tokio::net::UdpSocket` on `127.0.0.1:0` rather than a
+NetGet DHCP server, which would still need privileged port 67.
+
+The test compares the reported `Sent { bytes_sent }` against the datagram length actually
+received, and checks the `op` byte, the injected `chaddr` and the DHCP magic cookie.
+Asserted outcomes: `Rejected` for an unknown action, `Sent` for `dhcp_discover` with
+`broadcast: false`, `Disconnected` for `disconnect`, and no command handle afterwards.

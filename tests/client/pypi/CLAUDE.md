@@ -229,3 +229,24 @@ Tests use `client.get_output().await` to inspect:
 - Test helpers: `tests/helpers.rs`
 - Implementation: `src/client/pypi/CLAUDE.md`
 - PyPI JSON API: https://warehouse.pypa.io/api-reference/json.html
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+One test, **zero LLM calls**. The client's LLM points at `http://127.0.0.1:1`, so the
+connected-event call (where there is one) and every response-event call fail immediately;
+tolerating that failure is part of what the test verifies.
+
+The index is a throwaway `TcpListener` on 127.0.0.1 that speaks just enough HTTP/1.1 and records the request lines it saw. **Nothing contacts pypi.org.**
+
+What it asserts, in order:
+
+1. `wait_for_client_handle` — the regression guard for "register the channel before the
+   connected-event LLM call". Without it, a manual routing rule would leave `[ send ]` dead
+   for the length of the park.
+2. The injected action returns `Executed`, **not** `Sent` — `reqwest` reports no wire byte count, so a number would be invented.
+3. The stub index really saw `GET /pypi/requests/json`. Because `apply_action` awaits the request, the outcome cannot arrive before the bytes did.
+4. The client's access log gained an `injected_action` entry, so injected traffic shows up in
+   the request pane exactly like LLM-produced traffic.
+5. An unknown verb comes back `Rejected`, not silently swallowed. And `search_packages` is pinned as the honest-`Executed` case: PyPI retired its search API, so the test asserts the stub saw **no new request at all** while the outcome still says what happened.
+6. `disconnect` returns `Disconnected`, the command loop exits, the handle is dropped and the
+   client's status becomes `Disconnected`.

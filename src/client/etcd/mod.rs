@@ -6,17 +6,44 @@ pub use actions::EtcdClientProtocol;
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info};
 
 use crate::client::etcd::actions::{
     ETCD_CLIENT_CONNECTED_EVENT, ETCD_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+
+/// The live etcd session, shared between the connected-event handler and the
+/// injected-command loop.
+///
+/// Holding the connected `etcd_client::Client` rather than dropping it is what makes
+/// injected actions possible at all: the alternative would be a command loop that
+/// re-dials etcd for every action, which is a second connection path with its own
+/// failure modes and no relationship to the session the dashboard says is "connected".
+type SharedEtcd = Arc<Mutex<etcd_client::Client>>;
+
+/// One completed etcd operation. `event_data` is the `etcd_response_received` payload;
+/// `detail` is the human-readable line the dashboard shows for an injected action.
+struct EtcdOutcome {
+    event_data: serde_json::Value,
+    detail: String,
+}
+
+/// What one executed action did. Shared vocabulary between the connected-event handler
+/// and the injected-command loop.
+enum Applied {
+    /// The action ran; `detail` says what it did.
+    Ran(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
 
 /// etcd client that connects to remote etcd servers
 pub struct EtcdClient;
@@ -35,10 +62,13 @@ impl EtcdClient {
         // Parse endpoint (etcd-client expects a Vec of endpoints)
         let endpoints = vec![remote_addr.clone()];
 
-        // Connect to etcd using etcd-client
-        let _etcd_client = etcd_client::Client::connect(&endpoints, None)
-            .await
-            .context("Failed to connect to etcd server")?;
+        // Connect to etcd using etcd-client. The handle is kept for the life of the
+        // client so every later operation runs on this session.
+        let etcd: SharedEtcd = Arc::new(Mutex::new(
+            etcd_client::Client::connect(&endpoints, None)
+                .await
+                .context("Failed to connect to etcd server")?,
+        ));
 
         info!(
             "etcd client {} connected successfully to {}",
@@ -62,6 +92,26 @@ impl EtcdClient {
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Command channel for injected actions (the dashboard's [ send ] / composer).
+        // Registered BEFORE the connected-event LLM call below, which a manual `*` routing
+        // rule can park for minutes - the operator must be able to reach etcd while it
+        // waits.
+        //
+        // This task also replaces the old "poll get_client() every 5s" idle task:
+        // `remove_client` drops the command sender, so `recv()` returns `None` the moment
+        // the client goes away.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            etcd.clone(),
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Send connected event to LLM
         let connected_event = Event::new(
@@ -113,6 +163,33 @@ impl EtcdClient {
                     client_id,
                     result.actions.len()
                 );
+
+                // Execute them. Until this existed the connect handler counted the
+                // actions and threw them away, so an instruction like "PUT /a = b on
+                // connect" silently did nothing.
+                for action in result.actions {
+                    let executed = match protocol.execute_action(action) {
+                        Ok(executed) => executed,
+                        Err(e) => {
+                            error!("etcd client {} rejected action: {}", client_id, e);
+                            continue;
+                        }
+                    };
+                    match Self::apply_action(
+                        executed,
+                        client_id,
+                        &etcd,
+                        &app_state,
+                        &llm_client,
+                        &status_tx,
+                    )
+                    .await
+                    {
+                        Ok(Applied::Ran(detail)) => info!("etcd client {}: {}", client_id, detail),
+                        Ok(Applied::Disconnect) => break,
+                        Err(e) => error!("etcd client {} action failed: {}", client_id, e),
+                    }
+                }
             }
             Err(e) => {
                 error!(
@@ -122,60 +199,204 @@ impl EtcdClient {
             }
         }
 
-        // Spawn background task that monitors for client closure
-        // etcd operations are made on-demand via actions
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("etcd client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
-
         // Return a dummy local address (etcd client is connection-based but doesn't expose local addr)
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Execute a get operation
-    pub async fn get_key(
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client: there is
+    /// no write half NetGet owns - `etcd-client` holds the HTTP/2 connection - and every
+    /// etcd verb yields `ClientActionResult::Custom`. So the action goes through
+    /// [`Self::apply_action`], the same function the connected-event path uses.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
         client_id: ClientId,
-        key: String,
+        etcd: SharedEtcd,
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        // Get endpoint from client state
-        let endpoints: Vec<String> = app_state
-            .with_client_mut(client_id, |client| {
-                client
-                    .get_protocol_field("endpoints")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-            })
-            .await
-            .flatten()
-            .context("No endpoints found")?;
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
 
+        let protocol = EtcdClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(executed) => match Self::apply_action(
+                    executed,
+                    client_id,
+                    &etcd,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await
+                {
+                    // Never `Sent`: `etcd-client` owns the gRPC connection and never
+                    // reports how many bytes a request serialised to, so a byte count
+                    // here would be invented. `Executed` carries what etcd actually
+                    // did instead - revision, key count, keys deleted.
+                    Ok(Applied::Ran(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                    Ok(Applied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                    Err(e) => Err(e),
+                },
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("etcd client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
+            }
+        }
+
+        // Nothing can be injected any more: stop the dashboard offering [ send ].
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        info!("etcd client {} command loop ended", client_id);
+    }
+
+    /// Run one executed action against the live etcd session.
+    ///
+    /// The etcd round-trip is awaited - so the reported detail describes an operation
+    /// that really happened - while the `etcd_response_received` LLM call it triggers
+    /// runs in its own registered task. That split matters: a client whose events are
+    /// routed to a manual handler would otherwise park the command loop for the length
+    /// of a human's think time.
+    async fn apply_action(
+        executed: ClientActionResult,
+        client_id: ClientId,
+        etcd: &SharedEtcd,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        let outcome = match executed {
+            ClientActionResult::Custom { name, data } if name == "etcd_get" => {
+                let key = data
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'key' in etcd_get")?
+                    .to_string();
+                Self::perform_get(client_id, etcd, key).await?
+            }
+            ClientActionResult::Custom { name, data } if name == "etcd_put" => {
+                let key = data
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'key' in etcd_put")?
+                    .to_string();
+                let value = data
+                    .get("value")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'value' in etcd_put")?
+                    .to_string();
+                Self::perform_put(client_id, etcd, key, value).await?
+            }
+            ClientActionResult::Custom { name, data } if name == "etcd_delete" => {
+                let key = data
+                    .get("key")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'key' in etcd_delete")?
+                    .to_string();
+                Self::perform_delete(client_id, etcd, key).await?
+            }
+            ClientActionResult::Disconnect => {
+                info!("etcd client {} disconnecting", client_id);
+                return Ok(Applied::Disconnect);
+            }
+            ClientActionResult::WaitForMore => {
+                return Ok(Applied::Ran("wait_for_more".to_string()))
+            }
+            ClientActionResult::NoAction => return Ok(Applied::Ran("no_action".to_string())),
+            // Not swallowed: an action this client cannot carry out says so, rather than
+            // looking identical to success.
+            ClientActionResult::Custom { name, .. } => {
+                return Ok(Applied::Ran(format!(
+                    "custom result '{name}' is not handled by the etcd client"
+                )))
+            }
+            ClientActionResult::SendData(_) => {
+                return Ok(Applied::Ran(
+                    "send_data has no meaning for an etcd client (etcd-client owns the gRPC connection)"
+                        .to_string(),
+                ))
+            }
+            ClientActionResult::Multiple(_) => {
+                return Ok(Applied::Ran(
+                    "multiple results are not produced by the etcd client".to_string(),
+                ))
+            }
+        };
+
+        let detail = outcome.detail.clone();
+        let state_clone = app_state.clone();
+        let llm_clone = llm_client.clone();
+        let status_clone = status_tx.clone();
+        let notify_handle = tokio::spawn(async move {
+            Self::notify_response(
+                client_id,
+                outcome.event_data,
+                state_clone,
+                llm_clone,
+                status_clone,
+            )
+            .await;
+        });
+        app_state
+            .register_client_task(client_id, notify_handle)
+            .await;
+
+        Ok(Applied::Ran(detail))
+    }
+
+    /// Execute a get operation on the live session.
+    async fn perform_get(
+        client_id: ClientId,
+        etcd: &SharedEtcd,
+        key: String,
+    ) -> Result<EtcdOutcome> {
         info!("etcd client {} getting key: {}", client_id, key);
 
-        // Connect and get key
-        let mut etcd_client = etcd_client::Client::connect(&endpoints, None)
-            .await
-            .context("Failed to reconnect to etcd server")?;
-
-        let resp = etcd_client
-            .get(key.clone(), None)
-            .await
-            .context("Failed to get key from etcd")?;
+        let resp = {
+            let mut guard = etcd.lock().await;
+            guard
+                .get(key.clone(), None)
+                .await
+                .context("Failed to get key from etcd")?
+        };
 
         // Build response data
         let kvs: Vec<serde_json::Value> = resp
@@ -199,199 +420,67 @@ impl EtcdClient {
             kvs.len()
         );
 
-        // Send response event to LLM
-        let response_event = Event::new(
-            &ETCD_CLIENT_RESPONSE_RECEIVED_EVENT,
-            serde_json::json!({
+        Ok(EtcdOutcome {
+            detail: format!("etcd_get '{}' -> {} key-value pair(s)", key, kvs.len()),
+            event_data: serde_json::json!({
                 "operation": "get",
                 "key": key,
                 "kvs": kvs,
                 "count": resp.count(),
                 "more": resp.more(),
             }),
-        );
-
-        // Call LLM with response event
-        let protocol = Arc::new(EtcdClientProtocol::new());
-        let instruction = app_state
-            .with_client_mut(client_id, |client| client.instruction.clone())
-            .await
-            .unwrap_or_default();
-        let memory = app_state
-            .with_client_mut(client_id, |client| {
-                client
-                    .get_protocol_field("memory")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .await
-            .flatten()
-            .unwrap_or_default();
-
-        match call_llm_for_client(
-            &llm_client,
-            &app_state,
-            client_id.to_string(),
-            &instruction,
-            &memory,
-            Some(&response_event),
-            protocol.as_ref(),
-            &status_tx,
-        )
-        .await
-        {
-            Ok(result) => {
-                if let Some(mem) = result.memory_updates {
-                    app_state
-                        .with_client_mut(client_id, |client| {
-                            client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
-                        })
-                        .await;
-                }
-                debug!(
-                    "etcd client {} LLM generated {} actions after get",
-                    client_id,
-                    result.actions.len()
-                );
-            }
-            Err(e) => {
-                error!("etcd client {} LLM call failed after get: {}", client_id, e);
-            }
-        }
-
-        Ok(())
+        })
     }
 
-    /// Execute a put operation
-    pub async fn put_key(
+    /// Execute a put operation on the live session.
+    async fn perform_put(
         client_id: ClientId,
+        etcd: &SharedEtcd,
         key: String,
         value: String,
-        app_state: Arc<AppState>,
-        llm_client: OllamaClient,
-        status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        // Get endpoint from client state
-        let endpoints: Vec<String> = app_state
-            .with_client_mut(client_id, |client| {
-                client
-                    .get_protocol_field("endpoints")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-            })
-            .await
-            .flatten()
-            .context("No endpoints found")?;
-
+    ) -> Result<EtcdOutcome> {
         info!("etcd client {} putting key: {} = {}", client_id, key, value);
 
-        // Connect and put key
-        let mut etcd_client = etcd_client::Client::connect(&endpoints, None)
-            .await
-            .context("Failed to reconnect to etcd server")?;
+        let resp = {
+            let mut guard = etcd.lock().await;
+            guard
+                .put(key.clone(), value.clone(), None)
+                .await
+                .context("Failed to put key to etcd")?
+        };
 
-        let resp = etcd_client
-            .put(key.clone(), value.clone(), None)
-            .await
-            .context("Failed to put key to etcd")?;
-
+        let revision = resp.header().map(|h| h.revision()).unwrap_or(0);
         debug!(
             "etcd client {} put completed, header revision: {}",
-            client_id,
-            resp.header().unwrap().revision()
+            client_id, revision
         );
 
-        // Send response event to LLM
-        let response_event = Event::new(
-            &ETCD_CLIENT_RESPONSE_RECEIVED_EVENT,
-            serde_json::json!({
+        Ok(EtcdOutcome {
+            detail: format!("etcd_put '{}' -> revision {}", key, revision),
+            event_data: serde_json::json!({
                 "operation": "put",
                 "key": key,
                 "value": value,
-                "revision": resp.header().map(|h| h.revision()).unwrap_or(0),
+                "revision": revision,
             }),
-        );
-
-        // Call LLM with response event
-        let protocol = Arc::new(EtcdClientProtocol::new());
-        let instruction = app_state
-            .with_client_mut(client_id, |client| client.instruction.clone())
-            .await
-            .unwrap_or_default();
-        let memory = app_state
-            .with_client_mut(client_id, |client| {
-                client
-                    .get_protocol_field("memory")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string())
-            })
-            .await
-            .flatten()
-            .unwrap_or_default();
-
-        match call_llm_for_client(
-            &llm_client,
-            &app_state,
-            client_id.to_string(),
-            &instruction,
-            &memory,
-            Some(&response_event),
-            protocol.as_ref(),
-            &status_tx,
-        )
-        .await
-        {
-            Ok(result) => {
-                if let Some(mem) = result.memory_updates {
-                    app_state
-                        .with_client_mut(client_id, |client| {
-                            client.set_protocol_field("memory".to_string(), serde_json::json!(mem));
-                        })
-                        .await;
-                }
-                debug!(
-                    "etcd client {} LLM generated {} actions after put",
-                    client_id,
-                    result.actions.len()
-                );
-            }
-            Err(e) => {
-                error!("etcd client {} LLM call failed after put: {}", client_id, e);
-            }
-        }
-
-        Ok(())
+        })
     }
 
-    /// Execute a delete operation
-    pub async fn delete_key(
+    /// Execute a delete operation on the live session.
+    async fn perform_delete(
         client_id: ClientId,
+        etcd: &SharedEtcd,
         key: String,
-        app_state: Arc<AppState>,
-        llm_client: OllamaClient,
-        status_tx: mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        // Get endpoint from client state
-        let endpoints: Vec<String> = app_state
-            .with_client_mut(client_id, |client| {
-                client
-                    .get_protocol_field("endpoints")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-            })
-            .await
-            .flatten()
-            .context("No endpoints found")?;
-
+    ) -> Result<EtcdOutcome> {
         info!("etcd client {} deleting key: {}", client_id, key);
 
-        // Connect and delete key
-        let mut etcd_client = etcd_client::Client::connect(&endpoints, None)
-            .await
-            .context("Failed to reconnect to etcd server")?;
-
-        let resp = etcd_client
-            .delete(key.clone(), None)
-            .await
-            .context("Failed to delete key from etcd")?;
+        let resp = {
+            let mut guard = etcd.lock().await;
+            guard
+                .delete(key.clone(), None)
+                .await
+                .context("Failed to delete key from etcd")?
+        };
 
         debug!(
             "etcd client {} delete completed, deleted {} keys",
@@ -399,17 +488,26 @@ impl EtcdClient {
             resp.deleted()
         );
 
-        // Send response event to LLM
-        let response_event = Event::new(
-            &ETCD_CLIENT_RESPONSE_RECEIVED_EVENT,
-            serde_json::json!({
+        Ok(EtcdOutcome {
+            detail: format!("etcd_delete '{}' -> {} key(s) deleted", key, resp.deleted()),
+            event_data: serde_json::json!({
                 "operation": "delete",
                 "key": key,
                 "deleted": resp.deleted(),
             }),
-        );
+        })
+    }
 
-        // Call LLM with response event
+    /// Raise `etcd_response_received` for a completed operation.
+    async fn notify_response(
+        client_id: ClientId,
+        event_data: serde_json::Value,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let response_event = Event::new(&ETCD_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+
         let protocol = Arc::new(EtcdClientProtocol::new());
         let instruction = app_state
             .with_client_mut(client_id, |client| client.instruction.clone())
@@ -447,19 +545,17 @@ impl EtcdClient {
                         .await;
                 }
                 debug!(
-                    "etcd client {} LLM generated {} actions after delete",
+                    "etcd client {} LLM generated {} actions after operation",
                     client_id,
                     result.actions.len()
                 );
             }
             Err(e) => {
                 error!(
-                    "etcd client {} LLM call failed after delete: {}",
+                    "etcd client {} LLM call failed after operation: {}",
                     client_id, e
                 );
             }
         }
-
-        Ok(())
     }
 }

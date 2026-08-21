@@ -250,3 +250,25 @@ timeout 30 ./cargo-isolated.sh test --features snmp --test client::snmp::e2e_tes
 - [NetGet SNMP Server Implementation](../../../src/server/snmp/CLAUDE.md)
 - [E2E Test Infrastructure](../../helpers.rs)
 - [Test Best Practices](../../TEST_STATUS_REPORT.md)
+
+## `command_channel_test.rs`
+
+Covers the dashboard's `[ send ]` path: `AppState::send_to_client` injects an action from
+outside the client's own loop and the wire effect is asserted.
+
+**LLM budget: 0 calls.** Every client event is routed to a `*` static handler that answers
+with no actions (`try_execute_client_event_handler` runs before the budget debit), and the
+client's LLM points at `http://127.0.0.1:1` as a second belt. No mock Ollama server is
+needed or started.
+
+`wait_for_client_handle` polls `AppState::has_client_handle` before the first send. That is
+the regression guard for "register the channel **before** the connected-event LLM call" — if
+registration moves after it, a parked connect event makes this poll time out.
+
+The stand-in agent is a plain `tokio::net::UdpSocket` on `127.0.0.1:0` that never replies;
+`retries: 0` and `timeout_ms: 200` in `startup_params` keep the abandoned reply wait from
+outliving the test. The test compares the reported `Sent { bytes_sent }` against the datagram
+length actually received, checks it is a BER SEQUENCE, and greps the wire for the community
+string passed in `startup_params` — which also proves the injected path uses the client's own
+configuration rather than defaults. `Rejected` is asserted twice: for an unknown action type
+and for a `send_snmp_get` with an empty `oids` array.

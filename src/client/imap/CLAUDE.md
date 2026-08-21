@@ -242,3 +242,30 @@ Some IMAP servers may return envelopes in different formats.
 - [IMAP RFC 3501](https://tools.ietf.org/html/rfc3501)
 - [async-imap Documentation](https://docs.rs/async-imap/)
 - [IMAP Search Criteria](https://www.atmail.com/blog/imap-commands/)
+
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel and spawns `command_loop` **before**
+the task that makes the `imap_client_connected` LLM call, which a manual `*` rule can park.
+
+`command_loop` is a task of its own rather than a `select!` arm because there is nothing to
+select against: `async_imap` owns the socket and this client has no read loop. It is also what
+keeps the session usable after the connected-event handler returns — previously the session
+was reachable only from inside that one task.
+
+Injected actions go through `handle_custom_action`, the same function the LLM path uses, so the
+IMAP command encoding exists exactly once.
+
+**Outcome semantics.** `async_imap` writes and reads the tagged command itself, so this loop can
+honestly claim no byte count: a verb that ran reports
+`Executed { detail: "<verb> completed (async_imap frames the tagged command, …)" }`. A verb the
+server refused is an `Err`. An injected `disconnect` replies `Disconnected`, marks the client
+disconnected and then does a **bounded** best-effort `LOGOUT` (5s) — unbounded, a server that
+never answers would strand the task holding the client's command handle. Every exit removes the
+handle.
+
+Test: `tests/client/imap/command_channel_test.rs` (zero LLM calls). Note what its server config
+documents: the IMAP server's greeting is **not** deterministic — without an `imap_connection`
+handler it writes `* BYE` and hangs up — and the `imap_auth` rule must interpolate
+`{{event.tag}}`, because `async_imap` picks its own tags and the server checks the tag rather
+than substring-matching.

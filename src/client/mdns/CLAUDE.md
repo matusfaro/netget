@@ -300,3 +300,47 @@ mdns-sd = { version = "0.11", optional = true }
 - `nix` - Unix system calls (Linux/macOS)
 
 **Feature flag**: `mdns`
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into the running client. The channel is
+registered **before** the `mdns_client_connected` LLM call (a `manual` routing rule can park
+that event for minutes), and the commands are drained by a task of their own
+(`command_loop`), registered with `AppState::register_client_task`.
+
+The command task holds a **clone of the same `ServiceDaemon` handle**, not a second daemon.
+`ServiceDaemon` is a cloneable handle onto one running daemon, so an injected `browse_service`
+leaves the same sockets, for the same multicast group, as one the LLM asked for. It also keeps
+the daemon alive when the client has no instruction at all — previously the daemon was dropped
+in that case.
+
+**Outcomes are `Executed`, never `Sent`, and that is the honest shape here.** `mdns-sd` owns
+the multicast socket and reports neither the query bytes it emits nor when it emits them, so
+any byte count this client produced would be invented. The `detail` names what the daemon was
+asked to do instead:
+
+| Action | Outcome |
+|---|---|
+| `browse_service` | `Executed { detail: "browse_service '<type>' started (the mdns-sd daemon owns the multicast socket, so no byte count is observable)" }` |
+| `resolve_hostname` | `Executed { detail: "resolve_hostname '<host>' issued" }`, or `Err` when the daemon call fails |
+| `disconnect` | `Disconnected`; the command loop ends |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| unknown type / bad params | `Rejected { error }` from `execute_action` |
+
+Note that `resolve_hostname` blocks the command loop for up to its 5s daemon timeout, so a
+second injected command queues behind it.
+
+### Two things found while wiring the command channel
+
+- **The browse task's `recv_timeout` was a synchronous blocking call inside
+  `tokio::spawn`.** That is the tokio-blocking-in-async pattern the root `CLAUDE.md` lists
+  under known systemic issues, and it bit exactly as described: it parks a runtime worker for
+  up to 10 seconds per iteration, so on a current-thread runtime everything else the client is
+  doing — the command channel included — stalls behind it. It now runs on the blocking pool
+  via `tokio::task::spawn_blocking`; the match arms are unchanged.
+- **`resolve_hostname` does not return addresses.** `ServiceDaemon::resolve_hostname` returns
+  a `Receiver<HostnameResolutionEvent>`, and this client binds it as `addrs` and logs
+  `addrs.len()` — the channel's queue depth, which is 0. So the "Resolved <host> to N
+  addresses" line is always "to 0 addresses" and no address is ever read. Not fixed here; the
+  command channel's outcome detail says `resolve_hostname '<host>' issued`, which is what
+  actually happened.

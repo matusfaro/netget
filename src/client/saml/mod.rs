@@ -13,11 +13,36 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::client::saml::actions::{
     SAML_CLIENT_CONNECTED_EVENT, SAML_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+
+/// What [`SamlClient::apply_action`] did with one executed action. SAML rides on HTTP
+/// bindings rather than a socket NetGet owns, so no byte count can honestly be reported.
+enum Applied {
+    /// The action ran; the string describes the effect.
+    Ran(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
+
+/// Whether an event is reported to the LLM inline or from its own task.
+///
+/// Public because `initiate_sso` / `validate_assertion` are: both are entry points a caller
+/// outside this module can drive, and both have to say which way the resulting event goes.
+#[derive(Clone, Copy)]
+pub enum Dispatch {
+    /// Raise it here and now. Used by the connected-event LLM path.
+    Inline,
+    /// Hand it to a registered task. Used by the injected-command loop, so a manual
+    /// (human-answered) routing rule on `saml_response_received` cannot hold up the
+    /// command's outcome, or the next injected command.
+    Deferred,
+}
 
 /// SAML client that authenticates with a SAML Identity Provider
 pub struct SamlClient;
@@ -72,6 +97,21 @@ impl SamlClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ initiate_sso ] /
+        // [ validate_assertion ] / [ disconnect ]). Registered BEFORE the connected-event
+        // LLM call below, which is awaited inline and which a manual `*` routing rule can
+        // park for minutes - the operator must be able to act while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with saml_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -93,8 +133,48 @@ impl SamlClient {
             )
             .await
             {
-                Ok(_result) => {
-                    info!("SAML client ready after connect event");
+                Ok(ClientLlmResult {
+                    actions,
+                    memory_updates,
+                }) => {
+                    if let Some(mem) = memory_updates {
+                        app_state.set_memory_for_client(client_id, mem).await;
+                    }
+
+                    // Execute the model's actions through the same path injected commands
+                    // use. They used to be dropped on the floor here.
+                    let protocol = crate::client::saml::actions::SamlClientProtocol;
+                    for action in actions {
+                        let result = match protocol.execute_action(action) {
+                            Ok(result) => result,
+                            Err(e) => {
+                                error!("SAML client {} rejected action: {}", client_id, e);
+                                continue;
+                            }
+                        };
+                        match Self::apply_action(
+                            result,
+                            Dispatch::Inline,
+                            client_id,
+                            &app_state,
+                            &llm_client,
+                            &status_tx,
+                        )
+                        .await
+                        {
+                            Ok(Applied::Ran(detail)) => {
+                                info!("SAML client {}: {}", client_id, detail)
+                            }
+                            Ok(Applied::Disconnect) => {
+                                app_state.remove_client_handle(client_id).await;
+                                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                return Ok("0.0.0.0:0".parse().unwrap());
+                            }
+                            Err(e) => {
+                                error!("SAML client {} action failed: {}", client_id, e);
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     error!("LLM error on saml_connected event: {}", e);
@@ -102,30 +182,200 @@ impl SamlClient {
             }
         }
 
-        // Spawn background task to monitor client lifecycle
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("SAML client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
+        // No idle-poll task: the command loop is this client's long-lived task and it ends
+        // when the client is removed (`remove_client` drops the command sender).
 
         // Return a dummy local address (SAML is HTTP-based)
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
+    /// Run one executed action. Shared by the connected-event LLM path and injected
+    /// commands so each verb's implementation exists exactly once.
+    async fn apply_action(
+        result: ClientActionResult,
+        dispatch: Dispatch,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } if name == "saml_initiate_sso" => {
+                let relay_state = data
+                    .get("relay_state")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                let force_authn = data
+                    .get("force_authn")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                Self::initiate_sso(
+                    client_id,
+                    relay_state,
+                    force_authn,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                    dispatch,
+                )
+                .await?;
+
+                // The AuthnRequest is carried by the user's browser, not by NetGet: report
+                // the URL that was built rather than any byte count.
+                let sso_url = app_state
+                    .with_client_mut(client_id, |client| {
+                        client
+                            .get_protocol_field("sso_url")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string())
+                    })
+                    .await
+                    .flatten();
+                Ok(Applied::Ran(match sso_url {
+                    Some(url) => format!("saml_initiate_sso: AuthnRequest built, SSO URL {}", url),
+                    None => "saml_initiate_sso: AuthnRequest built".to_string(),
+                }))
+            }
+            ClientActionResult::Custom { name, data } if name == "saml_validate_assertion" => {
+                let saml_response = data
+                    .get("saml_response")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'saml_response' in saml_validate_assertion")?
+                    .to_string();
+
+                Self::validate_assertion(
+                    client_id,
+                    saml_response,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                    dispatch,
+                )
+                .await?;
+                Ok(Applied::Ran(
+                    "saml_validate_assertion: response parsed and reported".to_string(),
+                ))
+            }
+            ClientActionResult::Custom { name, data } if name == "saml_parse_assertion" => {
+                let response_xml = data
+                    .get("response_xml")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'response_xml' in saml_parse_assertion")?
+                    .to_string();
+
+                let (success, status_code, assertion_data, attributes) =
+                    Self::parse_saml_response(&response_xml)?;
+                Self::notify_parsed_response(
+                    client_id,
+                    success,
+                    &status_code,
+                    assertion_data,
+                    attributes,
+                    app_state,
+                    llm_client,
+                    status_tx,
+                    dispatch,
+                )
+                .await;
+                Ok(Applied::Ran(format!(
+                    "saml_parse_assertion: status {} (success={})",
+                    status_code, success
+                )))
+            }
+            ClientActionResult::Disconnect => {
+                info!("SAML client {} disconnecting", client_id);
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                Ok(Applied::Disconnect)
+            }
+            ClientActionResult::Custom { name, .. } => Err(anyhow::anyhow!(
+                "SAML client cannot execute custom result '{}'",
+                name
+            )),
+            // WaitForMore / NoAction / SendData / nested Multiple: nothing to do.
+            _ => Ok(Applied::Ran(
+                "no SAML operation performed (action produced no request)".to_string(),
+            )),
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session. Each operation is awaited, so the reported
+    /// [`ClientSendOutcome`] describes work that really completed; a failure is reported as
+    /// an error, never as a success, and nothing here can invent an assertion or a session.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let protocol = crate::client::saml::actions::SamlClientProtocol;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(
+                    result,
+                    Dispatch::Deferred,
+                    client_id,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await
+                .map(|applied| match applied {
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    Applied::Ran(detail) => ClientSendOutcome::Executed { detail },
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("SAML client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        info!("SAML client {} command loop ended", client_id);
+    }
+
     /// Initiate SAML SSO authentication
+    #[allow(clippy::too_many_arguments)]
     pub async fn initiate_sso(
         client_id: ClientId,
         relay_state: Option<String>,
@@ -133,6 +383,7 @@ impl SamlClient {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         info!("SAML client {} initiating SSO", client_id);
 
@@ -209,47 +460,23 @@ impl SamlClient {
             .await;
 
         // Notify LLM about SSO URL
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::saml::actions::SamlClientProtocol::new());
-            let event = Event::new(
-                &SAML_CLIENT_CONNECTED_EVENT,
-                serde_json::json!({
-                    "idp_url": idp_url,
-                    "sso_url": sso_url,
-                    "request_id": request_id,
-                }),
-            );
-
-            let memory = app_state
-                .get_memory_for_client(client_id)
-                .await
-                .unwrap_or_default();
-
-            match call_llm_for_client(
-                &llm_client,
-                &app_state,
-                client_id.to_string(),
-                &instruction,
-                &memory,
-                Some(&event),
-                protocol.as_ref(),
-                &status_tx,
-            )
-            .await
-            {
-                Ok(ClientLlmResult {
-                    actions: _,
-                    memory_updates,
-                }) => {
-                    if let Some(mem) = memory_updates {
-                        app_state.set_memory_for_client(client_id, mem).await;
-                    }
-                }
-                Err(e) => {
-                    error!("LLM error for SAML client {}: {}", client_id, e);
-                }
-            }
-        }
+        let event = Event::new(
+            &SAML_CLIENT_CONNECTED_EVENT,
+            serde_json::json!({
+                "idp_url": idp_url,
+                "sso_url": sso_url,
+                "request_id": request_id,
+            }),
+        );
+        Self::notify_event(
+            client_id,
+            event,
+            dispatch,
+            &app_state,
+            &llm_client,
+            &status_tx,
+        )
+        .await;
 
         Ok(())
     }
@@ -261,6 +488,7 @@ impl SamlClient {
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
     ) -> Result<()> {
         info!("SAML client {} validating assertion", client_id);
 
@@ -283,51 +511,125 @@ impl SamlClient {
             success, status_code
         );
 
-        // Call LLM with validation result
-        if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::saml::actions::SamlClientProtocol::new());
-            let event = Event::new(
-                &SAML_CLIENT_RESPONSE_RECEIVED_EVENT,
-                serde_json::json!({
-                    "success": success,
-                    "status_code": status_code,
-                    "assertion": assertion_data,
-                    "attributes": attributes,
-                }),
-            );
-
-            let memory = app_state
-                .get_memory_for_client(client_id)
-                .await
-                .unwrap_or_default();
-
-            match call_llm_for_client(
-                &llm_client,
-                &app_state,
-                client_id.to_string(),
-                &instruction,
-                &memory,
-                Some(&event),
-                protocol.as_ref(),
-                &status_tx,
-            )
-            .await
-            {
-                Ok(ClientLlmResult {
-                    actions: _,
-                    memory_updates,
-                }) => {
-                    if let Some(mem) = memory_updates {
-                        app_state.set_memory_for_client(client_id, mem).await;
-                    }
-                }
-                Err(e) => {
-                    error!("LLM error for SAML client {}: {}", client_id, e);
-                }
-            }
-        }
+        Self::notify_parsed_response(
+            client_id,
+            success,
+            &status_code,
+            assertion_data,
+            attributes,
+            &app_state,
+            &llm_client,
+            &status_tx,
+            dispatch,
+        )
+        .await;
 
         Ok(())
+    }
+
+    /// Raise `saml_response_received` for an already-parsed IdP response. Shared by
+    /// `validate_assertion` (base64 wrapper) and the `parse_assertion` action (raw XML), so
+    /// both report the same event shape.
+    #[allow(clippy::too_many_arguments)]
+    async fn notify_parsed_response(
+        client_id: ClientId,
+        success: bool,
+        status_code: &str,
+        assertion_data: Option<serde_json::Value>,
+        attributes: Option<serde_json::Value>,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+        dispatch: Dispatch,
+    ) {
+        let event = Event::new(
+            &SAML_CLIENT_RESPONSE_RECEIVED_EVENT,
+            serde_json::json!({
+                "success": success,
+                "status_code": status_code,
+                "assertion": assertion_data,
+                "attributes": attributes,
+            }),
+        );
+        Self::notify_event(client_id, event, dispatch, app_state, llm_client, status_tx).await;
+    }
+
+    /// Report one event to the LLM, inline or from a registered task.
+    async fn notify_event(
+        client_id: ClientId,
+        event: Event,
+        dispatch: Dispatch,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        match dispatch {
+            Dispatch::Inline => {
+                Self::raise_event(
+                    client_id,
+                    event,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                )
+                .await
+            }
+            Dispatch::Deferred => {
+                let handle = tokio::spawn(Self::raise_event(
+                    client_id,
+                    event,
+                    app_state.clone(),
+                    llm_client.clone(),
+                    status_tx.clone(),
+                ));
+                // Registered so stop_client aborts an in-flight LLM call for this event.
+                app_state.register_client_task(client_id, handle).await;
+            }
+        }
+    }
+
+    /// The event -> LLM round-trip itself.
+    async fn raise_event(
+        client_id: ClientId,
+        event: Event,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+
+        let protocol = Arc::new(crate::client::saml::actions::SamlClientProtocol::new());
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for SAML client {}: {}", client_id, e);
+            }
+        }
     }
 
     /// Generate SAML AuthnRequest XML

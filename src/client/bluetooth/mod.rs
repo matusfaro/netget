@@ -45,6 +45,20 @@ struct ClientData {
     adapter: Adapter,
 }
 
+/// What applying one action to the BLE adapter/peripheral actually did.
+///
+/// `Sent` is reported only for a completed GATT write — those bytes really went
+/// out on the radio. Every other verb reads, scans or subscribes, so it reports
+/// `Executed` with what it found.
+pub enum BluetoothApplied {
+    /// This many bytes were written to a characteristic.
+    Sent(usize),
+    /// The action ran but wrote nothing; the string says what it did.
+    Executed(String),
+    /// The peripheral was disconnected.
+    Disconnected,
+}
+
 /// Bluetooth Low Energy client that connects to BLE devices
 pub struct BluetoothClient;
 
@@ -97,6 +111,31 @@ impl BluetoothClient {
             manager: manager.clone(),
             adapter: adapter.clone(),
         }));
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the scan/connect task below, whose very first step is an
+        // LLM call that a `*` -> manual rule can park for minutes: the operator must
+        // be able to drive the adapter while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn({
+            let client_data = client_data.clone();
+            let app_state = app_state.clone();
+            let status_tx = status_tx.clone();
+            let llm_client = llm_client.clone();
+            async move {
+                Self::command_loop(
+                    command_rx,
+                    client_data,
+                    app_state,
+                    status_tx,
+                    llm_client,
+                    client_id,
+                )
+                .await;
+            }
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Spawn LLM integration task
         let client_data_clone = client_data.clone();
@@ -161,6 +200,10 @@ impl BluetoothClient {
             }
 
             info!("Bluetooth client {} event loop ended", client_id);
+            // The scan/connect task is what tracks liveness; when it gives up, the
+            // command handle must go with it so the dashboard stops offering [ send ].
+            app_state_clone.remove_client_handle(client_id).await;
+            let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
         });
         task_registrar
             .register_client_task(client_id, task_handle)
@@ -168,6 +211,98 @@ impl BluetoothClient {
 
         // Return a dummy socket address (BLE doesn't use IP sockets)
         Ok("0.0.0.0:0".parse().unwrap())
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed,
+    /// which drops the handle) or an injected `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this
+    /// client: it owns no socket, and every BLE verb yields a
+    /// `ClientActionResult::Custom` that only btleplug can carry out. So the action
+    /// goes through [`Self::execute_llm_action`] — the exact function the LLM path
+    /// uses, including its follow-up events — and the outcome is recorded and replied
+    /// the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        client_data: Arc<Mutex<ClientData>>,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        llm_client: OllamaClient,
+        client_id: ClientId,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = BluetoothClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+
+            // `execute_llm_action` returns Err both for a rejected action (unknown
+            // verb / bad params) and for a BLE failure. They are not distinguishable
+            // from here without duplicating `execute_action`, so run the decode first
+            // and let only its error be a rejection.
+            let decoded = {
+                use crate::llm::actions::client_trait::Client;
+                protocol.execute_action(action.clone())
+            };
+            let outcome = match decoded {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(_) => Self::execute_llm_action(
+                    action.clone(),
+                    &client_data,
+                    &app_state,
+                    &status_tx,
+                    &llm_client,
+                    client_id,
+                )
+                .await
+                .map(|applied| match applied {
+                    BluetoothApplied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                    BluetoothApplied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                    BluetoothApplied::Disconnected => ClientSendOutcome::Disconnected,
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!(
+                    "Bluetooth client {} injected action failed: {}",
+                    client_id, e
+                );
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Perform a BLE scan for nearby devices
@@ -178,7 +313,7 @@ impl BluetoothClient {
         llm_client: &OllamaClient,
         client_id: ClientId,
         duration_secs: u64,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let adapter = {
             let data = client_data.lock().await;
             data.adapter.clone()
@@ -215,6 +350,7 @@ impl BluetoothClient {
             devices.len()
         );
         let _ = status_tx.send(format!("[CLIENT] Found {} BLE devices", devices.len()));
+        let device_count = devices.len();
 
         // Call LLM with scan results
         let protocol = Arc::new(BluetoothClientProtocol::new());
@@ -225,13 +361,17 @@ impl BluetoothClient {
             }),
         );
 
+        // Copy the memory out before the call: the command loop shares this
+        // mutex, and a guard held across an LLM round-trip (which a `*` manual
+        // rule can park for minutes) would stall every injected command.
+        let memory_snapshot = client_data.lock().await.memory.clone();
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             match call_llm_for_client(
                 llm_client,
                 app_state,
                 client_id.to_string(),
                 &instruction,
-                &client_data.lock().await.memory,
+                &memory_snapshot,
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
@@ -269,7 +409,7 @@ impl BluetoothClient {
             }
         }
 
-        Ok(())
+        Ok(device_count)
     }
 
     /// Connect to a specific BLE device
@@ -384,6 +524,10 @@ impl BluetoothClient {
                                 }),
                             );
 
+                            // Copy the memory out before the call: the command loop shares this
+                            // mutex, and a guard held across an LLM round-trip (which a `*` manual
+                            // rule can park for minutes) would stall every injected command.
+                            let memory_snapshot = client_data.lock().await.memory.clone();
                             if let Some(instruction) =
                                 app_state.get_instruction_for_client(client_id).await
                             {
@@ -392,7 +536,7 @@ impl BluetoothClient {
                                     &app_state,
                                     client_id.to_string(),
                                     &instruction,
-                                    &client_data.lock().await.memory,
+                                    &memory_snapshot,
                                     Some(&event),
                                     protocol.as_ref(),
                                     &status_tx,
@@ -447,13 +591,17 @@ impl BluetoothClient {
                 }),
             );
 
+            // Copy the memory out before the call: the command loop shares this
+            // mutex, and a guard held across an LLM round-trip (which a `*` manual
+            // rule can park for minutes) would stall every injected command.
+            let memory_snapshot = client_data.lock().await.memory.clone();
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
                 match call_llm_for_client(
                     llm_client,
                     app_state,
                     client_id.to_string(),
                     &instruction,
-                    &client_data.lock().await.memory,
+                    &memory_snapshot,
                     Some(&event),
                     protocol.as_ref(),
                     status_tx,
@@ -503,7 +651,7 @@ impl BluetoothClient {
         status_tx: &'a mpsc::UnboundedSender<String>,
         llm_client: &'a OllamaClient,
         client_id: ClientId,
-    ) -> BoxFuture<'a, Result<()>> {
+    ) -> BoxFuture<'a, Result<BluetoothApplied>> {
         Box::pin(async move {
             use crate::llm::actions::client_trait::Client;
             let protocol = BluetoothClientProtocol::new();
@@ -513,7 +661,7 @@ impl BluetoothClient {
                     match name.as_str() {
                         "scan_devices" => {
                             let duration_secs = data["duration_secs"].as_u64().unwrap_or(5);
-                            Box::pin(Self::perform_scan(
+                            let found = Box::pin(Self::perform_scan(
                                 client_data,
                                 app_state,
                                 status_tx,
@@ -522,11 +670,18 @@ impl BluetoothClient {
                                 duration_secs,
                             ))
                             .await?;
+                            Ok(BluetoothApplied::Executed(format!(
+                                "scan_devices ({duration_secs}s): {found} devices found"
+                            )))
                         }
                         "connect_device" => {
                             let device_address =
                                 data["device_address"].as_str().map(|s| s.to_string());
                             let device_name = data["device_name"].as_str().map(|s| s.to_string());
+                            let target = device_address
+                                .clone()
+                                .or_else(|| device_name.clone())
+                                .unwrap_or_else(|| "<unspecified>".to_string());
                             Self::connect_to_device(
                                 client_data,
                                 app_state,
@@ -537,9 +692,12 @@ impl BluetoothClient {
                                 device_name,
                             )
                             .await?;
+                            Ok(BluetoothApplied::Executed(format!(
+                                "connect_device {target}: connected"
+                            )))
                         }
                         "discover_services" => {
-                            Self::discover_services(
+                            let count = Self::discover_services(
                                 client_data,
                                 app_state,
                                 status_tx,
@@ -547,6 +705,9 @@ impl BluetoothClient {
                                 client_id,
                             )
                             .await?;
+                            Ok(BluetoothApplied::Executed(format!(
+                                "discover_services: {count} services"
+                            )))
                         }
                         "read_characteristic" => {
                             let service_uuid = Uuid::parse_str(
@@ -559,7 +720,7 @@ impl BluetoothClient {
                                     .as_str()
                                     .context("Missing characteristic_uuid")?,
                             )?;
-                            Self::read_characteristic(
+                            let read = Self::read_characteristic(
                                 client_data,
                                 app_state,
                                 status_tx,
@@ -569,6 +730,9 @@ impl BluetoothClient {
                                 char_uuid,
                             )
                             .await?;
+                            Ok(BluetoothApplied::Executed(format!(
+                                "read_characteristic {char_uuid}: {read} bytes read"
+                            )))
                         }
                         "write_characteristic" => {
                             let service_uuid = Uuid::parse_str(
@@ -588,6 +752,7 @@ impl BluetoothClient {
                                 .map(|v| v.as_u64().unwrap_or(0) as u8)
                                 .collect::<Vec<u8>>();
                             let with_response = data["with_response"].as_bool().unwrap_or(true);
+                            let written = value_bytes.len();
                             Self::write_characteristic(
                                 client_data,
                                 service_uuid,
@@ -596,6 +761,9 @@ impl BluetoothClient {
                                 with_response,
                             )
                             .await?;
+                            // A completed GATT write really put these bytes on the
+                            // radio, so this is the one BLE verb that can report Sent.
+                            Ok(BluetoothApplied::Sent(written))
                         }
                         "subscribe_notifications" => {
                             let service_uuid = Uuid::parse_str(
@@ -610,6 +778,9 @@ impl BluetoothClient {
                             )?;
                             Self::subscribe_notifications(client_data, service_uuid, char_uuid)
                                 .await?;
+                            Ok(BluetoothApplied::Executed(format!(
+                                "subscribe_notifications {char_uuid}: subscribed"
+                            )))
                         }
                         "unsubscribe_notifications" => {
                             let service_uuid = Uuid::parse_str(
@@ -624,21 +795,34 @@ impl BluetoothClient {
                             )?;
                             Self::unsubscribe_notifications(client_data, service_uuid, char_uuid)
                                 .await?;
+                            Ok(BluetoothApplied::Executed(format!(
+                                "unsubscribe_notifications {char_uuid}: unsubscribed"
+                            )))
                         }
                         _ => {
                             warn!("Unknown custom action: {}", name);
+                            Ok(BluetoothApplied::Executed(format!(
+                                "custom result '{name}' has no Bluetooth handler"
+                            )))
                         }
                     }
                 }
                 crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
                     Self::disconnect(client_data, app_state, client_id).await?;
+                    // Drop the command handle here rather than only in the command
+                    // loop: the LLM can disconnect too, and a handle left behind
+                    // would offer [ send ] into a closed peripheral.
+                    app_state.remove_client_handle(client_id).await;
+                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+                    Ok(BluetoothApplied::Disconnected)
                 }
-                _ => {
+                other => {
                     debug!("Unhandled action result type");
+                    Ok(BluetoothApplied::Executed(format!(
+                        "unhandled action result {other:?}"
+                    )))
                 }
             }
-
-            Ok(())
         })
     }
 
@@ -649,7 +833,7 @@ impl BluetoothClient {
         status_tx: &mpsc::UnboundedSender<String>,
         llm_client: &OllamaClient,
         client_id: ClientId,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let peripheral = {
             let data = client_data.lock().await;
             data.peripheral.clone().context("Not connected to device")?
@@ -702,6 +886,7 @@ impl BluetoothClient {
             client_id,
             services_data.len()
         );
+        let service_count = services_data.len();
 
         // Call LLM with services discovered event
         let protocol = Arc::new(BluetoothClientProtocol::new());
@@ -712,13 +897,17 @@ impl BluetoothClient {
             }),
         );
 
+        // Copy the memory out before the call: the command loop shares this
+        // mutex, and a guard held across an LLM round-trip (which a `*` manual
+        // rule can park for minutes) would stall every injected command.
+        let memory_snapshot = client_data.lock().await.memory.clone();
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             match call_llm_for_client(
                 llm_client,
                 app_state,
                 client_id.to_string(),
                 &instruction,
-                &client_data.lock().await.memory,
+                &memory_snapshot,
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
@@ -756,7 +945,7 @@ impl BluetoothClient {
             }
         }
 
-        Ok(())
+        Ok(service_count)
     }
 
     /// Read a characteristic value
@@ -768,7 +957,7 @@ impl BluetoothClient {
         client_id: ClientId,
         service_uuid: Uuid,
         char_uuid: Uuid,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let peripheral = {
             let data = client_data.lock().await;
             data.peripheral.clone().context("Not connected to device")?
@@ -806,13 +995,17 @@ impl BluetoothClient {
             }),
         );
 
+        // Copy the memory out before the call: the command loop shares this
+        // mutex, and a guard held across an LLM round-trip (which a `*` manual
+        // rule can park for minutes) would stall every injected command.
+        let memory_snapshot = client_data.lock().await.memory.clone();
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             match call_llm_for_client(
                 llm_client,
                 app_state,
                 client_id.to_string(),
                 &instruction,
-                &client_data.lock().await.memory,
+                &memory_snapshot,
                 Some(&event),
                 protocol.as_ref(),
                 status_tx,
@@ -850,7 +1043,7 @@ impl BluetoothClient {
             }
         }
 
-        Ok(())
+        Ok(value.len())
     }
 
     /// Write a characteristic value

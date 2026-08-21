@@ -10,17 +10,40 @@ use git2::{
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, info};
 
 use crate::client::git::actions::GIT_CLIENT_CONNECTED_EVENT;
 use crate::client::llm_budget::call_llm_for_client;
-use crate::llm::actions::client_trait::Client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+
+/// Everything one Git client session carries between actions.
+///
+/// This used to be three `&mut Option<...>` locals owned by the connect task, which is
+/// why nothing outside that task could run a Git action: the working repository was
+/// unreachable. Behind an `Arc<Mutex<_>>` the LLM path and the injected-command loop
+/// share one session, so `[ send ]` operates on the repository the LLM just cloned.
+#[derive(Default)]
+struct GitSession {
+    repo_path: Option<PathBuf>,
+    username: Option<String>,
+    password: Option<String>,
+}
+
+/// What one executed action did. Shared vocabulary between the connected-event handler
+/// and the injected-command loop.
+enum Applied {
+    /// The action ran; `detail` says what it did.
+    Ran(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
 
 /// Git client that performs Git operations
 pub struct GitClient;
@@ -61,15 +84,53 @@ impl GitClient {
             .await
             .unwrap_or_default();
 
+        // Seed the session from `remote_addr` when it already names a repository on
+        // disk. Without this, every verb other than `git_clone` was a no-op on a
+        // freshly created client - `repo_path` started `None` and only a clone could
+        // ever set it - even though the documented contract is that `remote_addr` may
+        // be "a local path (for existing repo)".
+        let session = Arc::new(Mutex::new(GitSession {
+            repo_path: match Repository::open(&remote_addr) {
+                Ok(repo) => {
+                    let path = repo
+                        .workdir()
+                        .map(|w| w.to_path_buf())
+                        .unwrap_or_else(|| PathBuf::from(&remote_addr));
+                    info!(
+                        "Git client {} opened existing repository at {}",
+                        client_id,
+                        path.display()
+                    );
+                    Some(path)
+                }
+                Err(_) => None,
+            },
+            ..Default::default()
+        }));
+
+        // Command channel for injected actions (the dashboard's [ send ] / composer).
+        // Registered BEFORE the connected-event LLM call, which a manual `*` routing rule
+        // can park for minutes - the operator must be able to run a Git operation while it
+        // waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            session.clone(),
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn task to handle LLM-driven Git operations
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
         let task_registrar = app_state.clone();
+        let llm_session = session.clone();
         let task_handle = tokio::spawn(async move {
             let protocol = Arc::new(GitClientProtocol::new());
-            let mut repo_path: Option<PathBuf> = None;
-            let mut username: Option<String> = None;
-            let mut password: Option<String> = None;
 
             // Send connected event
             let event = Event::new(
@@ -106,14 +167,13 @@ impl GitClient {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
 
-                    // Execute initial actions
+                    // Execute initial actions through the same path injected commands
+                    // use, so the git2 dispatch exists exactly once.
                     for action in actions {
-                        if let Err(e) = Self::execute_git_action(
+                        match Self::execute_git_action(
                             &action,
                             &protocol,
-                            &mut repo_path,
-                            &mut username,
-                            &mut password,
+                            &llm_session,
                             client_id,
                             &llm_client,
                             &app_state,
@@ -121,9 +181,17 @@ impl GitClient {
                         )
                         .await
                         {
-                            error!("Git client {} action error: {}", client_id, e);
-                            let _ = status_tx
-                                .send(format!("[CLIENT] Git client {} error: {}", client_id, e));
+                            Ok(Applied::Ran(detail)) => {
+                                info!("Git client {}: {}", client_id, detail);
+                            }
+                            Ok(Applied::Disconnect) => break,
+                            Err(e) => {
+                                error!("Git client {} action error: {}", client_id, e);
+                                let _ = status_tx.send(format!(
+                                    "[CLIENT] Git client {} error: {}",
+                                    client_id, e
+                                ));
+                            }
                         }
                     }
                 }
@@ -146,300 +214,390 @@ impl GitClient {
         Ok(dummy_addr)
     }
 
-    /// Execute a Git action based on LLM decision
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client: Git owns
+    /// no socket NetGet can write to, and every Git verb yields
+    /// `ClientActionResult::Custom`. So the action goes through
+    /// [`Self::execute_git_action`], the same function the connected-event path uses.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        session: Arc<Mutex<GitSession>>,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let protocol = Arc::new(GitClientProtocol::new());
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match Self::execute_git_action(
+                &action,
+                &protocol,
+                &session,
+                client_id,
+                &llm_client,
+                &app_state,
+                &status_tx,
+            )
+            .await
+            {
+                // Never `Sent`: git2 talks to the repository (and, for clone/fetch/pull/
+                // push, to the remote) over sockets it owns and never reports byte
+                // counts for, so a number here would be invented. `Executed` carries
+                // what the operation actually produced instead.
+                Ok(Applied::Ran(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                Ok(Applied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                // `execute_git_action` returns `Err` both for an action the protocol
+                // rejects and for a git2 operation that failed. Only the first is
+                // `Rejected`; the caller sees the git2 failure as an error, not as a
+                // silent success.
+                Err(e) => {
+                    if e.downcast_ref::<RejectedAction>().is_some() {
+                        Ok(ClientSendOutcome::Rejected {
+                            error: e.to_string(),
+                        })
+                    } else {
+                        Err(e)
+                    }
+                }
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("Git client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        // Nothing can be injected any more: stop the dashboard offering [ send ].
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        info!("Git client {} command loop ended", client_id);
+    }
+
+    /// Execute a Git action based on LLM decision (or on an injected command).
+    ///
+    /// Every git2 call is blocking - `Repository::clone` and `remote.push` do real
+    /// network I/O - so the whole dispatch runs on `spawn_blocking` rather than on the
+    /// async runtime's worker.
     async fn execute_git_action(
         action: &serde_json::Value,
         protocol: &Arc<GitClientProtocol>,
-        repo_path: &mut Option<PathBuf>,
-        username: &mut Option<String>,
-        password: &mut Option<String>,
+        session: &Arc<Mutex<GitSession>>,
         client_id: ClientId,
         _llm_client: &OllamaClient,
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        match protocol.execute_action(action.clone())? {
-            crate::llm::actions::client_trait::ClientActionResult::Custom { name, data } => {
-                match name.as_str() {
-                    "git_clone" => {
-                        let url = data
-                            .get("url")
-                            .and_then(|v| v.as_str())
-                            .context("Missing url")?;
-                        let path = data
-                            .get("path")
-                            .and_then(|v| v.as_str())
-                            .context("Missing path")?;
-
-                        info!("Git client {} cloning {} to {}", client_id, url, path);
-                        let _ = status_tx.send(format!(
-                            "[CLIENT] Git client {} cloning {} to {}",
-                            client_id, url, path
-                        ));
-
-                        match Self::git_clone(url, path, username.as_deref(), password.as_deref()) {
-                            Ok(_repo) => {
-                                *repo_path = Some(PathBuf::from(path));
-                                info!("Git client {} clone successful", client_id);
-                                let _ = status_tx.send(format!(
-                                    "[CLIENT] Git client {} clone successful",
-                                    client_id
-                                ));
-                            }
-                            Err(e) => {
-                                error!("Git client {} clone failed: {}", client_id, e);
-                                let _ = status_tx.send(format!(
-                                    "[CLIENT] Git client {} clone failed: {}",
-                                    client_id, e
-                                ));
-                            }
-                        }
-                    }
-                    "git_fetch" => {
-                        let remote_name = data
-                            .get("remote")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("origin");
-
-                        if let Some(ref path) = repo_path {
-                            info!(
-                                "Git client {} fetching from remote {}",
-                                client_id, remote_name
-                            );
-                            match Self::git_fetch(
-                                path,
-                                remote_name,
-                                username.as_deref(),
-                                password.as_deref(),
-                            ) {
-                                Ok(_) => {
-                                    info!("Git client {} fetch successful", client_id);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} fetch failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_status" => {
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} getting status", client_id);
-                            match Self::git_status(path) {
-                                Ok(status_text) => {
-                                    info!("Git client {} status: {}", client_id, status_text);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} status failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_list_branches" => {
-                        let include_remote = data
-                            .get("remote")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} listing branches", client_id);
-                            match Self::git_list_branches(path, include_remote) {
-                                Ok(branches) => {
-                                    info!(
-                                        "Git client {} branches: {}",
-                                        client_id,
-                                        branches.join(", ")
-                                    );
-                                }
-                                Err(e) => {
-                                    error!("Git client {} list branches failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_log" => {
-                        let max_count =
-                            data.get("max_count").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} getting log (max {})", client_id, max_count);
-                            match Self::git_log(path, max_count) {
-                                Ok(log_text) => {
-                                    info!("Git client {} log retrieved", client_id);
-                                    debug!("Log:\n{}", log_text);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} log failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_pull" => {
-                        let remote_name = data
-                            .get("remote")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("origin");
-                        let branch = data.get("branch").and_then(|v| v.as_str());
-
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} pulling from {}", client_id, remote_name);
-                            match Self::git_pull(
-                                path,
-                                remote_name,
-                                branch,
-                                username.as_deref(),
-                                password.as_deref(),
-                            ) {
-                                Ok(result) => {
-                                    info!("Git client {} pull: {}", client_id, result);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} pull failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_push" => {
-                        let remote_name = data
-                            .get("remote")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("origin");
-                        let branch = data.get("branch").and_then(|v| v.as_str());
-
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} pushing to {}", client_id, remote_name);
-                            match Self::git_push(
-                                path,
-                                remote_name,
-                                branch,
-                                username.as_deref(),
-                                password.as_deref(),
-                            ) {
-                                Ok(result) => {
-                                    info!("Git client {} push: {}", client_id, result);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} push failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_checkout" => {
-                        let target = data
-                            .get("target")
-                            .and_then(|v| v.as_str())
-                            .context("Missing 'target' field")?;
-                        let create = data
-                            .get("create")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} checking out {}", client_id, target);
-                            match Self::git_checkout(path, target, create) {
-                                Ok(result) => {
-                                    info!("Git client {} checkout: {}", client_id, result);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} checkout failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_delete_branch" => {
-                        let branch = data
-                            .get("branch")
-                            .and_then(|v| v.as_str())
-                            .context("Missing 'branch' field")?;
-                        let force = data.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let remote = data.get("remote").and_then(|v| v.as_str());
-
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} deleting branch {}", client_id, branch);
-                            match Self::git_delete_branch(
-                                path,
-                                branch,
-                                force,
-                                remote,
-                                username.as_deref(),
-                                password.as_deref(),
-                            ) {
-                                Ok(result) => {
-                                    info!("Git client {} delete branch: {}", client_id, result);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} delete branch failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_list_tags" => {
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} listing tags", client_id);
-                            match Self::git_list_tags(path) {
-                                Ok(tags) => {
-                                    info!("Git client {} tags: {}", client_id, tags);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} list tags failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_create_tag" => {
-                        let tag_name = data
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .context("Missing 'name' field")?;
-                        let target = data.get("target").and_then(|v| v.as_str());
-                        let message = data.get("message").and_then(|v| v.as_str());
-
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} creating tag {}", client_id, tag_name);
-                            match Self::git_create_tag(path, tag_name, target, message) {
-                                Ok(result) => {
-                                    info!("Git client {} create tag: {}", client_id, result);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} create tag failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    "git_diff" => {
-                        let target = data.get("target").and_then(|v| v.as_str());
-                        let staged = data
-                            .get("staged")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false);
-
-                        if let Some(ref path) = repo_path {
-                            info!("Git client {} getting diff", client_id);
-                            match Self::git_diff(path, target, staged) {
-                                Ok(diff_text) => {
-                                    info!("Git client {} diff: {}", client_id, diff_text);
-                                }
-                                Err(e) => {
-                                    error!("Git client {} diff failed: {}", client_id, e);
-                                }
-                            }
-                        }
-                    }
-                    _ => {
-                        debug!("Unhandled Git action: {}", name);
-                    }
-                }
-            }
-            crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
+    ) -> Result<Applied> {
+        let (name, data) = match protocol
+            .execute_action(action.clone())
+            .map_err(|e| anyhow::Error::new(RejectedAction(e.to_string())))?
+        {
+            ClientActionResult::Custom { name, data } => (name, data),
+            ClientActionResult::Disconnect => {
                 info!("Git client {} disconnecting", client_id);
                 app_state
                     .update_client_status(client_id, ClientStatus::Disconnected)
                     .await;
                 let _ = status_tx.send("__UPDATE_UI__".to_string());
+                return Ok(Applied::Disconnect);
             }
-            _ => {}
+            ClientActionResult::WaitForMore => return Ok(Applied::Ran("wait_for_more".into())),
+            ClientActionResult::NoAction => return Ok(Applied::Ran("no_action".into())),
+            ClientActionResult::SendData(_) => {
+                return Ok(Applied::Ran(
+                    "send_data has no meaning for a Git client (git2 owns any socket)".into(),
+                ))
+            }
+            ClientActionResult::Multiple(_) => {
+                return Ok(Applied::Ran(
+                    "multiple results are not produced by the Git client".into(),
+                ))
+            }
+        };
+
+        // Copy the session out; git2 is synchronous, so nothing awaits while we hold it.
+        let (repo_path, username, password) = {
+            let guard = session.lock().await;
+            (
+                guard.repo_path.clone(),
+                guard.username.clone(),
+                guard.password.clone(),
+            )
+        };
+
+        let op_status_tx = status_tx.clone();
+        let op_name = name.clone();
+        let (detail, new_repo_path) = tokio::task::spawn_blocking(move || {
+            Self::run_git_operation(
+                &op_name,
+                &data,
+                repo_path,
+                username.as_deref(),
+                password.as_deref(),
+                client_id,
+                &op_status_tx,
+            )
+        })
+        .await
+        .context("Git operation task panicked")??;
+
+        if let Some(path) = new_repo_path {
+            session.lock().await.repo_path = Some(path);
         }
 
-        Ok(())
+        Ok(Applied::Ran(detail))
+    }
+
+    /// The blocking half of [`Self::execute_git_action`]: one git2 operation.
+    ///
+    /// Returns the human-readable detail of what happened, plus the repository path when
+    /// the operation established one (`git_clone`).
+    fn run_git_operation(
+        name: &str,
+        data: &serde_json::Value,
+        repo_path: Option<PathBuf>,
+        username: Option<&str>,
+        password: Option<&str>,
+        client_id: ClientId,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<(String, Option<PathBuf>)> {
+        // Every verb but `git_clone` needs an open repository. This used to be a silent
+        // `if let Some(..)` that did nothing when no repository was open, so a model (or
+        // an operator) got success-shaped silence for an operation that never ran.
+        let require_repo = || -> Result<&PathBuf> {
+            repo_path.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{name} needs an open repository: this client has none (clone one with \
+                     git_clone, or point remote_addr at a local repository)"
+                )
+            })
+        };
+
+        match name {
+            "git_clone" => {
+                let url = data
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .context("Missing url")?;
+                let path = data
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .context("Missing path")?;
+
+                info!("Git client {} cloning {} to {}", client_id, url, path);
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Git client {} cloning {} to {}",
+                    client_id, url, path
+                ));
+
+                Self::git_clone(url, path, username, password)
+                    .with_context(|| format!("clone of {url} failed"))?;
+                info!("Git client {} clone successful", client_id);
+                let _ = status_tx.send(format!(
+                    "[CLIENT] Git client {} clone successful",
+                    client_id
+                ));
+                Ok((
+                    format!("git_clone {url} -> {path}"),
+                    Some(PathBuf::from(path)),
+                ))
+            }
+            "git_fetch" => {
+                let remote_name = data
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("origin");
+                let path = require_repo()?;
+
+                info!(
+                    "Git client {} fetching from remote {}",
+                    client_id, remote_name
+                );
+                Self::git_fetch(path, remote_name, username, password)
+                    .with_context(|| format!("fetch from {remote_name} failed"))?;
+                Ok((format!("git_fetch from '{remote_name}'"), None))
+            }
+            "git_status" => {
+                let path = require_repo()?;
+                info!("Git client {} getting status", client_id);
+                let status_text = Self::git_status(path).context("status failed")?;
+                info!("Git client {} status: {}", client_id, status_text);
+                Ok((
+                    format!(
+                        "git_status: {}",
+                        if status_text.trim().is_empty() {
+                            "clean working tree".to_string()
+                        } else {
+                            status_text.trim().replace('\n', "; ")
+                        }
+                    ),
+                    None,
+                ))
+            }
+            "git_list_branches" => {
+                let include_remote = data
+                    .get("remote")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let path = require_repo()?;
+
+                info!("Git client {} listing branches", client_id);
+                let branches = Self::git_list_branches(path, include_remote)
+                    .context("list branches failed")?;
+                info!("Git client {} branches: {}", client_id, branches.join(", "));
+                Ok((format!("git_list_branches: {}", branches.join(", ")), None))
+            }
+            "git_log" => {
+                let max_count =
+                    data.get("max_count").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
+                let path = require_repo()?;
+
+                info!("Git client {} getting log (max {})", client_id, max_count);
+                let log_text = Self::git_log(path, max_count).context("log failed")?;
+                info!("Git client {} log retrieved", client_id);
+                debug!("Log:\n{}", log_text);
+                Ok((
+                    format!("git_log: {} line(s)", log_text.lines().count()),
+                    None,
+                ))
+            }
+            "git_pull" => {
+                let remote_name = data
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("origin");
+                let branch = data.get("branch").and_then(|v| v.as_str());
+                let path = require_repo()?;
+
+                info!("Git client {} pulling from {}", client_id, remote_name);
+                let result = Self::git_pull(path, remote_name, branch, username, password)
+                    .with_context(|| format!("pull from {remote_name} failed"))?;
+                info!("Git client {} pull: {}", client_id, result);
+                Ok((format!("git_pull: {result}"), None))
+            }
+            "git_push" => {
+                let remote_name = data
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("origin");
+                let branch = data.get("branch").and_then(|v| v.as_str());
+                let path = require_repo()?;
+
+                info!("Git client {} pushing to {}", client_id, remote_name);
+                let result = Self::git_push(path, remote_name, branch, username, password)
+                    .with_context(|| format!("push to {remote_name} failed"))?;
+                info!("Git client {} push: {}", client_id, result);
+                Ok((format!("git_push: {result}"), None))
+            }
+            "git_checkout" => {
+                let target = data
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'target' field")?;
+                let create = data
+                    .get("create")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let path = require_repo()?;
+
+                info!("Git client {} checking out {}", client_id, target);
+                let result = Self::git_checkout(path, target, create)
+                    .with_context(|| format!("checkout of {target} failed"))?;
+                info!("Git client {} checkout: {}", client_id, result);
+                Ok((format!("git_checkout: {result}"), None))
+            }
+            "git_delete_branch" => {
+                let branch = data
+                    .get("branch")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'branch' field")?;
+                let force = data.get("force").and_then(|v| v.as_bool()).unwrap_or(false);
+                let remote = data.get("remote").and_then(|v| v.as_str());
+                let path = require_repo()?;
+
+                info!("Git client {} deleting branch {}", client_id, branch);
+                let result =
+                    Self::git_delete_branch(path, branch, force, remote, username, password)
+                        .with_context(|| format!("delete of branch {branch} failed"))?;
+                info!("Git client {} delete branch: {}", client_id, result);
+                Ok((format!("git_delete_branch: {result}"), None))
+            }
+            "git_list_tags" => {
+                let path = require_repo()?;
+                info!("Git client {} listing tags", client_id);
+                let tags = Self::git_list_tags(path).context("list tags failed")?;
+                info!("Git client {} tags: {}", client_id, tags);
+                Ok((format!("git_list_tags: {tags}"), None))
+            }
+            "git_create_tag" => {
+                let tag_name = data
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'name' field")?;
+                let target = data.get("target").and_then(|v| v.as_str());
+                let message = data.get("message").and_then(|v| v.as_str());
+                let path = require_repo()?;
+
+                info!("Git client {} creating tag {}", client_id, tag_name);
+                let result = Self::git_create_tag(path, tag_name, target, message)
+                    .with_context(|| format!("creation of tag {tag_name} failed"))?;
+                info!("Git client {} create tag: {}", client_id, result);
+                Ok((format!("git_create_tag: {result}"), None))
+            }
+            "git_diff" => {
+                let target = data.get("target").and_then(|v| v.as_str());
+                let staged = data
+                    .get("staged")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let path = require_repo()?;
+
+                info!("Git client {} getting diff", client_id);
+                let diff_text = Self::git_diff(path, target, staged).context("diff failed")?;
+                info!("Git client {} diff: {}", client_id, diff_text);
+                Ok((
+                    format!("git_diff: {} byte(s) of diff", diff_text.len()),
+                    None,
+                ))
+            }
+            other => {
+                debug!("Unhandled Git action: {}", other);
+                Ok((
+                    format!("custom result '{other}' is not handled by the Git client"),
+                    None,
+                ))
+            }
+        }
     }
 
     /// Clone a Git repository
@@ -915,3 +1073,17 @@ impl GitClient {
         }
     }
 }
+
+/// An action the Git protocol itself refused (unknown type, missing field), as opposed
+/// to a git2 operation that ran and failed. The injected-command loop maps the first to
+/// `ClientSendOutcome::Rejected` and the second to an error.
+#[derive(Debug)]
+struct RejectedAction(String);
+
+impl std::fmt::Display for RejectedAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RejectedAction {}

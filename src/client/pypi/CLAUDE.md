@@ -256,3 +256,37 @@ Target: < 5 LLM calls per test suite
 - [PEP 503: Simple Repository API](https://peps.python.org/pep-0503/)
 - [PEP 691: JSON-based Simple API](https://peps.python.org/pep-0691/)
 - [Python Packaging User Guide](https://packaging.python.org/)
+
+## Injected commands (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running PyPI client and gets back a truthful `ClientSendOutcome`. See `src/client/command_support.rs` and `tests/client/pypi/command_channel_test.rs`.
+
+- `command_support::register_command_channel` runs **before** anything that can block for a
+  human (PyPI raises no connected event today, so the channel is registered as soon as the client is marked `Connected`), so `[ send ]` works even while an event is parked on a manual routing
+  rule. This is the whole point of the feature: registering late means the rail reads
+  "no command channel" for the length of the park.
+- The command loop **replaced the old 5-second `get_client().is_none()` idle poll**. When the
+  client is removed its handle is dropped, the channel closes, `recv()` returns `None` and the
+  loop exits at once — the poll was strictly slower at the same job. The loop is registered
+  with `register_client_task`, and it drops the handle on every exit path.
+- One `apply_action` is the only place actions become traffic, shared by the command loop and any future LLM dispatch. There is
+  no second wire path for injected actions to drift from.
+
+### Outcome semantics — what `[ send ]` reports, and why
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | **Never.** `reqwest` does not report how many bytes reached the wire, and inventing a number would be a lie |
+| `Executed { detail }` | The operation ran to completion; `detail` names it. `search_packages` is the interesting case: PyPI retired its search API, so the action raises `pypi_search_results` **without contacting the index at all** — its `detail` says so, and the test asserts no bytes moved. Reporting `Sent` there would be the exact dishonesty the outcome enum exists to prevent |
+| `Rejected { error }` | `execute_action` refused the JSON (unknown verb, missing field) |
+| `Disconnected` | `disconnect`; the loop ends, the handle is dropped and the client goes to `Disconnected` |
+| `Err(...)` | The request itself failed (transport error, non-2xx). The caller sees the error rather than a false success |
+
+**The known cost of awaiting.** `apply_action` awaits the whole operation, *including the
+response event it raises*. That is what makes the outcome truthful, but it also means the
+command loop is busy until that event has been handled — with a `*` -> manual rule, until the
+human answers it or the intercept times out (default 300s). Injected sends queue behind it on
+the bounded channel, which surfaces as "client busy" backpressure. `send_to_client`'s own
+timeout protects the caller either way.
+
+**Not wired:** `get_package_info` / `search_packages` / `download_package` / `list_package_files` **discard** the actions the LLM returns (`actions: _`), and `connect_with_llm_actions` never raises `pypi_connected`. Both predate the command channel and are untouched by it; today the injected-command path is the *only* way a PyPI action reaches the wire.

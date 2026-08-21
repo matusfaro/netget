@@ -199,3 +199,17 @@ docker exec netget-test-mosquitto mosquitto_sub -h localhost -t test -v
 - Mosquitto Docker: https://hub.docker.com/_/eclipse-mosquitto
 - MQTT 3.1.1 spec: https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/mqtt-v3.1.1.html
 - rumqttc testing examples: https://github.com/bytebeamio/rumqtt/tree/main/rumqttc/examples
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+Unlike `e2e_test.rs`, this needs **no Docker and no Mosquitto**: the peer is a NetGet MQTT broker
+started in-process with static handlers (`mqtt_connect` → `mqtt_connack` return_code 0, `*` → no
+actions), on port 0. **LLM calls: 0** — the client's LLM URL is `http://127.0.0.1:1` so its
+`mqtt_connected` call fails, which is part of what the test verifies the loop survives.
+
+Asserts: the command handle exists before anything is sent (registration happens before the
+event loop task even starts); an injected `publish` returns `Executed` whose detail names the
+packet — **never `Sent`**, because rumqttc reports no byte count; the topic really reaches the
+broker (its access log); an unknown action is `Rejected`; `disconnect` returns `Disconnected` and
+leaves the client `Disconnected` with no handle (not `Error`, which is what the poll error would
+otherwise have been read as).

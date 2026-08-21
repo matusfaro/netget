@@ -242,3 +242,30 @@ LLM receives fault as:
 3. **Timeout Control**: Per-call timeout configuration
 4. **Connection Pooling**: Reuse HTTP connections (reqwest::Client stored in protocol_data)
 5. **Multicall Extension**: Batch multiple calls in one request (system.multicall)
+
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running XML-RPC client. The handle is
+registered **before** the `xmlrpc_connected` LLM call — which this client awaits inline in
+`connect()` — because a dashboard-created client defaults to a `*` → manual rule and that
+call can park for minutes waiting for a human.
+
+The old "poll `get_client()` every 5 s" task is gone: the command loop is now this client's
+long-lived task and ends when the client is removed or an injected `disconnect` arrives.
+The connected-event handler, the model's follow-up calls and the command loop all go
+through one `apply_action`, so the `xmlrpc_call` decoding exists exactly once.
+
+**Outcome semantics — `Executed`, never `Sent`.** The `xmlrpc` crate owns the HTTP socket
+(on the blocking pool) and reports no byte count, so `Sent { bytes_sent }` would be
+invented. The command loop **awaits** the call and reports
+`Executed { detail: "xmlrpc_call 'system.listMethods' with 0 param(s): server returned a result" }`
+or `... server returned fault: <faultString>` — a `<fault>` is a real answer from the
+server, not a transport failure, and is reported as such rather than as a success. A
+transport failure is an `Err`, an unknown action name is `Rejected { error }`, and
+`disconnect` is `Disconnected`.
+
+`xmlrpc_response_received` still fires; for an injected call it is raised from its own
+registered task (`Dispatch::Deferred`) so a manual rule parking that LLM call cannot wedge
+the command loop. `call_method` is unchanged for callers; it is now `perform_call` (network
+only) followed by `notify_call_result` (the LLM event plus the model's follow-up calls).

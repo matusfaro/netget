@@ -142,3 +142,59 @@ See `tests/client/amqp/CLAUDE.md` for testing strategy.
 - [lapin Documentation](https://docs.rs/lapin/)
 - [RabbitMQ Tutorials](https://www.rabbitmq.com/getstarted.html)
 - [AMQP 0.9.1 Spec](https://www.rabbitmq.com/resources/specs/amqp0-9-1.pdf)
+
+---
+
+# Corrections and the command channel (August 2026)
+
+**Most of the "Available Actions" list above is aspirational and always was.** The client's real
+vocabulary is what `actions.rs` declares and `execute_action` accepts: `open_channel`, `publish`,
+`disconnect`, `wait_for_more`. There is no `declare_queue`, `declare_exchange`, `bind_queue`,
+`start_consumer`, `ack_message` or `nack_message` — and no `publish_message`; the publish verb is
+called `publish`.
+
+## What the connection loop actually does now
+
+- **The connected-event actions are executed.** They used to be parsed, logged and thrown away
+  (`Ok(_result) => info!("AMQP client ready after connect event")`), so `open_channel` on
+  `amqp_connected` — the shape this protocol's own static-mode startup example shows — did
+  nothing at all.
+- **`Connection::run()` is gone.** It is a *blocking* call and was made from inside a tokio task:
+  it parked a runtime worker for the lifetime of every AMQP client and never noticed the
+  connection closing either. A supervisor task now polls `conn.status().connected()` and the
+  client's presence in `AppState`, and runs the disconnect path when either goes.
+- **Opened channels are held** in `AmqpSession.channels`. A `lapin::Channel` closes when its
+  handle drops, so an `open_channel` that dropped the handle opened and shut the channel in one
+  breath.
+
+## Command channel — the dashboard's `[ send ]`
+
+Adopted, archetype **(a)**: the connection lives in an `Arc<AmqpSession>` that both the
+connected-event path and the command loop hold. This client had no loop at all before, so the
+command loop is new; what it executes is not — every action goes through the protocol's own
+`execute_action` and then the shared `apply_action`.
+
+The channel is registered **before** the `amqp_connected` LLM call, which a manual `*` rule parks
+until a human answers; `tests/client/amqp/command_channel_test.rs` guards that with
+`wait_for_client_handle` before it sends anything.
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | the method completed on the wire: `Channel.Open/Open-Ok completed; channel 1 is open`, or `Basic.Publish of 19 bytes to exchange "" routing key "tasks" on channel 1` |
+| `Rejected { error }` | `execute_action` refused it (unknown name, missing `routing_key`/`payload`) |
+| `Disconnected` | `disconnect`; `Connection.Close` was sent |
+| `Err(..)` | lapin returned an error (broker gone, channel refused) |
+
+**There is deliberately no `Sent { bytes_sent }`.** `Channel.Open` is a real round trip — lapin
+resolves it only when `Open-Ok` comes back — and `basic_publish().await` is what puts the method,
+content-header and body frames on the socket. But lapin frames and writes them internally and
+reports no byte count, so there is no honest number for `bytes_sent`.
+
+`publish` opens a channel on demand if none is open yet (the detail says so), and otherwise uses
+the most recently opened one. Publisher confirms are not enabled, so the returned
+`PublisherConfirm` is dropped.
+
+## Still missing
+
+Consuming (`basic_consume`), queue/exchange declaration and binding, and acks — so
+`amqp_message_received` and `amqp_channel_opened` are declared events that nothing ever emits.

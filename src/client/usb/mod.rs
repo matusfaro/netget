@@ -40,6 +40,21 @@ struct ClientData {
     memory: String,
 }
 
+/// What applying one action to the claimed USB interface actually did.
+///
+/// `Sent` is reported only for an OUT transfer whose completion status came back
+/// `Ok` — those bytes really reached the device. Everything else (an IN transfer,
+/// a no-op, a failed transfer) reports `Executed` with a specific reason, because
+/// nothing left the host.
+pub enum UsbApplied {
+    /// This many payload bytes were delivered to the device.
+    Sent(usize),
+    /// The action ran but wrote nothing; the string says what it did.
+    Executed(String),
+    /// The device was detached.
+    Disconnected,
+}
+
 /// USB device information parsed from remote_addr or instruction
 #[derive(Debug, Clone)]
 struct UsbDeviceInfo {
@@ -227,6 +242,36 @@ impl UsbClient {
 
         // Send initial connected event
         let protocol = Arc::new(UsbClientProtocol::new());
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the connected-event LLM call below: a dashboard-created
+        // client defaults to a `*` -> manual rule, so that call can park for minutes
+        // waiting for a human, and the operator must be able to reach the device while
+        // it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn({
+            let protocol = protocol.clone();
+            let interface = interface.clone();
+            let app_state = app_state.clone();
+            let llm_client = llm_client.clone();
+            let status_tx = status_tx.clone();
+            let client_data = client_data.clone();
+            async move {
+                Self::command_loop(
+                    command_rx,
+                    protocol,
+                    interface,
+                    client_id,
+                    app_state,
+                    llm_client,
+                    status_tx,
+                    client_data,
+                )
+                .await;
+            }
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
         let event = Event::new(
             &USB_DEVICE_OPENED_EVENT,
             serde_json::json!({
@@ -279,25 +324,97 @@ impl UsbClient {
             }
         }
 
-        // Spawn monitoring task (USB devices don't actively send data like sockets)
-        // The LLM will initiate transfers via actions
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            // Keep client alive - cleanup handled on disconnect
-            loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
+        // The command loop is now the task that keeps this client alive: USB devices
+        // don't push data at us, so there is nothing else to wait on, and an idle
+        // `sleep(60)` loop kept the client alive while being unable to do anything.
+        // It ends when the channel closes (the client was removed) or an injected
+        // `detach_device` disconnects.
 
         Ok(fake_addr)
     }
 
+    /// Drain injected commands until the channel closes (the client was removed,
+    /// which drops the handle) or an injected `detach_device` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this
+    /// client: it owns no socket, and every USB verb yields a
+    /// `ClientActionResult::Custom` that only nusb can carry out. So the action goes
+    /// through [`Self::apply_usb_result`] — the exact function the LLM path uses,
+    /// including the follow-up events — and the outcome is recorded and replied the
+    /// way the generic arm does it.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        protocol: Arc<UsbClientProtocol>,
+        interface: nusb::Interface,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+        client_data: Arc<Mutex<ClientData>>,
+    ) {
+        use crate::llm::actions::client_trait::Client;
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+
+            // `execute_action` is the only step that can fail before the device is
+            // touched, so its error is a rejection (unknown verb / bad params) rather
+            // than a transfer failure.
+            let outcome = match protocol.as_ref().execute_action(action.clone()) {
+                Err(e) => ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                },
+                Ok(result) => match Self::apply_usb_result(
+                    result,
+                    protocol.clone(),
+                    &interface,
+                    client_id,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                    &client_data,
+                )
+                .await
+                {
+                    UsbApplied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                    UsbApplied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                    UsbApplied::Disconnected => ClientSendOutcome::Disconnected,
+                },
+            };
+
+            let outcome_json = serde_json::to_value(&outcome).unwrap_or(serde_json::Value::Null);
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, ClientSendOutcome::Disconnected);
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, Ok(outcome));
+
+            if disconnect {
+                break;
+            }
+        }
+
+        // Every exit path lands here: drop the command handle so the dashboard stops
+        // offering [ send ] on a detached device and a late send fails fast.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
     /// Execute USB actions from LLM
+    #[allow(clippy::too_many_arguments)]
     async fn execute_actions(
         actions: Vec<serde_json::Value>,
         protocol: Arc<UsbClientProtocol>,
@@ -312,10 +429,48 @@ impl UsbClient {
 
         for action in actions {
             match protocol.as_ref().execute_action(action) {
-                Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
-                    name,
-                    data,
-                }) => {
+                Ok(result) => {
+                    if matches!(
+                        Self::apply_usb_result(
+                            result,
+                            protocol.clone(),
+                            interface,
+                            client_id,
+                            app_state,
+                            llm_client,
+                            status_tx,
+                            client_data,
+                        )
+                        .await,
+                        UsbApplied::Disconnected
+                    ) {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    error!("USB client {} action error: {}", client_id, e);
+                }
+            }
+        }
+    }
+
+    /// Carry one already-decoded action out against the claimed interface. Shared by
+    /// the connected-event path, the follow-up event path and injected commands, so
+    /// the nusb transfer calls exist exactly once.
+    #[allow(clippy::too_many_arguments)]
+    async fn apply_usb_result(
+        action_result: crate::llm::actions::client_trait::ClientActionResult,
+        protocol: Arc<UsbClientProtocol>,
+        interface: &nusb::Interface,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+        client_data: &Arc<Mutex<ClientData>>,
+    ) -> UsbApplied {
+        {
+            match action_result {
+                crate::llm::actions::client_trait::ClientActionResult::Custom { name, data } => {
                     match name.as_str() {
                         "control_transfer" => {
                             let request_type = data["request_type"].as_u64().unwrap() as u8;
@@ -337,9 +492,15 @@ impl UsbClient {
                                 client_id, request_type, request, value, index
                             );
 
-                            // Execute control transfer
+                            // Execute control transfer. The completion's `status` is
+                            // checked on BOTH directions: the OUT branch used to
+                            // `let _ =` the completion, so a stalled or refused
+                            // control-OUT was indistinguishable from a delivered one
+                            // and could not be reported truthfully.
                             let interface_clone = interface.clone();
-                            let result = if out_data.is_empty() && length > 0 {
+                            let is_in = out_data.is_empty() && length > 0;
+                            let out_len = out_data.len();
+                            let result: std::result::Result<Vec<u8>, String> = if is_in {
                                 // IN transfer
                                 let control_in = ControlIn {
                                     control_type: ControlType::Vendor,
@@ -349,8 +510,11 @@ impl UsbClient {
                                     index,
                                     length: length as u16,
                                 };
-                                let result = interface_clone.control_in(control_in).await;
-                                Ok::<Vec<u8>, nusb::Error>(result.data.to_vec())
+                                let completion = interface_clone.control_in(control_in).await;
+                                match completion.status {
+                                    Ok(()) => Ok(completion.data.to_vec()),
+                                    Err(e) => Err(e.to_string()),
+                                }
                             } else {
                                 // OUT transfer
                                 let control_out = ControlOut {
@@ -361,16 +525,19 @@ impl UsbClient {
                                     index,
                                     data: &out_data,
                                 };
-                                let _ = interface_clone.control_out(control_out).await;
-                                Ok(Vec::new())
+                                let completion = interface_clone.control_out(control_out).await;
+                                match completion.status {
+                                    Ok(()) => Ok(Vec::new()),
+                                    Err(e) => Err(e.to_string()),
+                                }
                             };
 
                             match result {
                                 Ok(response_data) if !response_data.is_empty() => {
+                                    let received = response_data.len();
                                     debug!(
                                         "USB client {} control transfer received {} bytes",
-                                        client_id,
-                                        response_data.len()
+                                        client_id, received
                                     );
 
                                     // Send event to LLM
@@ -378,13 +545,17 @@ impl UsbClient {
                                         &USB_CONTROL_RESPONSE_EVENT,
                                         serde_json::json!({
                                             "data_hex": hex::encode(&response_data),
-                                            "data_length": response_data.len(),
+                                            "data_length": received,
                                         }),
                                     );
 
                                     if let Some(instruction) =
                                         app_state.get_instruction_for_client(client_id).await
                                     {
+                                        // Copy the memory out before the call: the command
+                                        // loop shares this mutex and a guard held across an
+                                        // LLM round-trip would stall it.
+                                        let memory = client_data.lock().await.memory.clone();
                                         if let Ok(ClientLlmResult {
                                             actions: new_actions,
                                             memory_updates,
@@ -393,7 +564,7 @@ impl UsbClient {
                                             app_state,
                                             client_id.to_string(),
                                             &instruction,
-                                            &client_data.lock().await.memory,
+                                            &memory,
                                             Some(&event),
                                             protocol.as_ref(),
                                             status_tx,
@@ -416,15 +587,28 @@ impl UsbClient {
                                             .await;
                                         }
                                     }
+                                    UsbApplied::Executed(format!(
+                                        "control_transfer IN: {received} bytes received"
+                                    ))
                                 }
                                 Ok(_) => {
                                     trace!("USB client {} control transfer completed", client_id);
+                                    if is_in {
+                                        UsbApplied::Executed(
+                                            "control_transfer IN: 0 bytes received".to_string(),
+                                        )
+                                    } else {
+                                        // A control-OUT whose completion status is Ok really
+                                        // put `out_len` payload bytes on the USB wire.
+                                        UsbApplied::Sent(out_len)
+                                    }
                                 }
                                 Err(e) => {
                                     error!(
                                         "USB client {} control transfer error: {}",
                                         client_id, e
                                     );
+                                    UsbApplied::Executed(format!("control_transfer failed: {e}"))
                                 }
                             }
                         }
@@ -447,14 +631,21 @@ impl UsbClient {
                             );
 
                             let interface_clone = interface.clone();
+                            let out_len = out_data.len();
                             let result = interface_clone.bulk_out(endpoint, out_data).await;
 
                             match result.status {
                                 Ok(_) => {
                                     trace!("USB client {} bulk OUT completed", client_id);
+                                    // The transfer completed, so these bytes really
+                                    // reached the device.
+                                    UsbApplied::Sent(out_len)
                                 }
                                 Err(e) => {
                                     error!("USB client {} bulk OUT error: {}", client_id, e);
+                                    UsbApplied::Executed(format!(
+                                        "bulk_transfer_out ep=0x{endpoint:02x} failed: {e}"
+                                    ))
                                 }
                             }
                         }
@@ -474,11 +665,11 @@ impl UsbClient {
                             let result = interface_clone.bulk_in(endpoint, buffer).await;
 
                             let response_data = result.data.to_vec();
+                            let received = response_data.len();
                             if !response_data.is_empty() {
                                 debug!(
                                     "USB client {} bulk IN received {} bytes",
-                                    client_id,
-                                    response_data.len()
+                                    client_id, received
                                 );
 
                                 // Send event to LLM
@@ -494,6 +685,10 @@ impl UsbClient {
                                 if let Some(instruction) =
                                     app_state.get_instruction_for_client(client_id).await
                                 {
+                                    // Copy the memory out before the call: the command
+                                    // loop shares this mutex and a guard held across an
+                                    // LLM round-trip would stall it.
+                                    let memory = client_data.lock().await.memory.clone();
                                     if let Ok(ClientLlmResult {
                                         actions: new_actions,
                                         memory_updates,
@@ -502,7 +697,7 @@ impl UsbClient {
                                         app_state,
                                         client_id.to_string(),
                                         &instruction,
-                                        &client_data.lock().await.memory,
+                                        &memory,
                                         Some(&event),
                                         protocol.as_ref(),
                                         status_tx,
@@ -526,6 +721,9 @@ impl UsbClient {
                                     }
                                 }
                             }
+                            UsbApplied::Executed(format!(
+                                "bulk_transfer_in ep=0x{endpoint:02x}: {received} bytes received"
+                            ))
                         }
                         "interrupt_transfer_in" => {
                             let endpoint = data["endpoint"].as_u64().unwrap() as u8;
@@ -543,11 +741,11 @@ impl UsbClient {
                             let result = interface_clone.interrupt_in(endpoint, buffer).await;
 
                             let response_data = result.data.to_vec();
+                            let received = response_data.len();
                             if !response_data.is_empty() {
                                 debug!(
                                     "USB client {} interrupt IN received {} bytes",
-                                    client_id,
-                                    response_data.len()
+                                    client_id, received
                                 );
 
                                 // Send event to LLM
@@ -563,6 +761,10 @@ impl UsbClient {
                                 if let Some(instruction) =
                                     app_state.get_instruction_for_client(client_id).await
                                 {
+                                    // Copy the memory out before the call: the command
+                                    // loop shares this mutex and a guard held across an
+                                    // LLM round-trip would stall it.
+                                    let memory = client_data.lock().await.memory.clone();
                                     if let Ok(ClientLlmResult {
                                         actions: new_actions,
                                         memory_updates,
@@ -571,7 +773,7 @@ impl UsbClient {
                                         app_state,
                                         client_id.to_string(),
                                         &instruction,
-                                        &client_data.lock().await.memory,
+                                        &memory,
                                         Some(&event),
                                         protocol.as_ref(),
                                         status_tx,
@@ -595,6 +797,9 @@ impl UsbClient {
                                     }
                                 }
                             }
+                            UsbApplied::Executed(format!(
+                                "interrupt_transfer_in ep=0x{endpoint:02x}: {received} bytes received"
+                            ))
                         }
                         "claim_interface" => {
                             let interface_num = data["interface_number"].as_u64().unwrap() as u8;
@@ -602,23 +807,33 @@ impl UsbClient {
                                 "USB client {} interface {} already claimed, skipping",
                                 client_id, interface_num
                             );
+                            UsbApplied::Executed(format!(
+                                "claim_interface {interface_num}: already claimed at connect"
+                            ))
                         }
                         _ => {
                             warn!("USB client {} unknown custom action: {}", client_id, name);
+                            UsbApplied::Executed(format!(
+                                "custom result '{name}' has no USB handler"
+                            ))
                         }
                     }
                 }
-                Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
                     info!("USB client {} disconnecting", client_id);
                     app_state
                         .update_client_status(client_id, ClientStatus::Disconnected)
                         .await;
+                    // Drop the command handle here rather than only in the command loop:
+                    // the LLM can detach too, and a handle left behind would offer
+                    // [ send ] into a detached device.
+                    app_state.remove_client_handle(client_id).await;
                     let _ = status_tx.send("__UPDATE_UI__".to_string());
-                    break;
+                    UsbApplied::Disconnected
                 }
-                Ok(_) => {}
-                Err(e) => {
-                    error!("USB client {} action error: {}", client_id, e);
+                other => {
+                    debug!("USB client {} unhandled action result", client_id);
+                    UsbApplied::Executed(format!("unhandled action result {other:?}"))
                 }
             }
         }

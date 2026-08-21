@@ -7,7 +7,7 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::client::mssql::actions::{
     MSSQL_CLIENT_CONNECTED_EVENT, MSSQL_CLIENT_ERROR_EVENT, MSSQL_CLIENT_QUERY_RESULT_EVENT,
 };
-use crate::llm::actions::client_trait::Client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
@@ -23,6 +23,26 @@ use tokio::net::TcpStream;
 use tokio::sync::{mpsc, Mutex};
 use tokio_util::compat::TokioAsyncWriteCompatExt;
 use tracing::{debug, error, info, trace};
+
+/// The live tiberius connection. Named because it appears in five signatures.
+type MssqlConn = TiberiusClient<tokio_util::compat::Compat<TcpStream>>;
+
+/// What one executed MSSQL action did, before any follow-up LLM call.
+///
+/// Splitting "run it" from "tell the model about it" is what lets the connected-event path
+/// and an injected dashboard command share the query path without the command loop having
+/// to block on a handler that may be parked for a human.
+enum MssqlApplied {
+    /// A query ran. `result` is the collected rows, or the server's error as text.
+    Query {
+        query: String,
+        result: std::result::Result<QueryResult, String>,
+    },
+    /// The action asked to end the session.
+    Disconnect,
+    /// The action ran but touched the connection in no way worth reporting.
+    Nothing(String),
+}
 
 /// MSSQL client that connects to an MSSQL/SQL Server
 pub struct MssqlClient;
@@ -63,6 +83,12 @@ impl MssqlClient {
         config.host(&host);
         config.port(port);
         config.trust_cert(); // For testing - accept self-signed certs
+                             // tiberius defaults to `EncryptionLevel::Required` whenever a TLS backend is
+                             // compiled in, and NetGet pulls tiberius with `native-tls`. NetGet's own MSSQL
+                             // server answers PRELOGIN with ENCRYPT_NOT_SUP, so with the default the client
+                             // negotiated `EncryptionLevel::On` and then tried a TLS handshake the server cannot
+                             // do - the two halves of this codebase could not talk to each other at all.
+        config.encryption(tiberius::EncryptionLevel::NotSupported);
 
         // Parse optional connection parameters
         if let Some(params_str) = config_params {
@@ -110,6 +136,24 @@ impl MssqlClient {
         let client_arc = Arc::new(Mutex::new(client));
         let client_for_connected = client_arc.clone();
 
+        // The dashboard's `[ send ]` channel, registered BEFORE the connected-event LLM call
+        // below. A dashboard-created client defaults to a `*` -> manual rule, so that call can
+        // park for minutes waiting for a human; registering after it would leave the rail
+        // reading "no command channel" for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let command_task = tokio::spawn(Self::command_loop(
+            client_arc.clone(),
+            command_rx,
+            client_id,
+            llm_client.clone(),
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state
+            .register_client_task(client_id, command_task)
+            .await;
+
         // Call LLM with mssql_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -154,21 +198,18 @@ impl MssqlClient {
             }
         }
 
-        // Note: Unlike Redis, MSSQL (via tiberius) is query-driven, not event-driven
-        // We don't spawn a read loop here - queries are executed on-demand when LLM requests them
-        // This is handled through subsequent LLM interactions where execute_query actions are sent
-
-        // For demonstration, we'll keep the connection alive but queries must be explicitly triggered
-        // Real usage would involve periodic LLM calls or a command loop
-
+        // MSSQL (via tiberius) is query-driven, not event-driven: there is no read loop,
+        // because nothing arrives that this client did not ask for. `command_loop` above is
+        // what holds the connection open and what makes queries reachable from outside an
+        // LLM round trip.
         info!("MSSQL client {} ready for queries", client_id);
 
         Ok(local_addr)
     }
 
-    /// Execute an action (internal helper)
+    /// Execute an action: run it against the connection, then tell the model what happened.
     fn execute_action_internal<'a>(
-        client: Arc<Mutex<TiberiusClient<tokio_util::compat::Compat<TcpStream>>>>,
+        client: Arc<Mutex<MssqlConn>>,
         action: serde_json::Value,
         client_id: ClientId,
         llm_client: &'a OllamaClient,
@@ -176,149 +217,277 @@ impl MssqlClient {
         status_tx: &'a mpsc::UnboundedSender<String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            let protocol = Arc::new(MssqlClientProtocol::new());
-
-            match protocol.execute_action(action)? {
-                crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }
-                    if name == "mssql_query" =>
-                {
-                    if let Some(query_str) = data.get("query").and_then(|v| v.as_str()) {
-                        debug!("MSSQL client {} executing query: {}", client_id, query_str);
-
-                        // Execute query and collect results (mutex held during query execution)
-                        let result_outcome = {
-                            let mut client_guard = client.lock().await;
-                            Self::execute_and_collect_query(&mut client_guard, query_str).await
-                        }; // Mutex released here
-
-                        // Process results or errors
-                        match result_outcome {
-                            Ok(result) => {
-                                debug!(
-                                    "MSSQL client {} received {} columns, {} rows",
-                                    client_id,
-                                    result.columns.len(),
-                                    result.rows.len()
-                                );
-
-                                // Call LLM with query result
-                                if let Some(instruction) =
-                                    app_state.get_instruction_for_client(client_id).await
-                                {
-                                    let event = Event::new(
-                                        &MSSQL_CLIENT_QUERY_RESULT_EVENT,
-                                        json!({
-                                            "columns": result.columns,
-                                            "rows": result.rows,
-                                            "rows_affected": result.rows_affected,
-                                        }),
-                                    );
-
-                                    let memory = app_state
-                                        .get_memory_for_client(client_id)
-                                        .await
-                                        .unwrap_or_default();
-
-                                    match call_llm_for_client(
-                                        llm_client,
-                                        app_state,
-                                        client_id.to_string(),
-                                        &instruction,
-                                        &memory,
-                                        Some(&event),
-                                        protocol.as_ref(),
-                                        status_tx,
-                                    )
-                                    .await
-                                    {
-                                        Ok(ClientLlmResult {
-                                            actions,
-                                            memory_updates,
-                                        }) => {
-                                            // Update memory
-                                            if let Some(mem) = memory_updates {
-                                                app_state
-                                                    .set_memory_for_client(client_id, mem)
-                                                    .await;
-                                            }
-
-                                            // Execute follow-up actions
-                                            for follow_action in actions {
-                                                if let Err(e) = Self::execute_action_internal(
-                                                    client.clone(),
-                                                    follow_action,
-                                                    client_id,
-                                                    llm_client,
-                                                    app_state,
-                                                    status_tx,
-                                                )
-                                                .await
-                                                {
-                                                    error!(
-                                                        "Failed to execute follow-up action: {}",
-                                                        e
-                                                    );
-                                                }
-                                            }
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                "LLM error for MSSQL client {}: {}",
-                                                client_id, e
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("MSSQL query error: {}", e);
-
-                                // Call LLM with error event
-                                if let Some(instruction) =
-                                    app_state.get_instruction_for_client(client_id).await
-                                {
-                                    let event = Event::new(
-                                        &MSSQL_CLIENT_ERROR_EVENT,
-                                        json!({
-                                            "error_number": 50000,
-                                            "message": e.to_string(),
-                                        }),
-                                    );
-
-                                    let _ = call_llm_for_client(
-                                        llm_client,
-                                        app_state,
-                                        client_id.to_string(),
-                                        &instruction,
-                                        &app_state
-                                            .get_memory_for_client(client_id)
-                                            .await
-                                            .unwrap_or_default(),
-                                        Some(&event),
-                                        protocol.as_ref(),
-                                        status_tx,
-                                    )
-                                    .await;
-                                }
-                            }
-                        }
-                    }
-                }
-                crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                    info!("MSSQL client {} disconnecting", client_id);
-                    app_state
-                        .update_client_status(client_id, ClientStatus::Disconnected)
-                        .await;
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
-                }
-                crate::llm::actions::client_trait::ClientActionResult::WaitForMore => {
-                    trace!("MSSQL client {} waiting for more data", client_id);
-                }
-                _ => {}
-            }
-
+            let applied = Self::apply_action(&client, action, client_id).await?;
+            Self::follow_up(applied, client, client_id, llm_client, app_state, status_tx).await;
             Ok(())
         })
+    }
+
+    /// Run one action against the live tiberius connection and report what it did.
+    ///
+    /// Shared by the connected-event path and by injected dashboard commands, so the query
+    /// path — and the `execute_action` validation in front of it — exists exactly once. It
+    /// deliberately makes no LLM call: [`Self::follow_up`] does that, and the command loop
+    /// spawns it rather than awaiting it.
+    async fn apply_action(
+        client: &Arc<Mutex<MssqlConn>>,
+        action: serde_json::Value,
+        client_id: ClientId,
+    ) -> Result<MssqlApplied> {
+        let protocol = MssqlClientProtocol::new();
+        match protocol.execute_action(action)? {
+            ClientActionResult::Custom { name, data } if name == "mssql_query" => {
+                let query = data
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .context("mssql_query carried no 'query' string")?
+                    .to_string();
+                debug!("MSSQL client {} executing query: {}", client_id, query);
+
+                // The mutex is held for the query only; it is never held across an LLM call.
+                let outcome = {
+                    let mut client_guard = client.lock().await;
+                    Self::execute_and_collect_query(&mut client_guard, &query).await
+                };
+                Ok(MssqlApplied::Query {
+                    query,
+                    result: outcome.map_err(|e| e.to_string()),
+                })
+            }
+            ClientActionResult::Disconnect => Ok(MssqlApplied::Disconnect),
+            ClientActionResult::WaitForMore => {
+                trace!("MSSQL client {} waiting for more data", client_id);
+                Ok(MssqlApplied::Nothing("wait_for_more".to_string()))
+            }
+            other => Ok(MssqlApplied::Nothing(format!(
+                "unsupported action result {other:?}"
+            ))),
+        }
+    }
+
+    /// Raise the event an applied action produced and execute whatever the handler answers.
+    async fn follow_up(
+        applied: MssqlApplied,
+        client: Arc<Mutex<MssqlConn>>,
+        client_id: ClientId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = Arc::new(MssqlClientProtocol::new());
+
+        let event = match applied {
+            MssqlApplied::Disconnect => {
+                info!("MSSQL client {} disconnecting", client_id);
+                // Stop offering [ send ] on a session that is going away.
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                return;
+            }
+            MssqlApplied::Nothing(detail) => {
+                trace!(
+                    "MSSQL client {} action produced nothing: {}",
+                    client_id,
+                    detail
+                );
+                return;
+            }
+            MssqlApplied::Query {
+                result: Ok(result), ..
+            } => {
+                debug!(
+                    "MSSQL client {} received {} columns, {} rows",
+                    client_id,
+                    result.columns.len(),
+                    result.rows.len()
+                );
+                Event::new(
+                    &MSSQL_CLIENT_QUERY_RESULT_EVENT,
+                    json!({
+                        "columns": result.columns,
+                        "rows": result.rows,
+                        "rows_affected": result.rows_affected,
+                    }),
+                )
+            }
+            MssqlApplied::Query {
+                result: Err(e),
+                query,
+            } => {
+                error!("MSSQL query error on '{}': {}", query, e);
+                Event::new(
+                    &MSSQL_CLIENT_ERROR_EVENT,
+                    json!({
+                        "error_number": 50000,
+                        "message": e,
+                    }),
+                )
+            }
+        };
+
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+                for follow_action in actions {
+                    if let Err(e) = Self::execute_action_internal(
+                        client.clone(),
+                        follow_action,
+                        client_id,
+                        llm_client,
+                        app_state,
+                        status_tx,
+                    )
+                    .await
+                    {
+                        error!("Failed to execute follow-up action: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                error!("LLM error for MSSQL client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    /// Drain injected commands (the dashboard's `[ send ]`) until the channel closes or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// This task is also what keeps the tiberius connection alive: before it existed the
+    /// only `Arc` to the connection was a local in `connect_with_llm_actions`, so the socket
+    /// was dropped the moment that function returned.
+    ///
+    /// Outcome semantics: tiberius owns the TDS framing, so there is no byte count this loop
+    /// can honestly claim. A query that ran reports `Executed` naming the row/column counts;
+    /// a query the server refused is an `Err`, never a quieter `Sent`.
+    async fn command_loop(
+        client: Arc<Mutex<MssqlConn>>,
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = MssqlClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let mut applied_for_follow_up = None;
+            let mut disconnect = false;
+
+            let outcome: Result<ClientSendOutcome> =
+                match Self::apply_action(&client, action.clone(), client_id).await {
+                    // `apply_action` only errors when the protocol rejected the action.
+                    Err(e) => Ok(ClientSendOutcome::Rejected {
+                        error: e.to_string(),
+                    }),
+                    Ok(MssqlApplied::Disconnect) => {
+                        disconnect = true;
+                        Ok(ClientSendOutcome::Disconnected)
+                    }
+                    Ok(MssqlApplied::Nothing(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                    Ok(MssqlApplied::Query {
+                        query,
+                        result: Err(e),
+                    }) => Err(anyhow::anyhow!("query '{query}' failed: {e}")),
+                    Ok(MssqlApplied::Query {
+                        query,
+                        result: Ok(result),
+                    }) => {
+                        let detail = format!(
+                            "execute_query '{}': {} row(s), {} column(s)",
+                            query,
+                            result.rows.len(),
+                            result.columns.len()
+                        );
+                        applied_for_follow_up = Some(MssqlApplied::Query {
+                            query,
+                            result: Ok(result),
+                        });
+                        Ok(ClientSendOutcome::Executed { detail })
+                    }
+                };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            if let Err(e) = &outcome {
+                error!("MSSQL client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+
+            // The query-result event goes to the model in its own task: a handler parked for
+            // a human must not block the next injected command.
+            if let Some(applied) = applied_for_follow_up {
+                let client = client.clone();
+                let llm_client = llm_client.clone();
+                let state = app_state.clone();
+                let tx = status_tx.clone();
+                let handle = tokio::spawn(async move {
+                    Self::follow_up(applied, client, client_id, &llm_client, &state, &tx).await;
+                });
+                app_state.register_client_task(client_id, handle).await;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Execute query and collect results

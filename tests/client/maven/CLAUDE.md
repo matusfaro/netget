@@ -203,3 +203,24 @@ For offline CI, consider:
 1. Use local Maven repository mirror
 2. Update client config to point to local URL
 3. Pre-populate mirror with test artifacts
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+One test, **zero LLM calls**. The client's LLM points at `http://127.0.0.1:1`, so the
+connected-event call (where there is one) and every response-event call fail immediately;
+tolerating that failure is part of what the test verifies.
+
+The repository is a throwaway `TcpListener` on 127.0.0.1 that speaks just enough HTTP/1.1 and records the request lines it saw. **Nothing contacts repo.maven.apache.org.**
+
+What it asserts, in order:
+
+1. `wait_for_client_handle` — the regression guard for "register the channel before the
+   connected-event LLM call". Without it, a manual routing rule would leave `[ send ]` dead
+   for the length of the park.
+2. The injected action returns `Executed`, **not** `Sent` — `reqwest` reports no wire byte count, so a number would be invented.
+3. The stub repository really saw `GET /org/example/demo/1.0/demo-1.0.pom`, and `search_versions` really fetched `maven-metadata.xml` — both through the same `apply_action`.
+4. The client's access log gained an `injected_action` entry, so injected traffic shows up in
+   the request pane exactly like LLM-produced traffic.
+5. An unknown verb comes back `Rejected`, not silently swallowed.
+6. `disconnect` returns `Disconnected`, the command loop exits, the handle is dropped and the
+   client's status becomes `Disconnected`.

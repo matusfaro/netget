@@ -15,11 +15,13 @@ use tracing::{debug, error, info};
 use crate::client::llm_budget::call_llm_for_client;
 use crate::client::mcp::actions::{MCP_CLIENT_CONNECTED_EVENT, MCP_CLIENT_RESPONSE_RECEIVED_EVENT};
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 use serde_json::{json, Value};
 
 /// JSON-RPC 2.0 request message
@@ -168,6 +170,24 @@ impl McpClient {
             }),
         );
 
+        // Command channel for injected actions (the dashboard's [ send ] row).
+        // Registered - and already being drained by its own task - BEFORE the
+        // connected-event LLM call, which a manual `*` rule can park for minutes: the
+        // operator must be able to reach the client while it waits. This task also
+        // replaces the old 5s "is the client gone yet" poll: the channel closes when the
+        // client is removed, which ends the loop immediately.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_id,
+            http_client.clone(),
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn task to handle LLM interactions
         let http_client_clone = http_client.clone();
         // Registered with AppState so stop_client can abort this task —
@@ -223,16 +243,6 @@ impl McpClient {
                 }
                 Err(e) => {
                     Log::new(Some(&status_tx)).error(format!("Failed to call LLM: {}", e));
-                }
-            }
-
-            // Monitor for disconnection
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("MCP client {} stopped", client_id);
-                    break;
                 }
             }
         });
@@ -362,100 +372,274 @@ impl McpClient {
                 // Parse action
                 let action_result = protocol.as_ref().execute_action(action.clone())?;
 
-                match action_result {
-                    ClientActionResult::Disconnect => {
-                        app_state
-                            .update_client_status(client_id, ClientStatus::Disconnected)
-                            .await;
+                match Self::apply_action(
+                    client_id,
+                    action_result,
+                    Notify::Inline,
+                    http_client,
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    protocol.clone(),
+                )
+                .await
+                {
+                    Ok(Applied::Disconnect) => break,
+                    Ok(Applied::Executed(_)) => {}
+                    Err(e) => {
                         Log::new(Some(status_tx))
-                            .info(format!("MCP client {} disconnected", client_id));
-                        break;
-                    }
-                    ClientActionResult::Custom { name, data } => {
-                        // Execute MCP-specific action
-                        match Self::execute_mcp_action(
-                            client_id,
-                            &name,
-                            &data,
-                            http_client,
-                            app_state,
-                            status_tx,
-                        )
-                        .await
-                        {
-                            Ok(response) => {
-                                // Create response event
-                                let event = Event::new(
-                                    &MCP_CLIENT_RESPONSE_RECEIVED_EVENT,
-                                    json!({
-                                        "method": name,
-                                        "result": response,
-                                    }),
-                                );
-
-                                // Get instruction and memory
-                                let instruction = app_state
-                                    .get_instruction_for_client(client_id)
-                                    .await
-                                    .unwrap_or_default();
-                                let memory = app_state
-                                    .get_memory_for_client(client_id)
-                                    .await
-                                    .unwrap_or_default();
-
-                                // Call LLM with response
-                                match call_llm_for_client(
-                                    llm_client,
-                                    app_state,
-                                    client_id.to_string(),
-                                    &instruction,
-                                    &memory,
-                                    Some(&event),
-                                    protocol.as_ref(),
-                                    status_tx,
-                                )
-                                .await
-                                {
-                                    Ok(result) => {
-                                        // Update memory
-                                        if let Some(mem) = result.memory_updates {
-                                            app_state.set_memory_for_client(client_id, mem).await;
-                                        }
-
-                                        // Recursively execute more actions
-                                        if let Err(e) = Self::execute_llm_actions(
-                                            client_id,
-                                            result.actions,
-                                            http_client,
-                                            llm_client,
-                                            app_state,
-                                            status_tx,
-                                            protocol.clone(),
-                                        )
-                                        .await
-                                        {
-                                            error!("Failed to execute nested actions: {}", e);
-                                        }
-                                    }
-                                    Err(e) => {
-                                        error!("Failed to call LLM: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                Log::new(Some(status_tx))
-                                    .error(format!("Failed to execute MCP action {}: {}", name, e));
-                            }
-                        }
-                    }
-                    _ => {
-                        debug!("Ignoring non-custom action result");
+                            .error(format!("Failed to execute MCP action: {}", e));
                     }
                 }
             }
 
             Ok(())
         })
+    }
+
+    /// Apply one already-executed action result: the single place a JSON-RPC call is
+    /// issued and its `mcp_response_received` event fired, shared by the LLM path and by
+    /// injected commands so both behave identically.
+    ///
+    /// Boxed because it recurses through [`Self::execute_llm_actions`] for the follow-up
+    /// actions the response event produces.
+    #[allow(clippy::too_many_arguments)]
+    fn apply_action<'a>(
+        client_id: ClientId,
+        result: ClientActionResult,
+        notify: Notify,
+        http_client: &'a reqwest::Client,
+        llm_client: &'a OllamaClient,
+        app_state: &'a Arc<AppState>,
+        status_tx: &'a mpsc::UnboundedSender<String>,
+        protocol: Arc<McpClientProtocol>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Applied>> + Send + 'a>> {
+        Box::pin(async move {
+            match result {
+                ClientActionResult::Disconnect => {
+                    app_state
+                        .update_client_status(client_id, ClientStatus::Disconnected)
+                        .await;
+                    // Every exit path drops the handle so the dashboard stops offering
+                    // [ send ] into a dead client.
+                    app_state.remove_client_handle(client_id).await;
+                    Log::new(Some(status_tx))
+                        .info(format!("MCP client {} disconnected", client_id));
+                    Ok(Applied::Disconnect)
+                }
+                ClientActionResult::Custom { name, data } => {
+                    let response = Self::execute_mcp_action(
+                        client_id,
+                        &name,
+                        &data,
+                        http_client,
+                        app_state,
+                        status_tx,
+                    )
+                    .await?;
+
+                    let event_data = json!({
+                        "method": name,
+                        "result": response,
+                    });
+
+                    match notify {
+                        Notify::Inline => {
+                            Self::notify_response(
+                                client_id,
+                                event_data,
+                                http_client,
+                                llm_client,
+                                app_state,
+                                status_tx,
+                                protocol.clone(),
+                            )
+                            .await;
+                        }
+                        Notify::Deferred => {
+                            // The caller (the injected-command loop) already holds the
+                            // truthful JSON-RPC result and must reply to the operator
+                            // before this event's handler runs: a dashboard-created client
+                            // defaults to a `*` -> manual rule, so the handler can park for
+                            // a human's think time (300s by default), far longer than the
+                            // composer's 30s send timeout.
+                            let http_clone = http_client.clone();
+                            let llm_clone = llm_client.clone();
+                            let state_clone = app_state.clone();
+                            let status_clone = status_tx.clone();
+                            let protocol_clone = protocol.clone();
+                            let notify_handle = tokio::spawn(async move {
+                                McpClient::notify_response(
+                                    client_id,
+                                    event_data,
+                                    &http_clone,
+                                    &llm_clone,
+                                    &state_clone,
+                                    &status_clone,
+                                    protocol_clone,
+                                )
+                                .await;
+                            });
+                            // Registered so the notification - and the LLM call and any
+                            // follow-up JSON-RPC calls it makes - are aborted when the
+                            // client is stopped.
+                            app_state
+                                .register_client_task(client_id, notify_handle)
+                                .await;
+                        }
+                    }
+
+                    Ok(Applied::Executed(format!("{name} completed")))
+                }
+                other => {
+                    debug!("Ignoring non-custom action result: {:?}", other);
+                    Ok(Applied::Executed(
+                        "action produced no MCP request".to_string(),
+                    ))
+                }
+            }
+        })
+    }
+
+    /// Fire one `mcp_response_received` event at the LLM, apply any memory update, and
+    /// run the follow-up actions it asks for.
+    #[allow(clippy::too_many_arguments)]
+    async fn notify_response(
+        client_id: ClientId,
+        event_data: Value,
+        http_client: &reqwest::Client,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: Arc<McpClientProtocol>,
+    ) {
+        let event = Event::new(&MCP_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+
+        let instruction = app_state
+            .get_instruction_for_client(client_id)
+            .await
+            .unwrap_or_default();
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            status_tx,
+        )
+        .await
+        {
+            Ok(result) => {
+                if let Some(mem) = result.memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+                if let Err(e) = Self::execute_llm_actions(
+                    client_id,
+                    result.actions,
+                    http_client,
+                    llm_client,
+                    app_state,
+                    status_tx,
+                    protocol.clone(),
+                )
+                .await
+                {
+                    error!("Failed to execute nested actions: {}", e);
+                }
+            }
+            Err(e) => {
+                error!("Failed to call LLM: {}", e);
+            }
+        }
+    }
+
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client: it writes
+    /// `SendData` to a socket, and every MCP verb yields `ClientActionResult::Custom` that
+    /// has to become a JSON-RPC POST. So the action goes through [`Self::apply_action`] -
+    /// the same function the LLM path uses - and the outcome is recorded and replied
+    /// exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        http_client: reqwest::Client,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = Arc::new(McpClientProtocol::new());
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.as_ref().execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                // The JSON-RPC call is awaited, so the reported outcome describes a
+                // request that has actually completed. Notify::Deferred delivers the
+                // mcp_response_received event from its own registered task, so a manual
+                // handler parked for a human's think time cannot wedge this loop or time
+                // out the dashboard's [ send ].
+                Ok(result) => Self::apply_action(
+                    client_id,
+                    result,
+                    Notify::Deferred,
+                    &http_client,
+                    &llm_client,
+                    &app_state,
+                    &status_tx,
+                    protocol.clone(),
+                )
+                .await
+                .map(|applied| match applied {
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    Applied::Executed(detail) => ClientSendOutcome::Executed { detail },
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("MCP client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
+            }
+        }
+
+        info!("MCP client {} command loop stopped", client_id);
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Execute a specific MCP action
@@ -570,4 +754,28 @@ impl McpClient {
             .result
             .context("Missing result in MCP response")
     }
+}
+
+/// When an action's `mcp_response_received` event is delivered to the LLM.
+///
+/// MCP always awaits the JSON-RPC call itself; only the notification moves. The request is
+/// already inside a spawned task on the LLM-driven path, so unlike `http` there is no
+/// second "spawn the request" mode here.
+#[derive(Clone, Copy)]
+enum Notify {
+    /// Fire the event and run its follow-up actions before returning. The LLM-driven path.
+    Inline,
+    /// Fire the event from its own registered task and return at once. The
+    /// injected-command path, which must reply to the operator first.
+    Deferred,
+}
+
+/// What [`McpClient::apply_action`] did with one action. MCP rides on reqwest, so there
+/// is no honest byte count to report - only "the JSON-RPC call ran" or "the session
+/// should end".
+enum Applied {
+    /// The action ran; the string says what, for the injected action's outcome detail.
+    Executed(String),
+    /// The session should end.
+    Disconnect,
 }

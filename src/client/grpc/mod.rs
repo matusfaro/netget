@@ -28,7 +28,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::{Event, StartupParams};
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// gRPC client connection state
 #[derive(Debug, Clone)]
@@ -134,6 +135,26 @@ impl GrpcClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ send ] / composer).
+        // Registered BEFORE the connected-event LLM call below, which a manual `*` routing
+        // rule can park for minutes - the operator must be able to make an RPC while it
+        // waits.
+        //
+        // This task also replaces the old "poll get_client() every 5s" idle task:
+        // `remove_client` drops the command sender, so `recv()` returns `None` the moment
+        // the client goes away.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(grpc_command_loop(
+            command_rx,
+            client_id,
+            grpc_client_data.clone(),
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with connected event
         let protocol = Arc::new(GrpcClientProtocol::new());
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -171,11 +192,12 @@ impl GrpcClient {
                         app_state.set_memory_for_client(client_id, mem).await;
                     }
 
-                    // Execute actions
+                    // Execute actions through the same path injected commands use, so
+                    // the `grpc_call` decoding exists exactly once.
                     for action in actions {
                         let grpc_data = grpc_client_data.clone();
                         let proto = protocol.clone();
-                        if let Err(e) = Box::pin(execute_grpc_action(
+                        match Box::pin(execute_grpc_action(
                             client_id,
                             action,
                             grpc_data,
@@ -183,10 +205,13 @@ impl GrpcClient {
                             &llm_client,
                             &status_tx,
                             &proto,
+                            Dispatch::Inline,
                         ))
                         .await
                         {
-                            error!("Failed to execute gRPC action: {}", e);
+                            Ok(Applied::Disconnect) => break,
+                            Ok(_) => {}
+                            Err(e) => error!("Failed to execute gRPC action: {}", e),
                         }
                     }
                 }
@@ -196,24 +221,8 @@ impl GrpcClient {
             }
         }
 
-        // Spawn a background task that monitors for client disconnection
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("gRPC client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
+        // No idle-poll task: the command loop above is this client's only long-lived task
+        // and it ends when the client is removed.
 
         // Return a dummy local address (gRPC manages connections internally)
         Ok("0.0.0.0:0".parse().unwrap())
@@ -257,11 +266,19 @@ async fn compile_proto_text(proto_text: &str) -> Result<DescriptorPool> {
     let proto_path = temp_dir.path().join("schema.proto");
     tokio::fs::write(&proto_path, proto_text).await?;
 
-    // Run protoc to compile
+    // Run protoc to compile.
+    //
+    // `--proto_path` is not optional here even though the file is named absolutely and
+    // the child's cwd is the same directory: protoc requires every input to sit under
+    // some `-I` root and compares the strings literally, so an absolute filename against
+    // an implicit `-I.` fails with "File does not reside within any path specified using
+    // --proto_path". Without it, the documented "inline .proto text" schema form could
+    // never load. The server side (`src/server/grpc/mod.rs`) always passed one.
     let output = tokio::process::Command::new("protoc")
         .arg("--descriptor_set_out=/dev/stdout")
         .arg("--include_imports")
-        .arg(proto_path.to_str().unwrap())
+        .arg(format!("--proto_path={}", temp_dir.path().display()))
+        .arg("schema.proto")
         .current_dir(temp_dir.path())
         .output()
         .await
@@ -280,19 +297,79 @@ async fn compile_proto_text(proto_text: &str) -> Result<DescriptorPool> {
     DescriptorPool::from_file_descriptor_set(fds).context("Failed to create descriptor pool")
 }
 
+/// What one executed action did. Shared vocabulary between the connected-event handler
+/// and the injected-command loop.
+enum Applied {
+    /// A gRPC request really went out; `bytes_sent` is the length of the framed
+    /// message (5-byte gRPC header + protobuf payload) that was written to the
+    /// channel and answered.
+    ///
+    /// `pending_notify` is the `grpc_response_received` payload when the caller asked
+    /// for [`Dispatch::Defer`] - it has not been given to the LLM yet, and the caller
+    /// must run [`notify_grpc_response`] with it once it has replied.
+    Sent {
+        bytes_sent: usize,
+        pending_notify: Option<serde_json::Value>,
+    },
+    /// The action ran but put nothing on the wire; `detail` says why.
+    Ran(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
+
+/// How the `grpc_response_received` event that follows a call is delivered.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Raise it - and run whatever the LLM answers - before returning. Used by the
+    /// connected-event handler, which is where that recursion has always lived.
+    Inline,
+    /// Hand the event payload back to the caller instead. The injected-command loop
+    /// uses this so it can reply with the truthful byte count **first** and only then
+    /// raise the event: a client whose events are routed to a manual handler would
+    /// otherwise hold `[ send ]`'s answer hostage for the length of a human's think
+    /// time, and the operator would see a timeout for a call that in fact succeeded.
+    Defer,
+}
+
 /// Execute a gRPC client action
 async fn execute_grpc_action(
     client_id: ClientId,
     action: serde_json::Value,
     grpc_client_data: Arc<Mutex<GrpcClientData>>,
-    app_state: &AppState,
+    app_state: &Arc<AppState>,
     llm_client: &OllamaClient,
     status_tx: &mpsc::UnboundedSender<String>,
     protocol: &Arc<GrpcClientProtocol>,
-) -> Result<()> {
+    dispatch: Dispatch,
+) -> Result<Applied> {
     // Parse action using the protocol's execute_action method
     let action_result = protocol.as_ref().execute_action(action.clone())?;
+    apply_grpc_action(
+        client_id,
+        action_result,
+        grpc_client_data,
+        app_state,
+        llm_client,
+        status_tx,
+        protocol,
+        dispatch,
+    )
+    .await
+}
 
+/// Run one already-executed action. Shared by the connected-event handler and the
+/// injected-command loop so the `grpc_call` decoding exists exactly once.
+#[allow(clippy::too_many_arguments)]
+async fn apply_grpc_action(
+    client_id: ClientId,
+    action_result: ClientActionResult,
+    grpc_client_data: Arc<Mutex<GrpcClientData>>,
+    app_state: &Arc<AppState>,
+    llm_client: &OllamaClient,
+    status_tx: &mpsc::UnboundedSender<String>,
+    protocol: &Arc<GrpcClientProtocol>,
+    dispatch: Dispatch,
+) -> Result<Applied> {
     match action_result {
         ClientActionResult::Custom { name, data } if name == "grpc_call" => {
             let service = data["service"]
@@ -304,7 +381,7 @@ async fn execute_grpc_action(
             let request = &data["request"];
             let metadata = data.get("metadata").and_then(|v| v.as_object());
 
-            make_grpc_call(
+            let sent = make_grpc_call(
                 client_id,
                 service,
                 method,
@@ -315,8 +392,22 @@ async fn execute_grpc_action(
                 llm_client,
                 status_tx,
                 protocol,
+                dispatch,
             )
             .await?;
+
+            match sent {
+                Some(report) => Ok(Applied::Sent {
+                    bytes_sent: report.bytes_sent,
+                    pending_notify: report.pending_notify,
+                }),
+                // The per-connection state machine refused the call; nothing was
+                // written, and saying "Sent" here would be a lie.
+                None => Ok(Applied::Ran(format!(
+                    "grpc_call {}/{} skipped: the client is already processing a call",
+                    service, method
+                ))),
+            }
         }
         ClientActionResult::Disconnect => {
             info!("gRPC client {} disconnecting", client_id);
@@ -324,19 +415,149 @@ async fn execute_grpc_action(
                 .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
             let _ = status_tx.send(format!("[CLIENT] gRPC client {} disconnected", client_id));
+            Ok(Applied::Disconnect)
         }
         ClientActionResult::WaitForMore => {
             debug!("gRPC client {} waiting", client_id);
+            Ok(Applied::Ran("wait_for_more".to_string()))
         }
-        _ => {
-            return Err(anyhow::anyhow!("Unexpected action result for gRPC client"));
+        ClientActionResult::NoAction => Ok(Applied::Ran("no_action".to_string())),
+        // Not swallowed: an action this client cannot carry out says so, rather than
+        // looking identical to success.
+        ClientActionResult::Custom { name, .. } => Ok(Applied::Ran(format!(
+            "custom result '{name}' is not handled by the gRPC client"
+        ))),
+        ClientActionResult::SendData(_) => Ok(Applied::Ran(
+            "send_data has no meaning for a gRPC client (tonic owns the HTTP/2 channel)"
+                .to_string(),
+        )),
+        ClientActionResult::Multiple(_) => Ok(Applied::Ran(
+            "multiple results are not produced by the gRPC client".to_string(),
+        )),
+    }
+}
+
+/// Drain injected commands until the channel closes (the client was removed) or an
+/// injected `disconnect` ends the session.
+///
+/// `command_support::handle_stream_client_command` cannot serve this client: there is no
+/// write half NetGet owns - tonic holds the HTTP/2 channel - and `grpc_call` yields
+/// `ClientActionResult::Custom`. The shared `Arc<Mutex<GrpcClientData>>` the connect path
+/// already built is what makes this loop possible: the channel and the descriptor pool are
+/// reachable from outside the connect task, so an injected action runs on the same
+/// connection and the same schema as an LLM-produced one.
+async fn grpc_command_loop(
+    mut command_rx: mpsc::Receiver<ClientCommand>,
+    client_id: ClientId,
+    grpc_client_data: Arc<Mutex<GrpcClientData>>,
+    app_state: Arc<AppState>,
+    llm_client: OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+) {
+    use crate::llm::actions::protocol_trait::Protocol;
+
+    let protocol = Arc::new(GrpcClientProtocol::new());
+
+    while let Some(command) = command_rx.recv().await {
+        let action = command.action.clone();
+        // Held until after the reply: see `Dispatch::Defer`.
+        let mut pending_notify = None;
+        let outcome = match protocol.as_ref().execute_action(action.clone()) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(action_result) => match Box::pin(apply_grpc_action(
+                client_id,
+                action_result,
+                grpc_client_data.clone(),
+                &app_state,
+                &llm_client,
+                &status_tx,
+                &protocol,
+                Dispatch::Defer,
+            ))
+            .await
+            {
+                Ok(Applied::Sent {
+                    bytes_sent,
+                    pending_notify: pending,
+                }) => {
+                    pending_notify = pending;
+                    Ok(ClientSendOutcome::Sent { bytes_sent })
+                }
+                Ok(Applied::Ran(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                Ok(Applied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Err(e) => Err(e),
+            },
+        };
+
+        let outcome_json = match &outcome {
+            Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+            Err(e) => serde_json::json!({"error": e.to_string()}),
+        };
+        app_state
+            .record_access_log(
+                AccessLogOwner::Client(client_id.as_u32()),
+                protocol.protocol_name(),
+                None,
+                "injected_action",
+                action,
+                vec![outcome_json],
+            )
+            .await;
+
+        let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+        if let Err(e) = &outcome {
+            error!("gRPC client {} injected action failed: {}", client_id, e);
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        crate::client::command_support::reply(command, outcome);
+
+        // Only now, with the caller already holding its answer, raise the response
+        // event. A manual routing rule parking here costs the operator nothing but a
+        // "client busy" on a *second* send, which is what the bounded channel is for.
+        if let Some(event_data) = pending_notify {
+            notify_grpc_response(
+                client_id,
+                event_data,
+                grpc_client_data.clone(),
+                app_state.clone(),
+                llm_client.clone(),
+                status_tx.clone(),
+                protocol.clone(),
+            )
+            .await;
+        }
+
+        if disconnect {
+            break;
         }
     }
 
-    Ok(())
+    // Nothing can be injected any more: stop the dashboard offering [ send ].
+    app_state.remove_client_handle(client_id).await;
+    let _ = status_tx.send("__UPDATE_UI__".to_string());
+    info!("gRPC client {} command loop ended", client_id);
 }
 
-/// Make a gRPC call
+/// One completed gRPC call.
+struct GrpcCallReport {
+    /// Framed bytes written to the channel: 5-byte gRPC header + protobuf payload.
+    bytes_sent: usize,
+    /// `grpc_response_received` payload not yet given to the LLM (see [`Dispatch`]).
+    pending_notify: Option<serde_json::Value>,
+}
+
+/// Make a gRPC call.
+///
+/// Returns a [`GrpcCallReport`] when the call went out and was answered, or `None` when
+/// the per-connection state machine refused it because another call is in flight. A
+/// caller reporting a [`ClientSendOutcome`] must not turn `None` into `Sent`.
+#[allow(clippy::too_many_arguments)]
 async fn make_grpc_call(
     client_id: ClientId,
     service: &str,
@@ -344,17 +565,18 @@ async fn make_grpc_call(
     request_json: serde_json::Value,
     metadata: Option<serde_json::Map<String, serde_json::Value>>,
     grpc_client_data: Arc<Mutex<GrpcClientData>>,
-    app_state: &AppState,
+    app_state: &Arc<AppState>,
     llm_client: &OllamaClient,
     status_tx: &mpsc::UnboundedSender<String>,
     protocol: &Arc<GrpcClientProtocol>,
-) -> Result<()> {
+    dispatch: Dispatch,
+) -> Result<Option<GrpcCallReport>> {
     // Check if client is in idle state
     {
         let data = grpc_client_data.lock().await;
         if matches!(data.state, ConnectionState::Processing) {
             info!("gRPC client {} is busy, skipping request", client_id);
-            return Ok(());
+            return Ok(None);
         }
     }
 
@@ -451,6 +673,8 @@ async fn make_grpc_call(
         data.state = ConnectionState::Idle;
     }
 
+    let framed_len = 5 + request_bytes.len();
+
     match result {
         Ok(response_bytes) => {
             // Decode response
@@ -465,64 +689,33 @@ async fn make_grpc_call(
                 client_id, service, method
             );
 
-            // Call LLM with response
-            if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                let event = Event::new(
-                    &GRPC_CLIENT_RESPONSE_RECEIVED_EVENT,
-                    serde_json::json!({
-                        "service": service,
-                        "method": method,
-                        "response": response_json,
-                    }),
-                );
+            let event_data = serde_json::json!({
+                "service": service,
+                "method": method,
+                "response": response_json,
+            });
 
-                let memory = app_state
-                    .get_memory_for_client(client_id)
-                    .await
-                    .unwrap_or_default();
-
-                match call_llm_for_client(
-                    llm_client,
-                    app_state,
-                    client_id.to_string(),
-                    &instruction,
-                    &memory,
-                    Some(&event),
-                    protocol.as_ref(),
-                    status_tx,
-                )
-                .await
-                {
-                    Ok(ClientLlmResult {
-                        actions,
-                        memory_updates,
-                    }) => {
-                        // Update memory
-                        if let Some(mem) = memory_updates {
-                            app_state.set_memory_for_client(client_id, mem).await;
-                        }
-
-                        // Execute actions
-                        for action in actions {
-                            let grpc_data = grpc_client_data.clone();
-                            let proto = protocol.clone();
-                            if let Err(e) = Box::pin(execute_grpc_action(
-                                client_id, action, grpc_data, app_state, llm_client, status_tx,
-                                &proto,
-                            ))
-                            .await
-                            {
-                                error!("Failed to execute gRPC action: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        error!("LLM error for gRPC client {}: {}", client_id, e);
-                    }
+            let pending_notify = match dispatch {
+                Dispatch::Inline => {
+                    notify_grpc_response(
+                        client_id,
+                        event_data,
+                        grpc_client_data,
+                        app_state.clone(),
+                        llm_client.clone(),
+                        status_tx.clone(),
+                        protocol.clone(),
+                    )
+                    .await;
+                    None
                 }
-            }
+                Dispatch::Defer => Some(event_data),
+            };
 
-            Ok(())
+            Ok(Some(GrpcCallReport {
+                bytes_sent: framed_len,
+                pending_notify,
+            }))
         }
         Err(e) => {
             error!("gRPC client {} call failed: {}", client_id, e);
@@ -558,6 +751,75 @@ async fn make_grpc_call(
             }
 
             Err(e)
+        }
+    }
+}
+
+/// Raise `grpc_response_received` for a completed call and run whatever the LLM answers.
+///
+/// Split out of [`make_grpc_call`] so the injected-command loop can await the network
+/// round-trip - and report a truthful byte count - without also awaiting the LLM.
+#[allow(clippy::too_many_arguments)]
+async fn notify_grpc_response(
+    client_id: ClientId,
+    event_data: serde_json::Value,
+    grpc_client_data: Arc<Mutex<GrpcClientData>>,
+    app_state: Arc<AppState>,
+    llm_client: OllamaClient,
+    status_tx: mpsc::UnboundedSender<String>,
+    protocol: Arc<GrpcClientProtocol>,
+) {
+    let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+        return;
+    };
+
+    let event = Event::new(&GRPC_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+    let memory = app_state
+        .get_memory_for_client(client_id)
+        .await
+        .unwrap_or_default();
+
+    match call_llm_for_client(
+        &llm_client,
+        &app_state,
+        client_id.to_string(),
+        &instruction,
+        &memory,
+        Some(&event),
+        protocol.as_ref(),
+        &status_tx,
+    )
+    .await
+    {
+        Ok(ClientLlmResult {
+            actions,
+            memory_updates,
+        }) => {
+            // Update memory
+            if let Some(mem) = memory_updates {
+                app_state.set_memory_for_client(client_id, mem).await;
+            }
+
+            // Execute actions
+            for action in actions {
+                if let Err(e) = Box::pin(execute_grpc_action(
+                    client_id,
+                    action,
+                    grpc_client_data.clone(),
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                    &protocol,
+                    Dispatch::Inline,
+                ))
+                .await
+                {
+                    error!("Failed to execute gRPC action: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            error!("LLM error for gRPC client {}: {}", client_id, e);
         }
     }
 }

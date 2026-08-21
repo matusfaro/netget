@@ -252,6 +252,36 @@ a=rtpmap:0 PCMU/8000
 **LLM Generation**: LLM generates simplified SDP with plausible values. No actual RTP media streams are created (SIP is
 signaling only, media would require RTP implementation).
 
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) **before** the `sip_client_connected`
+LLM call, which a manual routing rule can park for minutes. Commands are drained by a
+separate `command_loop` task (registered with `register_client_task`), not by a `select!` arm
+in the read loop: `recv` is cancellation-safe so an arm would be sound, but the read loop can
+sit inside a multi-minute LLM call and an injected request must not queue behind it. Both
+tasks write through the same `Arc<UdpSocket>` (`send` takes `&self`).
+
+Every SIP verb yields `ClientActionResult::Custom`, so the generic
+`handle_stream_client_command` cannot serve this client. `command_loop` routes the action
+through `execute_sip_action` - the one function the connected-event path, the read loop and
+the injected command all use, so the request encoding and the Call-ID / From-tag / CSeq
+bookkeeping exist exactly once - and reports:
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | the datagram left the socket; the count is `UdpSocket::send`'s return value |
+| `Rejected { error }` | `execute_action` refused it (unknown verb, missing field) |
+| `Executed { detail }` | `wait_for_more`, or a `Custom` result that builds no SIP request |
+| `Disconnected` | an injected `disconnect` |
+
+SIP runs over UDP, so `disconnect` closes nothing on the wire: the command loop replies
+`Disconnected`, drops the handle, marks the client disconnected and stops. The recv loop's
+socket is released when the client is removed (`stop_client` aborts both registered tasks).
+The handle is also removed when the read loop exits. Test:
+`tests/client/sip/command_channel_test.rs` (zero LLM calls; asserts the datagram really
+arrives at a peer socket and that its length matches the reported `bytes_sent`).
+
 ## Limitations
 
 ### Current Implementation

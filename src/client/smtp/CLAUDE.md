@@ -191,3 +191,35 @@ See `tests/client/smtp/CLAUDE.md` for:
 6. **Async lettre**: When lettre adds full async support
 7. **DKIM signatures**: Email authentication
 8. **Bounce handling**: Parse SMTP error responses
+
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel **and starts draining it** before the
+`smtp_connected` LLM call. Registering the handle alone would not be enough here: that call runs
+inline in `connect`, so a manual `*` rule parks creation itself and nothing would answer an
+injected command until it returned.
+
+The old 5-second `sleep` liveness loop was replaced by `idle_and_command_loop`, a `select!` over
+`mpsc::Receiver::recv` and an `Interval::tick` — both cancellation-safe, so no second task is
+needed.
+
+**`send_email` was previously unreachable from every path.** The connected-event handler
+discarded the model's actions (`actions: _`) and `SmtpClient::send_email` had no callers at all,
+so the model could ask for a message and nothing was ever sent. Both paths now go through
+`apply_action` → `deliver`, and `follow_up` raises `smtp_email_sent`.
+
+**The port in `remote_addr` was also discarded.** `smtp_server` kept only the hostname and
+`SmtpTransport::relay` then used its own default, so a client pointed at `host:2525` silently
+talked to a different port. The port is stored as `smtp_port` and applied with `.port(...)`.
+
+**Outcome semantics.** `lettre` opens its own connection per message and reports no byte count,
+so a delivered message is `Executed { detail: "send_email '<subject>': accepted by <host:port>
+for N recipient(s)" }` — never `Sent`. A message the server refused is an `Err`; an unknown or
+malformed action is `Rejected`. An injected `disconnect` replies `Disconnected` and drops the
+handle.
+
+Test: `tests/client/smtp/command_channel_test.rs` (zero LLM calls). Its peer is a ~40-line
+listener rather than a NetGet SMTP server on purpose: that server raises one event id
+(`smtp_command`) for the banner *and* every command, so a `static` handler is forced to answer
+`CONNECTION_ESTABLISHED`, `EHLO`, `MAIL`, `RCPT`, `DATA` and `.` with identical bytes and no
+session can complete. Driving it would take a `script` handler.

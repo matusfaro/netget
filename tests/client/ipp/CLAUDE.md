@@ -200,3 +200,24 @@ For CI/CD environments without CUPS, consider:
 ✅ **Ignored by Default**: Requires `-- --ignored` flag
 ✅ **Documented Prerequisites**: CUPS and Ollama
 ✅ **Black-box Approach**: Uses public APIs only
+
+## `command_channel_test.rs` — the dashboard's `[ send ]`
+
+One test, **zero LLM calls**. The client's LLM points at `http://127.0.0.1:1`, so the
+connected-event call (where there is one) and every response-event call fail immediately;
+tolerating that failure is part of what the test verifies.
+
+The printer is a **NetGet IPP server of our own**, started with a `*` static handler that answers `ipp_printer_attributes`. IPP rides on HTTP, so the whole exchange is localhost TCP; nothing contacts an external endpoint.
+
+What it asserts, in order:
+
+1. `wait_for_client_handle` — the regression guard for "register the channel before the
+   connected-event LLM call". Without it, a manual routing rule would leave `[ send ]` dead
+   for the length of the park.
+2. The injected action returns `Executed`, **not** `Sent` — the `ipp` crate owns the HTTP request and reports no wire byte count.
+3. The server's access log contains the printer name it answered with, proving the injected operation crossed the wire and came back.
+4. The client's access log gained an `injected_action` entry, so injected traffic shows up in
+   the request pane exactly like LLM-produced traffic.
+5. An unknown verb comes back `Rejected`, not silently swallowed.
+6. `disconnect` returns `Disconnected`, the command loop exits, the handle is dropped and the
+   client's status becomes `Disconnected`.

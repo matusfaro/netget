@@ -279,3 +279,35 @@ See `tests/client/elasticsearch/CLAUDE.md` for E2E test strategy.
 
 - `reqwest`: HTTP client with JSON support
 - No additional Elasticsearch-specific crates needed
+
+## Command channel (dashboard `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running Elasticsearch client.
+`connect_with_llm_actions` registers the channel (`command_support::register_command_channel`)
+**before** the connected-event LLM call and spawns a registered `command_loop` task; the loop
+replaces the old 5s "has this client been removed yet" poll.
+
+Injected actions go through `ElasticsearchClient::apply_action`, which the connected-event path
+now also uses. That fixed a second bug on the way: the connect path dispatched only
+`index_document` and `search`, so `get_document`, `delete_document` and `bulk_operation` were
+advertised to the model and silently dropped. Every operation returns the HTTP status code
+rather than `()` so the outcome can report what the cluster actually said.
+
+Outcome semantics — `reqwest` frames and sends the request, so there is no honest wire byte
+count and **`Sent` is never returned**:
+
+| Situation | `ClientSendOutcome` |
+|---|---|
+| `execute_action` refused it | `Rejected { error }` |
+| Request completed | `Executed { detail: "search completed: HTTP 200" }` |
+| Request failed (transport, or a missing required field) | `Executed { detail: "search failed: …" }` |
+| `disconnect` | `Disconnected` (loop ends, handle removed) |
+
+The HTTP request itself is **awaited** in the loop, so the reported status is real. The
+`elasticsearch_response_received` event is raised from its own registered task
+(`spawn_response_notification`), so an event handler that parks for a human answer cannot wedge
+the command loop. The connect path additionally *spawns* `apply_action` itself (registered as a
+client task) so `connect` returns promptly.
+
+Test: `tests/client/elasticsearch/command_channel_test.rs` (no LLM, no cluster — a loopback
+listener is the endpoint).

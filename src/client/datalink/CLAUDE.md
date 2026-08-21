@@ -128,6 +128,43 @@ ff ff ff ff ff ff  // Destination MAC (broadcast)
 5. **MAC Address Analysis**: Track MAC address usage on network
 6. **Frame Timing Analysis**: Measure frame arrival times
 
+### Dashboard injection (`[ send ]`)
+
+`connect_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) before the pcap task starts and spawns
+a `command_loop` task (registered with `register_client_task`). This client makes no
+connected-event LLM call, so there is no park to race, but `[ send ]` is live from the moment
+the client exists.
+
+There is no `AsyncWrite` half here, so the generic `handle_stream_client_command` cannot be
+used. An injected `inject_frame` goes through the protocol's own `execute_action` and lands
+in the same `InjectionCommand` queue the LLM path uses. That command now carries an optional
+`oneshot` acknowledgement, which the pcap loop fills with the result of `sendpacket` - that
+is what makes a truthful outcome possible:
+
+| Outcome | When |
+|---|---|
+| `Sent { bytes_sent }` | the pcap loop acknowledged a successful `sendpacket` for that many bytes |
+| `Executed { detail }` | the frame could not be handed over, or was not acknowledged - `detail` names the reason and the frame size |
+| `Rejected { error }` | unknown verb, or undecodable `frame_hex` |
+| `Disconnected` | an injected `disconnect` |
+
+**Unprivileged runs land in `Executed`, deliberately.** libpcap needs root (`/dev/bpf*` on
+macOS, `CAP_NET_RAW` on Linux); when the capture fails to open, the blocking task returns and
+the queue's receiver is gone, so the reply says the frame was built but not injected and why.
+Note what is *not* done: on that failure path the handle is deliberately left registered, so
+an injection gets that specific explanation instead of the generic "this client has no
+command channel". The handle is removed when the pcap loop exits and on an injected
+`disconnect`.
+
+**Known gap**: in injection-only mode the pcap loop polls the queue every 10ms and in
+promiscuous mode it can sit up to 100ms in `next_packet`, so an injected frame is put on the
+wire with up to that much latency. The acknowledgement wait is bounded at 5s.
+
+Test: `tests/client/datalink/command_channel_test.rs` (zero LLM calls). The privileged half -
+`Sent { bytes_sent }` from a real acknowledged injection - is `#[ignore]`d there because it
+needs root.
+
 ## Limitations
 
 1. **Privilege Requirement**: Requires root or CAP_NET_RAW capability

@@ -174,3 +174,32 @@ See `tests/client/mqtt/CLAUDE.md` for detailed testing documentation.
 - rumqttc documentation: https://docs.rs/rumqttc/
 - MQTT 3.1.1 specification: https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/mqtt-v3.1.1.html
 - Mosquitto broker: https://mosquitto.org/
+
+## Command channel — the dashboard's `[ send ]`
+
+Adopted, archetype **(a)**: `rumqttc::AsyncClient` is a cheap clonable handle to the event
+loop's request channel, so the command loop holds its own clone and nothing had to be
+restructured or wrapped in a `Mutex`.
+
+- The channel is registered in `connect_with_llm_actions`, **before** the event loop task starts
+  and therefore before the `mqtt_connected` LLM call that task makes on CONNACK — a manual `*`
+  rule can park that call for minutes and `[ send ]` has to work throughout.
+  `tests/client/mqtt/command_channel_test.rs` guards it with `wait_for_client_handle`.
+- `apply_action` is shared by the LLM path and the command path, so the mapping from
+  `mqtt_publish` / `mqtt_subscribe` / `mqtt_unsubscribe` onto rumqttc calls exists once.
+
+| Outcome | When |
+|---|---|
+| `Executed { detail }` | every successful action; `detail` names the packet, e.g. `PUBLISH to 'sensors/a' (5 byte payload, QoS 0, retain false) accepted by rumqttc` |
+| `Rejected { error }` | `execute_action` refused it (unknown name, missing `topic`/`payload`) |
+| `Disconnected` | `disconnect`; DISCONNECT was sent to the broker |
+| `Err(..)` | rumqttc refused the request (the event loop is gone) |
+
+**There is deliberately no `Sent { bytes_sent }`.** `AsyncClient::publish` returns once the
+request has been accepted into the event loop's queue; the loop writes the packet afterwards and
+reports no byte count. Claiming one here would be a guess, so the truthful answer is `Executed`
+with a specific detail.
+
+A `disconnect` also sets a flag the event loop reads: rumqttc surfaces the closed socket as a
+poll **error**, and without the flag a deliberate hang-up was reported as
+`ClientStatus::Error(...)`.

@@ -394,3 +394,54 @@ Start authorization code flow with callback on port 8080
 - Device Code Flow RFC 8628: https://tools.ietf.org/html/rfc8628
 - `openidconnect` crate docs: https://docs.rs/openidconnect/
 - OAuth2 flows explained: https://oauth.net/2/grant-types/
+
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running OIDC client. The handle is
+registered **before** discovery and the `oidc_discovered` LLM call — both awaited inline in
+`connect()` — because a dashboard-created client defaults to a `*` → manual rule and that
+call can park for minutes waiting for a human.
+
+The old "poll `get_client()` every 5 s" task is gone: the command loop is now this client's
+long-lived task and ends when the client is removed or an injected `disconnect` arrives.
+`execute_llm_action` is now a thin wrapper over `apply_action`, which the command loop calls
+too, so every flow is driven by one implementation whoever asked for it.
+
+`apply_action` also implements `oidc_discover`, which was **advertised but unexecutable**:
+`discover_configuration` is a declared action whose `Custom` result no arm handled, so it
+always came back "Unknown OIDC action".
+
+**Outcome semantics — `Executed`, never `Sent`, and the detail is derived, not assumed.**
+The `openidconnect` crate owns the HTTPS socket and reports no byte count. The command loop
+**awaits** the flow and then reads `access_token` back out of the client's state
+(`token_state_detail`), so:
+
+- `Executed { detail: "oidc_client_credentials: completed, an access token is stored" }`
+- `Executed { detail: "oidc_password_flow: completed but no access token was stored - the
+  provider did not issue one (see netget.log)" }`
+- `Executed` with a specific description for `oidc_discover`, `oidc_device_flow`,
+  `oidc_authorization_code` and `oidc_fetch_userinfo`
+- `Rejected { error }` for an unknown action name, `Err` for a flow that could not run
+  (discovery failed, no refresh token, …), `Disconnected` for `disconnect`.
+
+**No path here may report a success for a flow that produced no token, and none may
+fabricate one** — the same fail-closed discipline the OAuth2 server's fail-open bug taught.
+
+One deliberate asymmetry: the **model's** `disconnect` still calls `remove_client` (as it
+always has), while an **injected** `disconnect` only marks the client `Disconnected` and
+ends the command loop. Removing the client from inside its own command loop would abort the
+very task that owes the dashboard a reply.
+
+`oidc_token_received` / `oidc_userinfo_received` fire from their own registered task for an
+injected action (`Dispatch::Deferred`); the device-code and authorization-code flows keep
+raising theirs inline, since they already run in their own spawned tasks.
+
+### Startup params reach `protocol_data` now
+
+Every flow reads `client_id` / `client_secret` out of `protocol_data`, but the generic
+creation path — the dashboard form, MCP, `open_client` — only stores the validated startup
+params on the client and leaves `protocol_data` `Null`, so a client created that way failed
+with "Missing client configuration" on the LLM path just as much as the injected one.
+`connect` now seeds `protocol_data` from `startup_params` once, without overwriting anything
+already set.
