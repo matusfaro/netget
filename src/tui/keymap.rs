@@ -1321,16 +1321,36 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
                 composer.choose();
             }
         }
-        // Space flips a boolean field, like a checkbox.
+        // Space flips a boolean field like a checkbox, and steps a choice
+        // field to its next value — the same gesture Enter performs.
         KeyCode::Char(' ')
+            if composer.chosen.is_some()
+                && composer.raw_json.is_none()
+                && composer.focused_button.is_none()
+                && composer.selected_field().is_some_and(|f| {
+                    matches!(
+                        f.kind,
+                        crate::tui::modal::composer::FieldKind::Bool
+                            | crate::tui::modal::composer::FieldKind::Choice
+                    )
+                }) =>
+        {
+            composer.begin_edit();
+        }
+        // ←/→ cycle a choice field without leaving the row.
+        KeyCode::Left | KeyCode::Right
             if composer.chosen.is_some()
                 && composer.raw_json.is_none()
                 && composer.focused_button.is_none()
                 && composer
                     .selected_field()
-                    .is_some_and(|f| f.kind == crate::tui::modal::composer::FieldKind::Bool) =>
+                    .is_some_and(|f| f.kind == crate::tui::modal::composer::FieldKind::Choice) =>
         {
-            composer.begin_edit();
+            let backward = key.code == KeyCode::Left;
+            let selected = composer.selected;
+            if let Some(field) = composer.fields.get_mut(selected) {
+                field.cycle_choice(backward);
+            }
         }
         // Typing on a parameter field edits it (see the form's note).
         KeyCode::Char(c)
@@ -1358,6 +1378,21 @@ async fn handle_composer_key(app: &mut DashboardApp, key: KeyEvent, state: &AppS
             composer.begin_edit();
             if let Some(buffer) = composer.editing.as_mut() {
                 buffer.pop();
+            }
+        }
+        // Backspace unsets an optional choice field (a required one has no
+        // meaningful empty state to go back to).
+        KeyCode::Backspace
+            if composer.chosen.is_some()
+                && composer.raw_json.is_none()
+                && composer.focused_button.is_none()
+                && composer.selected_field().is_some_and(|f| {
+                    f.kind == crate::tui::modal::composer::FieldKind::Choice && !f.required
+                }) =>
+        {
+            let selected = composer.selected;
+            if let Some(field) = composer.fields.get_mut(selected) {
+                field.value.clear();
             }
         }
         _ => {}

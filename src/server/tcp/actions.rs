@@ -345,6 +345,10 @@ fn decode_outbound_data(data: &str, action: &serde_json::Value) -> Result<Vec<u8
 }
 
 /// Shared `encoding` parameter for every action that carries an outbound `data` field.
+///
+/// Declared as a closed choice set (`with_choices`): the executor accepts exactly
+/// `utf8` and `hex` (see [`decode_outbound_data`]), so the TUI composer offers a
+/// selector and the native tool schemas advertise the pair as an enum.
 fn encoding_parameter() -> Parameter {
     Parameter {
         name: "encoding".to_string(),
@@ -352,6 +356,7 @@ fn encoding_parameter() -> Parameter {
         description: "How to convert 'data' into the bytes put on the wire. \"utf8\" (the default when omitted) sends the characters of 'data' unchanged - use it for text protocols such as FTP/SMTP/HTTP. \"hex\" decodes 'data' as hex-encoded bytes, two hex digits per byte - use it for binary protocols, e.g. {\"data\": \"48656c6c6f\", \"encoding\": \"hex\"} sends the 5 bytes 'Hello', whereas the same 'data' without \"encoding\": \"hex\" sends the 10 characters 4-8-6-5-6-c-6-c-6-f. No other values are accepted".to_string(),
         required: false,
     }
+    .with_choices(["utf8", "hex"])
 }
 
 /// Action definition for send_to_connection (async)

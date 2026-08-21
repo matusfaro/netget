@@ -954,6 +954,22 @@ fn composer_lines_with_offsets<'a>(
                         } else {
                             "[ ] false".to_string()
                         }
+                    } else if field.kind == crate::tui::modal::composer::FieldKind::Choice {
+                        // A radio group: Enter/Space/←/→ cycle the pick. An
+                        // optional field with nothing picked shows every value
+                        // unmarked, exactly like the unticked checkbox above.
+                        field
+                            .choices
+                            .iter()
+                            .map(|choice| {
+                                if field.value.trim() == choice {
+                                    format!("(x) {choice}")
+                                } else {
+                                    format!("( ) {choice}")
+                                }
+                            })
+                            .collect::<Vec<_>>()
+                            .join("  ")
                     } else if field.value.is_empty() {
                         field.placeholder.clone()
                     } else {
