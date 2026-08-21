@@ -584,7 +584,7 @@ grep -r "\.port" tests/ | grep -v "binding.port"
 
 #### 8. Update Documentation
 
-- Mark old system as removed in `INTERFACE_PROTOCOL_ARCHITECTURE.md`
+- Mark old system as removed in `docs/archive/INTERFACE_PROTOCOL_ARCHITECTURE.md`
 - Update `README.md` to only mention new system
 - Update all protocol examples to use new binding
 - Add migration notes to `CHANGELOG.md`
@@ -630,7 +630,7 @@ version = "2.0.0"  # ← Major version bump (breaking change)
 
 ## Migration Tracking
 
-Use the table in `INTERFACE_PROTOCOL_ARCHITECTURE.md` to track migration status:
+Use the table in `docs/archive/INTERFACE_PROTOCOL_ARCHITECTURE.md` to track migration status:
 
 | Protocol | Status | Defaults | Notes |
 |----------|--------|----------|-------|
@@ -645,7 +645,7 @@ Update this table as you migrate each protocol.
 
 If you encounter issues during migration:
 
-1. Check `INTERFACE_PROTOCOL_ARCHITECTURE.md` for design details
+1. Check `docs/archive/INTERFACE_PROTOCOL_ARCHITECTURE.md` for design details
 2. Look at migrated protocols (ICMP, TCP, HTTP) as examples
 3. Verify Phase 1 infrastructure is in place
 4. Run verification script to identify issues

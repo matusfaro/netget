@@ -913,5 +913,5 @@ The Oracle client implementation is **significantly easier** than the server due
 **Last Updated:** 2025-11-20
 **Status:** Planning Complete, Implementation Not Started
 **See Also:**
-- `/home/user/netget/ORACLE_PROTOCOL_PLAN.md` (comprehensive plan)
+- `docs/archive/ORACLE_PROTOCOL_PLAN.md` (comprehensive plan)
 - `/home/user/netget/src/server/oracle/CLAUDE.md` (server implementation)

@@ -33,5 +33,11 @@ netget-ollama.lock
 target-etcd-build/
 .aider*
 
+# Stray compiler outputs from ad-hoc rustc invocations
+*.rlib
+
+# SQLite databases created by the runtime sqlite facility
+netget_db_*.db
+
 # Generated npm packages
 /dist/

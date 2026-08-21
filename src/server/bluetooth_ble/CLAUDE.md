@@ -418,7 +418,7 @@ Full specifications: https://www.bluetooth.com/specifications/assigned-numbers/
 **macOS**:
 
 - Verified working on macOS 26 / Apple Silicon: adapter powers on, services register, advertising
-  starts, and all three `tests/server/bluetooth_ble` e2e tests pass. See `MACOS_SUPPORT.md` at the
+  starts, and all three `tests/server/bluetooth_ble` e2e tests pass. See `docs/archive/MACOS_SUPPORT.md` at the
   repo root for the commands and evidence.
 - The `libdbus` dependency in the root `CLAUDE.md` table is Linux-only — macOS links
   `CoreBluetooth.framework` and needs no installed package.
