@@ -199,6 +199,10 @@ impl Server for BitcoinProtocol {
             "send_pong" => self.execute_send_pong(action),
             "send_getaddr" => self.execute_send_getaddr(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
+            // Not offered to the model (it has `close_this_connection`), but the dashboard's
+            // "disconnect this peer" injects this generic name through the peer command task,
+            // which half-closes the write side on this result.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown Bitcoin action: {}", action_type)),
         }
     }

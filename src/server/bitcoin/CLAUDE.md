@@ -283,6 +283,22 @@ hex = "0.4"   # For hex encoding/decoding
    `update_bitcoin_connection_info`. The `handshake_complete` field on `ConnectionData` is
    written once at construction and never read.
 
+7. **Dashboard injection (peer handle + counters)**: every accepted connection registers a
+   peer handle (`server::peer_support`) right after `add_connection_to_server`, before the
+   opened event, so `[ message this peer ]` / `[ disconnect this peer ]` work even while a
+   manual rule parks that event. The generic peer task runs injected actions through the
+   protocol's own `execute_action`; every wire verb (`send_version`, `send_verack`,
+   `send_ping`, `send_pong`, `send_getaddr`, `send_bitcoin_message`) returns
+   `ActionResult::Output` and `close_this_connection` returns `CloseConnection`, so nothing
+   is `Custom` and the whole vocabulary is injectable. `execute_action` also accepts the
+   generic `close_connection` name (not offered to the model) because that is what
+   `[ disconnect this peer ]` injects. The handle is removed on every exit
+   path (EOF, read error, model-driven close) via `teardown_connection`, and
+   `update_connection_stats` runs on each read and each write so the rail's `↓ ↑` counters
+   and `last_activity` move. A model-driven `close_this_connection` now also half-closes the
+   socket (it previously only dropped the map entry and left the peer connected).
+   Zero-LLM test: `tests/server/bitcoin/peer_inject_test.rs`.
+
 ## Future Enhancements
 
 Potential additions (not currently implemented):

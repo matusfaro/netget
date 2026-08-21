@@ -123,6 +123,27 @@ impl BitcoinServer {
                             .await;
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+                        // Peer messaging: the dashboard's "message this peer" / "disconnect
+                        // this peer" inject actions into THIS connection through the same
+                        // executor the LLM path uses. Registered before the opened event so a
+                        // manual `*` rule parking that event leaves the operator able to reach
+                        // the connection while it waits.
+                        let peer_rx = crate::server::peer_support::register_peer_channel(
+                            &app_state,
+                            server_id,
+                            connection_id.as_u32(),
+                        )
+                        .await;
+                        crate::server::peer_support::spawn_peer_command_task(
+                            peer_rx,
+                            protocol.clone(),
+                            app_state.clone(),
+                            server_id,
+                            connection_id.as_u32(),
+                            write_half_arc.clone(),
+                            status_tx.clone(),
+                        );
+
                         // Register the connection *before* either task is spawned.
                         //
                         // This used to happen inside `handle_connection_opened`, which runs in
@@ -183,10 +204,13 @@ impl BitcoinServer {
                                 match read_half.read(&mut buffer).await {
                                     Ok(0) => {
                                         // Connection closed
-                                        connections_clone.lock().await.remove(&connection_id);
-                                        app_state_clone
-                                            .close_connection_on_server(server_id, connection_id)
-                                            .await;
+                                        Self::teardown_connection(
+                                            &connections_clone,
+                                            &app_state_clone,
+                                            server_id,
+                                            connection_id,
+                                        )
+                                        .await;
                                         Log::new(Some(&status_tx_clone)).info(format!(
                                             "Bitcoin connection {} closed",
                                             connection_id
@@ -196,6 +220,16 @@ impl BitcoinServer {
                                     }
                                     Ok(n) => {
                                         let data = &buffer[..n];
+                                        app_state_clone
+                                            .update_connection_stats(
+                                                server_id,
+                                                connection_id,
+                                                Some(n as u64),
+                                                None,
+                                                Some(1),
+                                                None,
+                                            )
+                                            .await;
 
                                         // Byte-count summary and full hex payload are
                                         // FileOnly: the bitcoin_message_received event
@@ -239,7 +273,14 @@ impl BitcoinServer {
                                             "Read error on Bitcoin connection {}: {}",
                                             connection_id, e
                                         ));
-                                        connections_clone.lock().await.remove(&connection_id);
+                                        Self::teardown_connection(
+                                            &connections_clone,
+                                            &app_state_clone,
+                                            server_id,
+                                            connection_id,
+                                        )
+                                        .await;
+                                        let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
                                         break;
                                     }
                                 }
@@ -311,6 +352,8 @@ impl BitcoinServer {
                                 &write_half,
                                 &output_data,
                                 connection_id,
+                                server_id,
+                                &app_state,
                                 &status_tx,
                                 magic,
                             )
@@ -321,7 +364,14 @@ impl BitcoinServer {
                             }
                         }
                         ActionResult::CloseConnection => {
-                            connections.lock().await.remove(&connection_id);
+                            Self::close_from_model(
+                                &write_half,
+                                &connections,
+                                &app_state,
+                                server_id,
+                                connection_id,
+                            )
+                            .await;
                             Log::new(Some(&status_tx)).info(format!(
                                 "Closed Bitcoin connection {} after connection opened",
                                 connection_id
@@ -493,6 +543,8 @@ impl BitcoinServer {
                                             &write_half,
                                             &output_data,
                                             connection_id,
+                                            server_id,
+                                            &app_state,
                                             &status_tx,
                                             magic,
                                         )
@@ -513,7 +565,15 @@ impl BitcoinServer {
 
                             // Handle close_connection
                             if should_close {
-                                connections.lock().await.remove(&connection_id);
+                                Self::close_from_model(
+                                    &write_half,
+                                    &connections,
+                                    &app_state,
+                                    server_id,
+                                    connection_id,
+                                )
+                                .await;
+                                let _ = status_tx.send("__UPDATE_UI__".to_string());
                                 Log::new(Some(&status_tx))
                                     .info(format!("Closed Bitcoin connection {}", connection_id));
                                 return;
@@ -743,19 +803,73 @@ impl BitcoinServer {
         }
     }
 
+    /// Forget a connection on every exit path of its reader task (EOF, read error): drop the
+    /// state-machine entry, the dashboard's peer handle and the tracked connection.
+    async fn teardown_connection(
+        connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+        app_state: &Arc<AppState>,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
+    ) {
+        connections.lock().await.remove(&connection_id);
+        app_state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
+        app_state
+            .close_connection_on_server(server_id, connection_id)
+            .await;
+    }
+
+    /// `close_this_connection` from the model. Half-closes the write side so the peer reads
+    /// EOF - previously this only dropped the map entry and the socket stayed open until the
+    /// peer hung up - then runs the same teardown as the reader's exit paths. The reader task
+    /// sees EOF once the peer closes and tears down again; every step is idempotent.
+    async fn close_from_model(
+        write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+        connections: &Arc<Mutex<HashMap<ConnectionId, ConnectionData>>>,
+        app_state: &Arc<AppState>,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
+    ) {
+        {
+            let mut write = write_half.lock().await;
+            let _ = write.shutdown().await;
+        }
+        Self::teardown_connection(connections, app_state, server_id, connection_id).await;
+    }
+
     /// Send a Bitcoin message (raw bytes that will be wrapped in Bitcoin message format)
+    #[allow(clippy::too_many_arguments)]
     async fn send_bitcoin_message(
         write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
         data: &[u8],
         connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
+        app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         _magic: Magic,
     ) -> Result<()> {
-        let mut write = write_half.lock().await;
-        write
-            .write_all(data)
-            .await
-            .context("Failed to write Bitcoin message")?;
+        {
+            let mut write = write_half.lock().await;
+            write
+                .write_all(data)
+                .await
+                .context("Failed to write Bitcoin message")?;
+            write
+                .flush()
+                .await
+                .context("Failed to flush Bitcoin message")?;
+        }
+        app_state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                None,
+                Some(data.len() as u64),
+                None,
+                Some(1),
+            )
+            .await;
 
         // Byte-count summary and full hex payload are FileOnly; the one lifecycle
         // line to the TUI is the INFO below.
