@@ -62,3 +62,23 @@ The path assertion is also what proves URL resolution worked end to end: the ser
 CARGO_TARGET_DIR=/tmp/tgt ./cargo-isolated.sh test --no-default-features --features rss \
     --test client::rss -- --test-threads=100
 ```
+
+## `command_channel_test.rs`
+
+Covers `AppState::send_to_client` injecting an action into a running rss client (the
+dashboard's `[ send ]`). **Zero LLM calls**: the client's LLM points at
+`http://127.0.0.1:1`, so its connected-event call fails and the loop must tolerate that —
+part of what the test verifies. It always `wait_for_client_handle`s before sending, which is
+the regression guard for "register the command channel *before* the connected-event LLM
+call"; register it after and a client whose connect event parks on a manual rule reads "no
+command channel" for the whole park.
+
+Asserts the exact `ClientSendOutcome` variant. A successful request is
+`Executed { detail }`, **not** `Sent` — reqwest/h3 own the socket and report no wire byte
+count, so a byte count would be invented; the detail carries what actually came back
+instead. An unknown action must be `Rejected` (not silently swallowed), and `disconnect`
+must be `Disconnected` and leave the client with no command handle.
+
+The peer is a NetGet RSS server of our own with a `*` static handler generating a two-item
+feed, so `-> 2 items` in the outcome detail proves the feed was fetched *and* parsed by the
+`rss` crate, and the server's access log is checked for the requested path.

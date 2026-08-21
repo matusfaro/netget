@@ -773,8 +773,13 @@ Read before assuming a subsystem is sound:
   `src/utils/truncate.rs` has char-boundary helpers; use `truncate_for_log` rather than slicing.
   `src/protocol/log_template.rs` was the important one (`c1515188`): being shared
   infrastructure, it defeated protocols' own local fixes.
-- `git` and `mercurial` call `generate_with_retry` directly, bypassing the rate limiter, the
-  retry/repair loop, and event-handler dispatch — script/static handlers are ignored for them.
+- **Resolved (August 2026), recorded because the claim outlived the code.** This file used to
+  say `git` and `mercurial` "call `generate_with_retry` directly, bypassing the rate limiter,
+  the retry/repair loop, and event-handler dispatch". They do not, and a `grep -rn
+  generate_with_retry src/` now finds callers only inside `src/llm/` itself: the `git` *client*
+  goes through `call_llm_for_client` (budget, limiter and client `event_handlers` all apply),
+  and `src/server/git/mod.rs` and `src/server/mercurial/mod.rs` both use
+  `action_helper::call_llm`. Re-run that grep before trusting any similar claim here.
 - On LLM failure most protocols reset to Idle and write nothing, leaving the peer to hang
   until its own timeout. Still true for **70 of the 79** server `mod.rs` files with a
   recognisable LLM-error branch — 6 answer on every branch, 3 on some. `http` (500, or 503 +

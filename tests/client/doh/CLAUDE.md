@@ -290,3 +290,26 @@ To test a specific DoH server, modify the test URL:
 - [Google Public DNS DoH](https://developers.google.com/speed/public-dns/docs/doh)
 - [Cloudflare DoH](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/)
 - [hickory-client DoH Documentation](https://docs.rs/hickory-client/latest/hickory_client/)
+
+## `command_channel_test.rs`
+
+Covers `AppState::send_to_client` injecting an action into a running doh client (the
+dashboard's `[ send ]`). **Zero LLM calls**: the client's LLM points at
+`http://127.0.0.1:1`, so its connected-event call fails and the loop must tolerate that —
+part of what the test verifies. It always `wait_for_client_handle`s before sending, which is
+the regression guard for "register the command channel *before* the connected-event LLM
+call"; register it after and a client whose connect event parks on a manual rule reads "no
+command channel" for the whole park.
+
+Asserts the exact `ClientSendOutcome` variant. A successful request is
+`Executed { detail }`, **not** `Sent` — reqwest/h3 own the socket and report no wire byte
+count, so a byte count would be invented; the detail carries what actually came back
+instead. An unknown action must be `Rejected` (not silently swallowed), and `disconnect`
+must be `Disconnected` and leave the client with no command handle.
+
+The peer is a ~40-line in-test HTTP/1.1 stub, not NetGet's own DoH server: that server is
+TLS-only with a self-signed certificate and this client builds a default `reqwest::Client`,
+which correctly refuses it (see `src/client/doh/CLAUDE.md`). The stub echoes the POSTed body
+back — a DNS query message is itself a well-formed DNS message — so the client parses a real
+response (zero answers, `NoError`) and the request counter proves exactly one query left the
+process.

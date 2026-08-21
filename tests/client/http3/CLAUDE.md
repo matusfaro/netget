@@ -262,3 +262,25 @@ sudo tcpdump -i lo -w http3-test.pcap udp
 - **QUIC Debugging**: https://github.com/quinn-rs/quinn/blob/main/docs/debugging.md
 - **HTTP/3 RFC**: RFC 9114
 - **Test Helpers**: `/home/user/netget/tests/helpers/client.rs`
+
+## `command_channel_test.rs`
+
+Covers `AppState::send_to_client` injecting an action into a running http3 client (the
+dashboard's `[ send ]`). **Zero LLM calls**: the client's LLM points at
+`http://127.0.0.1:1`, so its connected-event call fails and the loop must tolerate that —
+part of what the test verifies. It always `wait_for_client_handle`s before sending, which is
+the regression guard for "register the command channel *before* the connected-event LLM
+call"; register it after and a client whose connect event parks on a manual rule reads "no
+command channel" for the whole park.
+
+Asserts the exact `ClientSendOutcome` variant. A successful request is
+`Executed { detail }`, **not** `Sent` — reqwest/h3 own the socket and report no wire byte
+count, so a byte count would be invented; the detail carries what actually came back
+instead. An unknown action must be `Rejected` (not silently swallowed), and `disconnect`
+must be `Disconnected` and leave the client with no command handle.
+
+There is **no wire assertion**, deliberately: the `http3` feature builds the client only, so
+there is no NetGet HTTP/3 server to send a QUIC request to, and aiming the client at a closed
+UDP port would assert a quinn handshake timeout rather than anything about this feature. What
+is pinned down is the part the command channel owns — handle registered, `Rejected`,
+`Disconnected`, access log.
