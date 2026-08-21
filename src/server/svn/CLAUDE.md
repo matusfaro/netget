@@ -53,6 +53,25 @@ closing paren only for later ones — every listing was unbalanced — with
 `"quoted"` names and a `rev:N` pseudo-token. Nothing that reads svn could parse
 any of it.
 
+### Dashboard injection (peer messaging)
+
+Each live connection registers a peer handle (`peer_support`), so the dashboard's
+`[ message this peer ]` / `[ disconnect this peer ]` rows work. An injected action
+runs through the same executor and `SvnProtocol::execute_action` the model's does,
+so an injected `send_svn_success` / `send_svn_list` / `send_svn_response` is
+encoded identically. All svn wire verbs return `ActionResult::Output` (none return
+`ActionResult::Custom`), so the generic peer task needs no bespoke arm.
+`{"type":"close_connection"}` (the disconnect row) returns
+`ActionResult::CloseConnection`, which half-closes the write side; the peer reads
+EOF and the reader's `read_line == 0` path runs the normal teardown.
+
+The connection is split into an owned read half and an `Arc<Mutex<WriteHalf>>`
+shared by the reader and the peer task, and the peer handle is dropped on **every**
+exit path (greeting write/LLM failure, command write failure, EOF, read error,
+close_connection, command LLM failure). `update_connection_stats` is called on
+every read and every write, so the rail's `↓ ↑` counters and `last_activity` stay
+live.
+
 ### Failure behavior
 
 An LLM/handler failure on the greeting closes the connection before anything is
@@ -108,5 +127,7 @@ Balanced, with counted strings. **Not verified against the `svn` client** — it
 not installed on the development machine, so conformance beyond the grammar is
 unproven.
 
-`tests/server/svn/` exists but is **not declared in `tests/server/mod.rs`**, so it
-is never compiled or run; its tests are additionally all `#[ignore]`d.
+`tests/server/svn/` **is** declared in `tests/server/mod.rs` and runs: five mocked
+e2e cases (`e2e_test.rs`, no longer `#[ignore]`d) plus a zero-LLM peer-injection
+case (`peer_inject_test.rs`) that asserts `send_to_peer` writes a success tuple to
+a raw socket, the counters move, and `close_connection` sends EOF.

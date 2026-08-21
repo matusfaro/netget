@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 
 pub struct SvnServer;
 
@@ -111,7 +111,7 @@ impl SvnServer {
 }
 
 async fn handle_svn_connection(
-    mut socket: tokio::net::TcpStream,
+    socket: tokio::net::TcpStream,
     peer_addr: SocketAddr,
     llm_client: OllamaClient,
     app_state: Arc<AppState>,
@@ -120,9 +120,33 @@ async fn handle_svn_connection(
     protocol: Arc<actions::SvnProtocol>,
     connection_id: ConnectionId,
 ) {
-    let (reader, mut writer) = tokio::io::split(&mut socket);
+    // Split into an owned read half and a shared write half. The write half is an
+    // Arc<Mutex<..>> so the reader below and the dashboard's peer-command task both
+    // write through the same guarded sink (CLAUDE.md "Connection I/O").
+    let (reader, write_half) = tokio::io::split(socket);
+    let write_half = Arc::new(Mutex::new(write_half));
     let mut buf_reader = BufReader::new(reader);
     let log = Log::new(Some(&status_tx));
+
+    // Peer messaging: the dashboard can inject an action (send_svn_success,
+    // close_connection, ...) into THIS connection through the same executor the
+    // model's actions use. The task ends when the handle is dropped by one of the
+    // close paths below (each calls remove_peer_handle) or by server teardown.
+    let peer_rx = crate::server::peer_support::register_peer_channel(
+        &app_state,
+        server_id,
+        connection_id.as_u32(),
+    )
+    .await;
+    crate::server::peer_support::spawn_peer_command_task(
+        peer_rx,
+        protocol.clone(),
+        app_state.clone(),
+        server_id,
+        connection_id.as_u32(),
+        write_half.clone(),
+        status_tx.clone(),
+    );
 
     // Send greeting event to LLM
     let greeting_event = Event::new(&SVN_GREETING_EVENT, serde_json::json!({}));
@@ -150,9 +174,17 @@ async fn handle_svn_connection(
                 if let crate::llm::actions::protocol_trait::ActionResult::Output(output_data) =
                     protocol_result
                 {
-                    if let Err(e) = writer.write_all(&output_data).await {
-                        log.error(format!("SVN write error: {}", e));
-                        return;
+                    {
+                        let mut writer = write_half.lock().await;
+                        if let Err(e) = writer.write_all(&output_data).await {
+                            log.error(format!("SVN write error: {}", e));
+                            drop(writer);
+                            app_state
+                                .remove_peer_handle(server_id, connection_id.as_u32())
+                                .await;
+                            return;
+                        }
+                        let _ = writer.flush().await;
                     }
 
                     // Update connection stats
@@ -179,6 +211,9 @@ async fn handle_svn_connection(
         Err(e) => {
             // Non-fatal: the greeting handler failed, connection is closed.
             log.warn(format!("SVN LLM call failed during greeting: {}", e));
+            app_state
+                .remove_peer_handle(server_id, connection_id.as_u32())
+                .await;
             return;
         }
     }
@@ -263,9 +298,20 @@ async fn handle_svn_connection(
                         for protocol_result in execution_result.protocol_results {
                             match protocol_result {
                                 crate::llm::actions::protocol_trait::ActionResult::Output(output_data) => {
-                                    if let Err(e) = writer.write_all(&output_data).await {
-                                        log.error(format!("SVN write error: {}", e));
-                                        return;
+                                    {
+                                        let mut writer = write_half.lock().await;
+                                        if let Err(e) = writer.write_all(&output_data).await {
+                                            log.error(format!("SVN write error: {}", e));
+                                            drop(writer);
+                                            app_state
+                                                .remove_peer_handle(
+                                                    server_id,
+                                                    connection_id.as_u32(),
+                                                )
+                                                .await;
+                                            return;
+                                        }
+                                        let _ = writer.flush().await;
                                     }
 
                                     // Update connection stats
@@ -319,8 +365,14 @@ async fn handle_svn_connection(
         }
     }
 
-    // Update connection status to closed
+    // Update connection status to closed. Reached by every loop `break` (EOF,
+    // read error, close_connection, LLM failure), so this is the one place the
+    // peer handle must be dropped — otherwise the rail keeps offering
+    // "message this peer" on a dead connection.
     use crate::state::server::ConnectionStatus;
+    app_state
+        .remove_peer_handle(server_id, connection_id.as_u32())
+        .await;
     app_state
         .update_connection_status(server_id, connection_id, ConnectionStatus::Closed)
         .await;
