@@ -144,6 +144,21 @@ async fn handle_peer_command<W>(
                 )
                 .await;
         }
+        // Injected bytes count like any other write: the rail's ↑ counter and
+        // last_activity read these, and a send from the dashboard that left
+        // them at zero looked like nothing went out.
+        Ok(ClientSendOutcome::Sent { bytes_sent }) => {
+            state
+                .update_connection_stats(
+                    server_id,
+                    crate::server::connection::ConnectionId::new(connection_id),
+                    None,
+                    Some(*bytes_sent as u64),
+                    None,
+                    Some(1),
+                )
+                .await;
+        }
         Ok(_) => {}
     }
     let _ = status_tx.send("__UPDATE_UI__".to_string());
