@@ -46,7 +46,15 @@ overflow, injected close) through the single cleanup in `handle_connection`.
 EOF). An injected `rtsp_*_response` verb writes **nothing**: RTSP framing (CSeq, Transport,
 Session, RTP-Info) is built in `mod.rs` from the request, so `execute_action` returns `NoAction`
 for the response verbs and there is no request context to frame an unsolicited response against.
-This is not a `Custom`-result gap; it is inherent to RTSP being strictly request/response.
+This is not a `Custom`-result gap; it is inherent to the response verbs being request-bound.
+The redis-style refactor (move the encoder into `execute_action`, return `Output`) does not
+apply: `build_response` needs the request's CSeq, and SETUP/PLAY responses additionally need
+the per-connection `Session` state (session id, negotiated RTP ports), which lives in
+`run_connection` — an unsolicited response with no CSeq would be discarded or misattributed
+by the client. What *would* be genuinely injectable is new server-initiated vocabulary (RFC
+2326 defines server→client requests such as ANNOUNCE and REDIRECT, which this implementation
+does not speak); adding one of those as an `Output`-returning verb is new protocol surface,
+not an encoder move, and has not been done.
 Test: `tests/server/rtsp/peer_inject_test.rs` (zero LLM calls).
 
 ## Out of scope

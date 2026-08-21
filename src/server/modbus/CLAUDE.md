@@ -135,6 +135,16 @@ that reaches the wire from outside is `close_connection` (an explicit arm in
 `execute_action`, not offered to the model), which half-closes the socket so the peer reads
 EOF. No bespoke Custom path was added.
 
+This is deliberately **not** the redis-style refactor (encoders moved into `execute_action`
+returning `Output`), and moving them would not help: the MBAP header needs the request's
+transaction id and unit id, `encode_bits_response`/`encode_registers_response` validate
+against the request's quantity, and `encode_write_ack` literally echoes the request — none of
+which exists outside `handle_data`'s request context. More fundamentally, Modbus TCP has no
+protocol-legal unsolicited server frame: a client matches responses to requests by
+transaction id, so anything injected between exchanges would either be dropped or desync the
+master. There is no fix to make; `close_connection` is the entire meaningful surface, and
+`tests/server/modbus/peer_inject_test.rs` pins exactly that.
+
 ## LLM integration
 
 ### Events (all three are emitted)

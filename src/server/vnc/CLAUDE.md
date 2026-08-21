@@ -140,12 +140,21 @@ runs the injected action through the same executor the LLM path uses.
 - **`[ disconnect this peer ]`** injects `{"type":"close_connection"}`. `execute_action` maps
   both `close_connection` and `vnc_disconnect_client` to `ActionResult::CloseConnection`, which
   the generic peer task half-closes; the message loop then reads EOF and runs its teardown.
-- **The drawing verbs are a Custom-result gap.** `vnc_render_display` and `vnc_set_clipboard`
-  return `ActionResult::Custom`, and the generic peer task cannot execute them — rendering needs
-  this connection's framebuffer state (`last_frame`, `dirty`, `pending_request`), which is owned
-  by the message loop, so an out-of-loop render would race it. The peer task reports these as
-  "executed" without touching the wire. Only disconnect is wired; "message this peer" with a
-  draw is deliberately not.
+- **The drawing verbs are a Custom-result gap, and deliberately stay one.** `vnc_render_display`
+  and `vnc_set_clipboard` return `ActionResult::Custom`, and the generic peer task cannot
+  execute them — rendering needs this connection's framebuffer state (`last_frame`, `dirty`,
+  `pending_request`, negotiated width/height), which is owned by the message loop, so an
+  out-of-loop render would race it. The peer task reports these as "executed" without touching
+  the wire. Only disconnect is wired; "message this peer" with a draw is deliberately not.
+  The redis-style fix (encode in `execute_action`, return `Output`) cannot work here: a
+  FramebufferUpdate is not a pure function of the action — whether it may be written at all
+  depends on `pending_request` (RFB lets the server answer only an outstanding update
+  request), and `vnc_no_change` semantics depend on `last_frame`. Closing the gap would take a
+  bespoke per-connection peer command task in the BGP style (`bgp/mod.rs`'s own
+  `spawn_peer_command_task`): hoist the framebuffer state out of `VncConnection` into a shared
+  handle (`Arc<Mutex<..>>`) used by both the message loop and the peer task, and rasterise
+  off-loop via the same `spawn_blocking` path. That is a restructuring of the message loop,
+  not a contained encoder move, and has not been done.
 - **Live counters.** `update_connection_stats` is called on every client message read (in the
   message loop) and every frame / ServerCutText write (`send_pending_frame`,
   `send_server_cut_text`), so the rail's `↓ ↑` counters and `last_activity` move. Handshake and
