@@ -210,6 +210,10 @@ impl Server for RedisProtocol {
             "redis_error" => self.execute_redis_error(action),
             "redis_null" => self.execute_redis_null(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
+            // Not offered to the model (`close_this_connection` is its verb), but the
+            // dashboard's "disconnect this peer" injects `close_connection` through the peer
+            // command task, which half-closes the write side on this result.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown Redis action: {}", action_type)),
         }
     }

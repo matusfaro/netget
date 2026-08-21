@@ -81,6 +81,22 @@ HGETALL user:123\r\n
 }
 ```
 
+### Dashboard injection (`[ execute_redis_command ]`, `[ disconnect ]`)
+
+`connect_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) *before* the `redis_connected` LLM
+call, which a manual rule can park. Because `read_line` is not cancellation-safe, commands
+are drained by a separate `command_loop` task (registered with `register_client_task`)
+that shares the write half, not by a `select!` arm. `execute_redis_command` yields
+`ClientActionResult::Custom { name: "redis_command" }`, which the generic
+`handle_stream_client_command` cannot write, so `command_loop` routes the result through
+`apply_action` — the one function the connected-event path and the read loop also use to
+encode commands — then records an `injected_action` access-log entry and replies with
+`ClientSendOutcome::Sent { bytes_sent }`. An injected `disconnect` half-closes; the read
+loop sees EOF. The handle is removed (`remove_client_handle`) on every read-loop exit and
+on the connect-time early return, so the rail stops offering `[ send ]` on a dead client.
+Test: `tests/client/redis/command_channel_test.rs` (zero LLM calls).
+
 ### Dual Logging
 
 ```rust

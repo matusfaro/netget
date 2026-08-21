@@ -162,24 +162,60 @@ impl RedisHandler {
         let server_id = self.server_id;
         let connection_id = self.connection_id;
         let app_state = self.app_state.clone();
+        let status_tx = self.status_tx.clone();
 
         let result = self.run(stream).await;
 
+        // Every exit path - EOF, read error, decode error, close_this_connection, frame
+        // cap - lands here, so the dashboard's peer rows go away with the connection.
         if let Some(server_id) = server_id {
+            app_state
+                .remove_peer_handle(server_id, connection_id.as_u32())
+                .await;
             app_state
                 .close_connection_on_server(server_id, connection_id)
                 .await;
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
         }
 
         result
     }
 
-    async fn run(self, mut stream: TcpStream) -> Result<()> {
+    async fn run(self, stream: TcpStream) -> Result<()> {
         let protocol = Arc::new(RedisProtocol::new(
             self.connection_id,
             self.app_state.clone(),
             self.status_tx.clone(),
         ));
+
+        // The write half is shared with the peer command task below, so the dashboard can
+        // write into this connection while the read loop is parked in `read()`.
+        let (mut read_half, write_half) = tokio::io::split(stream);
+        let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
+
+        // Peer messaging: "message this peer" / "disconnect this peer" inject actions into
+        // THIS connection through the same executor the LLM path uses. Registered before the
+        // first read, so a manual `*` rule parking the first command still leaves the
+        // operator able to reach the connection. Note the Custom-result gap documented in
+        // CLAUDE.md: only `close_this_connection` produces wire effect through this path.
+        if let Some(server_id) = self.server_id {
+            let peer_rx = crate::server::peer_support::register_peer_channel(
+                &self.app_state,
+                server_id,
+                self.connection_id.as_u32(),
+            )
+            .await;
+            crate::server::peer_support::spawn_peer_command_task(
+                peer_rx,
+                protocol.clone(),
+                self.app_state.clone(),
+                server_id,
+                self.connection_id.as_u32(),
+                write_half.clone(),
+                self.status_tx.clone(),
+            );
+            let _ = self.status_tx.send("__UPDATE_UI__".to_string());
+        }
 
         let mut buffer = Vec::new();
         let log = Log::new(Some(&self.status_tx));
@@ -187,7 +223,7 @@ impl RedisHandler {
         loop {
             // Read data from the stream
             let mut chunk = vec![0u8; 4096];
-            let n = match stream.read(&mut chunk).await {
+            let n = match read_half.read(&mut chunk).await {
                 Ok(0) => {
                     debug!("Redis client disconnected");
                     return Ok(());
@@ -219,11 +255,24 @@ impl RedisHandler {
                     "Redis client {} exceeded the {} byte frame buffer limit without completing a frame; closing",
                     self.connection_id, MAX_PENDING_FRAME_BYTES
                 ));
-                let _ = stream
-                    .write_all(&encode_error(
-                        "ERR Protocol error: invalid multibulk length",
-                    ))
-                    .await;
+                let reply = encode_error("ERR Protocol error: invalid multibulk length");
+                {
+                    let mut writer = write_half.lock().await;
+                    let _ = writer.write_all(&reply).await;
+                    let _ = writer.flush().await;
+                }
+                if let Some(server_id) = self.server_id {
+                    self.app_state
+                        .update_connection_stats(
+                            server_id,
+                            self.connection_id,
+                            None,
+                            Some(reply.len() as u64),
+                            None,
+                            Some(1),
+                        )
+                        .await;
+                }
                 return Ok(());
             }
 
@@ -380,7 +429,12 @@ impl RedisHandler {
                         }
 
                         if !response.is_empty() {
-                            stream.write_all(&response).await?;
+                            {
+                                // Guard dropped before the next `call_llm` await.
+                                let mut writer = write_half.lock().await;
+                                writer.write_all(&response).await?;
+                                writer.flush().await?;
+                            }
                             if let Some(server_id) = self.server_id {
                                 self.app_state
                                     .update_connection_stats(
@@ -396,6 +450,9 @@ impl RedisHandler {
                         }
 
                         if close_after_write {
+                            // The peer command task holds a clone of the write half until its
+                            // channel closes; half-close now so the client sees EOF at once.
+                            let _ = write_half.lock().await.shutdown().await;
                             return Ok(());
                         }
 

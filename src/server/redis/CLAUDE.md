@@ -78,6 +78,25 @@ Verified with `redis-cli --no-raw`: `["k1", 42, true, null, {"a":1}]` returns
 - No per-connection state machine: commands on one connection are handled
   strictly sequentially by the read loop, so concurrent LLM calls cannot happen.
 
+### Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+Every connection registers a peer handle (`server::peer_support`) before its first read,
+so a manual `*` rule parking the first command still leaves the operator able to reach
+it. The stream is `tokio::io::split` and the write half is an `Arc<Mutex<..>>` shared
+with the generic peer command task; the handle is removed on every exit path through the
+single cleanup in `handle_connection`. Counters (`update_connection_stats`) move on every
+read and every write, including the frame-cap error.
+
+**Custom-result gap.** All six reply verbs (`redis_simple_string`, `redis_bulk_string`,
+`redis_array`, `redis_integer`, `redis_error`, `redis_null`) return `ActionResult::Custom`
+and are encoded by the `match` in `run()`, not by `execute_action`. The generic peer task
+writes only `ActionResult::Output`, so an injected reply verb is reported as `Executed`
+and **nothing reaches the socket**. Only `close_connection` (what "disconnect this peer"
+sends; an explicit arm in `execute_action`, not offered to the model — its verb is
+`close_this_connection`) has wire effect: it half-closes and the client reads EOF. Closing
+the gap means moving the RESP encoding into `execute_action` so the verbs return
+`Output`; until then `tests/server/redis/peer_inject_test.rs` pins the `Executed` outcome.
+
 ## Not implemented
 
 - **RESP3** — no `HELLO 3`, push messages, doubles, maps or sets.

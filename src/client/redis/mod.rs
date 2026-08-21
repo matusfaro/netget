@@ -3,7 +3,7 @@ pub mod actions;
 
 pub use actions::RedisClientProtocol;
 
-use crate::llm::actions::client_trait::Client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -61,8 +61,33 @@ impl RedisClient {
         // Split stream
         let (read_half, write_half) = tokio::io::split(stream);
         let write_half_arc = Arc::new(Mutex::new(write_half));
-        let write_half_for_connected = write_half_arc.clone();
         let mut reader = BufReader::new(read_half);
+        let protocol = Arc::new(RedisClientProtocol::new());
+
+        // Command channel for injected actions (the dashboard's [ execute_redis_command ]).
+        // Registered BEFORE the connected-event LLM call, which a manual `*` rule can park
+        // for minutes - the operator must be able to reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // `read_line` is not cancellation-safe, so the commands are drained by their own task
+        // rather than a `select!` arm in the read loop. Both tasks share the write half.
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_write = write_half_arc.clone();
+        let cmd_protocol = protocol.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx,
+                cmd_protocol,
+                cmd_write,
+                client_id,
+                cmd_state,
+                cmd_tx,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Call LLM with redis_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -80,44 +105,42 @@ impl RedisClient {
                 &instruction,
                 &String::new(), // No memory yet for initial connection
                 Some(&event),
-                &crate::client::redis::actions::RedisClientProtocol::new(),
+                protocol.as_ref(),
                 &status_tx,
             )
             .await
             {
                 Ok(result) => {
-                    // Execute actions from LLM response
                     for action in result.actions {
-                        if let Some(action_type) = action["type"].as_str() {
-                            match action_type {
-                                "execute_redis_command" => {
-                                    if let Some(command) = action["command"].as_str() {
-                                        let command_bytes = encode_redis_command(command);
-                                        let mut write_guard = write_half_for_connected.lock().await;
-                                        if let Err(e) = write_guard.write_all(&command_bytes).await
-                                        {
-                                            error!(
-                                                "Failed to send Redis command after connect: {}",
-                                                e
-                                            );
-                                        } else if let Err(e) = write_guard.flush().await {
-                                            error!("Failed to flush after connect: {}", e);
-                                        } else {
-                                            info!(
-                                                "{} {}",
-                                                patterns::REDIS_CLIENT_SENT_COMMAND,
-                                                command
-                                            );
-                                        }
+                        match protocol.execute_action(action) {
+                            Ok(action_result) => {
+                                match Self::apply_action(action_result, &write_half_arc, client_id)
+                                    .await
+                                {
+                                    Ok(Applied::Disconnect) => {
+                                        info!("LLM requested disconnect after connect");
+                                        let _ = write_half_arc.lock().await.shutdown().await;
+                                        app_state.remove_client_handle(client_id).await;
+                                        app_state
+                                            .update_client_status(
+                                                client_id,
+                                                ClientStatus::Disconnected,
+                                            )
+                                            .await;
+                                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                        return Ok(local_addr);
+                                    }
+                                    Ok(Applied::Sent(_)) => {}
+                                    Err(e) => {
+                                        error!("Failed to send Redis command after connect: {}", e)
                                     }
                                 }
-                                "disconnect" => {
-                                    info!("LLM requested disconnect after connect");
-                                    return Ok(local_addr);
-                                }
-                                _ => {
-                                    trace!("Unknown action type after connect: {}", action_type);
-                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "Redis client {} could not execute action after connect: {}",
+                                    client_id, e
+                                );
                             }
                         }
                     }
@@ -158,8 +181,6 @@ impl RedisClient {
                         if let Some(instruction) =
                             app_state.get_instruction_for_client(client_id).await
                         {
-                            let protocol =
-                                Arc::new(crate::client::redis::actions::RedisClientProtocol::new());
                             let event = Event::new(
                                 &REDIS_CLIENT_RESPONSE_RECEIVED_EVENT,
                                 serde_json::json!({
@@ -196,20 +217,29 @@ impl RedisClient {
                                     // Execute actions
                                     for action in actions {
                                         match protocol.execute_action(action) {
-                                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) if name == "redis_command" => {
-                                                if let Some(command_str) = data.get("command").and_then(|v| v.as_str()) {
-                                                    let cmd_bytes = encode_redis_command(command_str);
-                                                    let mut write_guard = write_half_arc.lock().await;
-                                                    if let Ok(_) = write_guard.write_all(&cmd_bytes).await {
-                                                        if let Ok(_) = write_guard.flush().await {
-                                                            trace!("Redis client {} sent: {}", client_id, command_str);
-                                                        }
+                                            Ok(action_result) => {
+                                                match Self::apply_action(
+                                                    action_result,
+                                                    &write_half_arc,
+                                                    client_id,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(Applied::Disconnect) => {
+                                                        info!(
+                                                            "Redis client {} disconnecting",
+                                                            client_id
+                                                        );
+                                                        break;
+                                                    }
+                                                    Ok(Applied::Sent(_)) => {}
+                                                    Err(e) => {
+                                                        error!(
+                                                            "Redis client {} write failed: {}",
+                                                            client_id, e
+                                                        );
                                                     }
                                                 }
-                                            }
-                                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                                                info!("Redis client {} disconnecting", client_id);
-                                                break;
                                             }
                                             // Do not swallow. `_ => {}` here meant an action
                                             // the client cannot execute — including one it
@@ -227,12 +257,6 @@ impl RedisClient {
                                                     "[ERROR] Redis client {} action failed: {}",
                                                     client_id, e
                                                 ));
-                                            }
-                                            Ok(other) => {
-                                                debug!(
-                                                    "Redis client {} ignoring unhandled action result: {:?}",
-                                                    client_id, other
-                                                );
                                             }
                                         }
                                     }
@@ -253,11 +277,140 @@ impl RedisClient {
                     }
                 }
             }
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead connection (a late send then fails fast). This
+            // also closes the command channel, which ends `command_loop`.
+            app_state.remove_client_handle(client_id).await;
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
         task_registrar.register_client_task(client_id, handle).await;
 
         Ok(local_addr)
     }
+
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot run this client's
+    /// vocabulary because `execute_redis_command` yields `ClientActionResult::Custom`, so the
+    /// action goes through [`Self::apply_action`] - the same function the LLM path uses -
+    /// and the outcome is recorded and replied exactly the way the generic arm does it.
+    async fn command_loop<W>(
+        mut command_rx: tokio::sync::mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        protocol: Arc<RedisClientProtocol>,
+        write_half: Arc<Mutex<W>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) where
+        W: tokio::io::AsyncWrite + Unpin + Send + 'static,
+    {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(result, &write_half, client_id)
+                    .await
+                    .map(|applied| match applied {
+                        Applied::Disconnect => ClientSendOutcome::Disconnected,
+                        Applied::Sent(0) => ClientSendOutcome::Executed {
+                            detail: "executed (nothing to write)".to_string(),
+                        },
+                        Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                    }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("Redis client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // Half-close so the server reads EOF and the read loop runs its normal
+                // disconnect path.
+                let _ = write_half.lock().await.shutdown().await;
+                break;
+            }
+        }
+    }
+
+    /// Put one executed action on the wire. Shared by the connected-event path, the read
+    /// loop and injected commands so the RESP encoding of `execute_redis_command` exists
+    /// exactly once.
+    async fn apply_action<W>(
+        action_result: ClientActionResult,
+        write_half: &Arc<Mutex<W>>,
+        client_id: ClientId,
+    ) -> Result<Applied>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        match action_result {
+            ClientActionResult::Custom { name, data } => {
+                if name != "redis_command" {
+                    debug!(
+                        "Redis client {} ignoring unhandled custom result: {}",
+                        client_id, name
+                    );
+                    return Ok(Applied::Sent(0));
+                }
+                let command = data
+                    .get("command")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("Missing command in action data"))?;
+                let cmd_bytes = encode_redis_command(command);
+
+                let mut writer = write_half.lock().await;
+                writer.write_all(&cmd_bytes).await?;
+                writer.flush().await?;
+                info!("{} {}", patterns::REDIS_CLIENT_SENT_COMMAND, command);
+                Ok(Applied::Sent(cmd_bytes.len()))
+            }
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            other => {
+                debug!(
+                    "Redis client {} ignoring unhandled action result: {:?}",
+                    client_id, other
+                );
+                Ok(Applied::Sent(0))
+            }
+        }
+    }
+}
+
+/// What [`RedisClient::apply_action`] did with one action.
+enum Applied {
+    /// Bytes written (0 when the action produced no wire output).
+    Sent(usize),
+    /// The session should end.
+    Disconnect,
 }
 
 /// Encode a Redis command as a RESP array
