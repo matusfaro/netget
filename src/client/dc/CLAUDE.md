@@ -158,6 +158,19 @@ Example:
 }
 ```
 
+### 9. Dashboard Injection (command channel)
+
+The loop registers a command channel (`command_support::register_command_channel`) before the
+read loop starts - i.e. before the `$Lock`-triggered connected-event LLM call, which a manual
+rule can park. `read_line` is not cancellation-safe, so commands are drained by a separate
+`command_loop` task (registered with `register_client_task`) sharing the `Arc<Mutex<DcWriteHalf>>`.
+Every `send_dc_*` verb yields `ClientActionResult::Custom`, so the generic arm cannot run them;
+`command_loop` routes the result through `apply_dc_action` - the same function the LLM path
+uses - records an `injected_action` access-log entry and replies with `Sent{n}` /
+`Executed` (`send_dc_filelist` writes nothing) / `Disconnected` (writes `$Quit|` and half-closes).
+The read loop removes the client handle on EOF and on read error. Test:
+`tests/client/dc/command_channel_test.rs` (zero LLM calls).
+
 ## LLM Integration
 
 ### Event Types

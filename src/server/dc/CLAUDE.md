@@ -377,6 +377,17 @@ See `actions.rs` for complete action list.
 - Connection stays in ServerInstance until closed
 - UI updates on every message (bytes sent/received, last activity)
 
+### 10. Dashboard Injection (peer handle)
+
+Every connection registers a peer handle (`peer_support::register_peer_channel` +
+`spawn_peer_command_task`) right after it is tracked and before the `$Lock` goes out, so the
+dashboard's `[ message this peer ]` / `[ disconnect this peer ]` work from the first moment.
+All wire verbs return `ActionResult::Output`, so the generic peer task covers the whole
+vocabulary; `close_connection` returns `CloseConnection`, which half-closes the socket. The
+handle is removed on every exit path through the single cleanup after `run_connection`.
+Byte/packet counters are updated on every read and on every write (the `$Lock`, the LLM/handler
+replies). Test: `tests/server/dc/peer_inject_test.rs` (zero LLM calls).
+
 ## Known Limitations
 
 ### 1. No Key Validation

@@ -48,6 +48,13 @@ impl DcWriteHalf {
             DcWriteHalf::Tls(w) => w.flush().await.map_err(Into::into),
         }
     }
+
+    async fn shutdown(&mut self) -> Result<()> {
+        match self {
+            DcWriteHalf::Plain(w) => w.shutdown().await.map_err(Into::into),
+            DcWriteHalf::Tls(w) => w.shutdown().await.map_err(Into::into),
+        }
+    }
 }
 
 /// Connection state for DC authentication
@@ -421,6 +428,26 @@ where
         file_list: Vec::new(), // Start with empty file list
     }));
 
+    // Command channel for injected actions (the dashboard's [ send_dc_chat ] and friends).
+    // Registered BEFORE the read loop starts, so it exists before the connected-event LLM
+    // call that $Lock triggers - a manual `*` rule can park that call for minutes and the
+    // operator must be able to reach the client while it waits.
+    let command_rx =
+        crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+    // `read_line` is not cancellation-safe, so commands are drained by their own task rather
+    // than a `select!` arm in the read loop. Both tasks share the write half; the channel
+    // closes when the read loop removes the handle, which ends this task.
+    let cmd_task = tokio::spawn(command_loop(
+        command_rx,
+        client_state.clone(),
+        write_half_arc.clone(),
+        client_id,
+        app_state.clone(),
+        status_tx.clone(),
+    ));
+    app_state.register_client_task(client_id, cmd_task).await;
+
     // Spawn read loop for DC messages
     // Registered with AppState so stop_client can abort this task —
     // dropping a JoinHandle only detaches it in Tokio.
@@ -484,6 +511,10 @@ where
                 }
             }
         }
+
+        // Both exits (EOF, read error) land here: the socket is gone, so stop offering
+        // [ send ] on it. Dropping the handle also closes the command task's channel.
+        app_state.remove_client_handle(client_id).await;
     });
     task_registrar
         .register_client_task(client_id, task_handle)
@@ -1437,24 +1468,51 @@ async fn execute_dc_actions(
     write_half: &Arc<Mutex<DcWriteHalf>>,
     client_id: ClientId,
 ) -> Result<()> {
-    use crate::llm::actions::client_trait::ClientActionResult;
-
     // Update memory
     if let Some(mem) = result.memory_updates {
         client_state.lock().await.memory = mem;
     }
 
     let protocol = DcClientProtocol::new();
-    let nickname = client_state.lock().await.nickname.clone();
 
     // Execute actions
     for action in result.actions {
-        match protocol.execute_action(action)? {
+        let action_result = protocol.execute_action(action)?;
+        apply_dc_action(action_result, client_state, write_half, client_id).await?;
+    }
+
+    Ok(())
+}
+
+/// What [`apply_dc_action`] did with one action.
+enum Applied {
+    /// Bytes written (0 when the action produced no wire output, e.g. `send_dc_filelist`).
+    Sent(usize),
+    /// `$Quit|` was written and the session should end.
+    Disconnect,
+}
+
+/// Put one executed action on the wire. Shared by the LLM path and injected commands so the
+/// NMDC encoding of every `send_dc_*` verb exists exactly once.
+async fn apply_dc_action(
+    action_result: crate::llm::actions::client_trait::ClientActionResult,
+    client_state: &Arc<Mutex<DcClientState>>,
+    write_half: &Arc<Mutex<DcWriteHalf>>,
+    client_id: ClientId,
+) -> Result<Applied> {
+    use crate::llm::actions::client_trait::ClientActionResult;
+
+    let nickname = client_state.lock().await.nickname.clone();
+    let mut sent = 0usize;
+
+    {
+        match action_result {
             ClientActionResult::Custom { name, data } => match name.as_str() {
                 "dc_chat" => {
                     if let Some(message) = data.get("message").and_then(|v| v.as_str()) {
                         let cmd = format!("<{}> {}|", nickname, message);
                         send_dc_command(write_half, &cmd).await?;
+                        sent = cmd.len();
                         info!("DC client {} sent chat: {}", client_id, message);
                     }
                 }
@@ -1468,6 +1526,7 @@ async fn execute_dc_actions(
                             target, nickname, nickname, message
                         );
                         send_dc_command(write_half, &cmd).await?;
+                        sent = cmd.len();
                         info!(
                             "DC client {} sent private message to {}: {}",
                             client_id, target, message
@@ -1479,6 +1538,7 @@ async fn execute_dc_actions(
                         // Simple search format: "$Search Hub:nickname F?F?0?1?query"
                         let cmd = format!("$Search Hub:{} F?F?0?1?{}|", nickname, query);
                         send_dc_command(write_half, &cmd).await?;
+                        sent = cmd.len();
                         info!("DC client {} sent search: {}", client_id, query);
                     }
                 }
@@ -1493,12 +1553,14 @@ async fn execute_dc_actions(
                             nickname, description, email, share_size
                         );
                         send_dc_command(write_half, &cmd).await?;
+                        sent = cmd.len();
                         info!("DC client {} sent MyINFO", client_id);
                     }
                 }
                 "dc_get_nicklist" => {
                     let cmd = "$GetNickList|".to_string();
                     send_dc_command(write_half, &cmd).await?;
+                    sent = cmd.len();
                     info!("DC client {} requested user list", client_id);
                 }
                 "dc_filelist" => {
@@ -1539,6 +1601,7 @@ async fn execute_dc_actions(
                             cmd.push('|');
                         }
                         send_dc_command(write_half, &cmd).await?;
+                        sent = cmd.len();
                         info!("DC client {} sent raw command: {}", client_id, command);
                     }
                 }
@@ -1549,6 +1612,7 @@ async fn execute_dc_actions(
                 // Send quit
                 let cmd = "$Quit|".to_string();
                 let _ = send_dc_command(write_half, &cmd).await;
+                return Ok(Applied::Disconnect);
             }
             ClientActionResult::WaitForMore => {
                 // Just wait
@@ -1557,7 +1621,80 @@ async fn execute_dc_actions(
         }
     }
 
-    Ok(())
+    Ok(Applied::Sent(sent))
+}
+
+/// Drain injected commands until the channel closes (the read loop removed the handle) or
+/// an injected `disconnect` ends the session.
+///
+/// The generic `command_support::handle_stream_client_command` cannot run this client's
+/// vocabulary because every `send_dc_*` verb yields `ClientActionResult::Custom`, so the
+/// action goes through [`apply_dc_action`] - the same function the LLM path uses - and the
+/// outcome is recorded and replied exactly the way the generic arm does it.
+async fn command_loop(
+    mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+    client_state: Arc<Mutex<DcClientState>>,
+    write_half: Arc<Mutex<DcWriteHalf>>,
+    client_id: ClientId,
+    app_state: Arc<AppState>,
+    status_tx: mpsc::UnboundedSender<String>,
+) {
+    use crate::llm::actions::protocol_trait::Protocol;
+    use crate::state::client_handles::ClientSendOutcome;
+    use crate::state::AccessLogOwner;
+
+    let protocol = DcClientProtocol::new();
+
+    while let Some(command) = command_rx.recv().await {
+        let action = command.action.clone();
+        let outcome = match protocol.execute_action(action.clone()) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(result) => apply_dc_action(result, &client_state, &write_half, client_id)
+                .await
+                .map(|applied| match applied {
+                    Applied::Disconnect => ClientSendOutcome::Disconnected,
+                    Applied::Sent(0) => ClientSendOutcome::Executed {
+                        detail: "executed (nothing to write)".to_string(),
+                    },
+                    Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                }),
+        };
+
+        let outcome_json = match &outcome {
+            Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+            Err(e) => serde_json::json!({"error": e.to_string()}),
+        };
+        app_state
+            .record_access_log(
+                AccessLogOwner::Client(client_id.as_u32()),
+                protocol.protocol_name(),
+                None,
+                "injected_action",
+                action,
+                vec![outcome_json],
+            )
+            .await;
+
+        let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+        if let Err(e) = &outcome {
+            error!("DC client {} injected action failed: {}", client_id, e);
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        crate::client::command_support::reply(command, outcome);
+
+        if disconnect {
+            // $Quit| is already on the wire; half-close so the hub reads EOF and the read
+            // loop runs its normal disconnect path.
+            let _ = write_half.lock().await.shutdown().await;
+            break;
+        }
+    }
 }
 
 /// Send a DC command (ensures pipe termination)

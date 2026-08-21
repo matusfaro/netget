@@ -2,3 +2,5 @@
 
 #[cfg(all(test, feature = "dc"))]
 mod test;
+#[cfg(all(test, feature = "dc"))]
+mod peer_inject_test;
