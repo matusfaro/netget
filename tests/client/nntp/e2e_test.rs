@@ -9,7 +9,7 @@ mod nntp_client_tests {
     use std::time::Duration;
 
     /// Test NNTP client connection and basic command
-    /// LLM calls: 2 (server startup, client connection)
+    /// LLM calls: 4 (server startup, greeting, client connection, command)
     #[tokio::test]
     async fn test_nntp_client_connect_and_list() -> E2EResult<()> {
         // Start an NNTP server listening on an available port
@@ -31,21 +31,21 @@ mod nntp_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: LIST command received
+                // Mock 2: greeting (the server asks the LLM for it as command "GREETING")
+                .on_event("nntp_command_received")
+                .and_event_data_contains("command", "GREETING")
+                .respond_with_actions(serde_json::json!([
+                    { "type": "send_nntp_response", "code": 200, "text": "netget ready" }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: LIST command received
                 .on_event("nntp_command_received")
                 .and_event_data_contains("command", "LIST")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_nntp_response",
-                        "code": 215,
-                        "message": "Newsgroups in form \"group high low status\""
-                    },
-                    {
-                        "type": "send_nntp_line",
-                        "line": "test.misc 100 1 y"
-                    },
-                    {
-                        "type": "send_nntp_terminator"
+                        "type": "send_nntp_list",
+                        "groups": [ { "name": "test.misc", "high": 100, "low": 1, "status": "y" } ]
                     }
                 ]))
                 .expect_calls(1)
@@ -81,8 +81,7 @@ mod nntp_client_tests {
                 .on_event("nntp_connected")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_nntp_command",
-                        "command": "LIST"
+                        "type": "nntp_list"
                     }
                 ]))
                 .expect_calls(1)
@@ -124,7 +123,7 @@ mod nntp_client_tests {
     }
 
     /// Test NNTP client can select a newsgroup
-    /// LLM calls: 2 (server startup, client connection)
+    /// LLM calls: 4 (server startup, greeting, client connection, command)
     #[tokio::test]
     async fn test_nntp_client_select_group() -> E2EResult<()> {
         // Start an NNTP server
@@ -146,14 +145,24 @@ mod nntp_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: GROUP command received
+                // Mock 2: greeting (the server asks the LLM for it as command "GREETING")
+                .on_event("nntp_command_received")
+                .and_event_data_contains("command", "GREETING")
+                .respond_with_actions(serde_json::json!([
+                    { "type": "send_nntp_response", "code": 200, "text": "netget ready" }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: GROUP command received
                 .on_event("nntp_command_received")
                 .and_event_data_contains("command", "GROUP")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_nntp_response",
-                        "code": 211,
-                        "message": "10 1 10 comp.lang.rust"
+                        "type": "send_nntp_group",
+                        "name": "comp.lang.rust",
+                        "count": 10,
+                        "low": 1,
+                        "high": 10
                     }
                 ]))
                 .expect_calls(1)
@@ -188,8 +197,8 @@ mod nntp_client_tests {
                 .on_event("nntp_connected")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_nntp_command",
-                        "command": "GROUP comp.lang.rust"
+                        "type": "nntp_group",
+                        "group_name": "comp.lang.rust"
                     }
                 ]))
                 .expect_calls(1)
@@ -233,7 +242,7 @@ mod nntp_client_tests {
     }
 
     /// Test NNTP client can retrieve articles
-    /// LLM calls: 2 (server startup, client connection)
+    /// LLM calls: 4 (server startup, greeting, client connection, command)
     #[tokio::test]
     async fn test_nntp_client_retrieve_article() -> E2EResult<()> {
         // Start an NNTP server
@@ -255,33 +264,24 @@ mod nntp_client_tests {
                 ]))
                 .expect_calls(1)
                 .and()
-                // Mock 2: ARTICLE command received
+                // Mock 2: greeting (the server asks the LLM for it as command "GREETING")
+                .on_event("nntp_command_received")
+                .and_event_data_contains("command", "GREETING")
+                .respond_with_actions(serde_json::json!([
+                    { "type": "send_nntp_response", "code": 200, "text": "netget ready" }
+                ]))
+                .expect_calls(1)
+                .and()
+                // Mock 3: ARTICLE command received
                 .on_event("nntp_command_received")
                 .and_event_data_contains("command", "ARTICLE")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_nntp_response",
+                        "type": "send_nntp_article",
                         "code": 220,
-                        "message": "Article follows"
-                    },
-                    {
-                        "type": "send_nntp_line",
-                        "line": "Subject: Test Article"
-                    },
-                    {
-                        "type": "send_nntp_line",
-                        "line": "From: test@example.com"
-                    },
-                    {
-                        "type": "send_nntp_line",
-                        "line": ""
-                    },
-                    {
-                        "type": "send_nntp_line",
-                        "line": "This is the article body."
-                    },
-                    {
-                        "type": "send_nntp_terminator"
+                        "message_id": "<1@example.com>",
+                        "headers": "Subject: Test Article\r\nFrom: test@example.com",
+                        "body": "This is the article body."
                     }
                 ]))
                 .expect_calls(1)
@@ -316,8 +316,8 @@ mod nntp_client_tests {
                 .on_event("nntp_connected")
                 .respond_with_actions(serde_json::json!([
                     {
-                        "type": "send_nntp_command",
-                        "command": "ARTICLE 1"
+                        "type": "nntp_article",
+                        "article_id": "1"
                     }
                 ]))
                 .expect_calls(1)

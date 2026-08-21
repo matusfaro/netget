@@ -1,2 +1,4 @@
 #[cfg(all(test, feature = "nntp"))]
 mod e2e_test;
+#[cfg(all(test, feature = "nntp"))]
+mod command_channel_test;

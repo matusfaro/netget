@@ -2,6 +2,3 @@
 
 #[cfg(all(test, feature = "torrent-peer"))]
 pub mod e2e_test;
-
-#[cfg(all(test, feature = "torrent-peer"))]
-pub mod peer_inject_test;

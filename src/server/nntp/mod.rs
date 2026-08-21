@@ -50,264 +50,18 @@ impl NntpServer {
                         let protocol_clone = protocol.clone();
 
                         tokio::spawn(async move {
-                            let log = Log::new(Some(&status_clone));
-                            let (read_half, write_half) = tokio::io::split(stream);
-                            let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
-
-                            // Add connection to ServerInstance
-                            use crate::state::server::{
-                                ConnectionState as ServerConnectionState, ConnectionStatus,
-                                ProtocolConnectionInfo,
-                            };
-                            let now = std::time::Instant::now();
-                            let conn_state = ServerConnectionState {
-                                id: connection_id,
+                            Self::handle_connection(
+                                stream,
+                                connection_id,
                                 remote_addr,
-                                local_addr: local_addr_conn,
-                                bytes_sent: 0,
-                                bytes_received: 0,
-                                packets_sent: 0,
-                                packets_received: 0,
-                                last_activity: now,
-                                status: ConnectionStatus::Active,
-                                status_changed_at: now,
-                                protocol_info: ProtocolConnectionInfo::empty(),
-                            };
-                            state_clone
-                                .add_connection_to_server(server_id, conn_state)
-                                .await;
-                            let _ = status_clone.send("__UPDATE_UI__".to_string());
-
-                            // Send initial greeting
-                            log.debug(format!(
-                                "NNTP sending greeting to connection {}",
-                                connection_id
-                            ));
-
-                            let greeting_event = Event::new(
-                                &NNTP_COMMAND_RECEIVED_EVENT,
-                                serde_json::json!({
-                                    "command": "GREETING"
-                                }),
-                            );
-                            match call_llm(
-                                &llm_clone,
-                                &state_clone,
+                                local_addr_conn,
                                 server_id,
-                                Some(connection_id),
-                                &greeting_event,
-                                protocol_clone.as_ref(),
+                                llm_clone,
+                                state_clone,
+                                status_clone,
+                                protocol_clone,
                             )
-                            .await
-                            {
-                                Ok(execution_result) => {
-                                    for message in &execution_result.messages {
-                                        log.info(message);
-                                    }
-
-                                    for protocol_result in execution_result.protocol_results {
-                                        if let ActionResult::Output(data) = protocol_result {
-                                            let mut write = write_half_arc.lock().await;
-                                            let _ = write.write_all(&data).await;
-                                            let _ = write.flush().await;
-
-                                            // Sent summary + payload are FileOnly.
-                                            let response = String::from_utf8_lossy(&data);
-                                            let preview =
-                                                crate::utils::truncate_for_log(&response, 100);
-                                            log.debug(format!(
-                                                "NNTP sent {} bytes on connection {}: {}",
-                                                data.len(),
-                                                connection_id,
-                                                preview.trim()
-                                            ));
-                                            log.trace(format!(
-                                                "NNTP sent (text): {:?}",
-                                                response.trim()
-                                            ));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    // RFC 3977 5.1: the initial greeting may be `400 service
-                                    // temporarily unavailable`, after which the server closes.
-                                    // Writing nothing left the client blocked reading a
-                                    // greeting line that was never coming.
-                                    let line = nntp_greeting_failure_line(&e);
-                                    log.warn(format!(
-                                        "NNTP greeting LLM error on connection {} (refused: {}): {}",
-                                        connection_id,
-                                        line.trim_end(),
-                                        e
-                                    ));
-                                    {
-                                        let mut write = write_half_arc.lock().await;
-                                        let _ = write.write_all(line.as_bytes()).await;
-                                        let _ = write.flush().await;
-                                        let _ = write.shutdown().await;
-                                    }
-                                    state_clone
-                                        .remove_connection_from_server(server_id, connection_id)
-                                        .await;
-                                    let _ = status_clone.send("__UPDATE_UI__".to_string());
-                                    return;
-                                }
-                            }
-
-                            // Read commands from client
-                            let mut reader = BufReader::new(read_half);
-                            let mut line = String::new();
-
-                            while let Ok(n) = reader.read_line(&mut line).await {
-                                if n == 0 {
-                                    break;
-                                }
-
-                                // Summary + payload FileOnly: the nntp_command_received
-                                // event template surfaces the command to the TUI.
-                                let preview = crate::utils::truncate_for_log(&line, 100);
-                                log.debug(format!(
-                                    "NNTP received {} bytes on connection {}: {}",
-                                    n,
-                                    connection_id,
-                                    preview.trim()
-                                ));
-                                log.trace(format!("NNTP data (text): {:?}", line.trim()));
-
-                                let event = Event::new(
-                                    &NNTP_COMMAND_RECEIVED_EVENT,
-                                    serde_json::json!({
-                                        "command": line.trim()
-                                    }),
-                                );
-
-                                log.debug(format!(
-                                    "NNTP calling LLM for connection {}",
-                                    connection_id
-                                ));
-
-                                match call_llm(
-                                    &llm_clone,
-                                    &state_clone,
-                                    server_id,
-                                    Some(connection_id),
-                                    &event,
-                                    protocol_clone.as_ref(),
-                                )
-                                .await
-                                {
-                                    Ok(execution_result) => {
-                                        for message in &execution_result.messages {
-                                            log.info(message);
-                                        }
-
-                                        log.debug(format!(
-                                            "NNTP got {} protocol results",
-                                            execution_result.protocol_results.len()
-                                        ));
-
-                                        // An action that failed to execute (a missing required
-                                        // field, say) leaves protocol_results empty, and the
-                                        // same reasoning as the LLM-error branch below applies:
-                                        // NNTP is one response line per command, so writing
-                                        // nothing desynchronises the client for the rest of the
-                                        // session - it waits forever for a line that will never
-                                        // come. Answer 403 instead. A model that deliberately
-                                        // chose wait_for_more reports no failures and is left
-                                        // alone.
-                                        let wrote_nothing = !execution_result
-                                            .protocol_results
-                                            .iter()
-                                            .any(|r| matches!(r, ActionResult::Output(_)));
-                                        if wrote_nothing && !execution_result.failures.is_empty() {
-                                            let detail = execution_result
-                                                .failures
-                                                .iter()
-                                                .map(|f| format!("{}: {}", f.action, f.error))
-                                                .collect::<Vec<_>>()
-                                                .join("; ");
-                                            let reply = format!(
-                                                "403 netget: could not build a response ({})\r\n",
-                                                detail.replace(['\r', '\n'], " ")
-                                            );
-                                            log.warn(format!(
-                                                "NNTP action failure on connection {} (replying: {}): {}",
-                                                connection_id,
-                                                reply.trim_end(),
-                                                detail
-                                            ));
-                                            let mut write = write_half_arc.lock().await;
-                                            let _ = write.write_all(reply.as_bytes()).await;
-                                            let _ = write.flush().await;
-                                        }
-
-                                        for protocol_result in execution_result.protocol_results {
-                                            match protocol_result {
-                                                ActionResult::Output(data) => {
-                                                    let mut write = write_half_arc.lock().await;
-                                                    let _ = write.write_all(&data).await;
-                                                    let _ = write.flush().await;
-
-                                                    // Sent summary + payload are FileOnly.
-                                                    let response = String::from_utf8_lossy(&data);
-                                                    let preview = crate::utils::truncate_for_log(
-                                                        &response, 100,
-                                                    );
-                                                    log.debug(format!(
-                                                        "NNTP sent {} bytes on connection {}: {}",
-                                                        data.len(),
-                                                        connection_id,
-                                                        preview.trim()
-                                                    ));
-                                                    log.trace(format!(
-                                                        "NNTP sent (text): {:?}",
-                                                        response.trim()
-                                                    ));
-                                                }
-                                                ActionResult::CloseConnection => break,
-                                                _ => {}
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        // NNTP is strictly one response line per command, so
-                                        // silence desynchronises the client for the rest of
-                                        // the session. 403 is RFC 3977's "internal fault or
-                                        // problem preventing action being taken" and is a
-                                        // refusal on every command NNTP has, AUTHINFO
-                                        // included - there is no way for this path to
-                                        // authenticate anyone or hand back an article.
-                                        let (reply, close) = nntp_command_failure_line(&e);
-                                        log.warn(format!(
-                                            "NNTP LLM error on connection {} (replying: {}): {}",
-                                            connection_id,
-                                            reply.trim_end(),
-                                            e
-                                        ));
-                                        {
-                                            let mut write = write_half_arc.lock().await;
-                                            let _ = write.write_all(reply.as_bytes()).await;
-                                            let _ = write.flush().await;
-                                            if close {
-                                                let _ = write.shutdown().await;
-                                            }
-                                        }
-                                        if close {
-                                            break;
-                                        }
-                                    }
-                                }
-
-                                line.clear();
-                            }
-
-                            log.info(format!("NNTP connection {} closed", connection_id));
-
-                            // Remove connection from server instance
-                            state_clone
-                                .remove_connection_from_server(server_id, connection_id)
-                                .await;
-                            let _ = status_clone.send("__UPDATE_UI__".to_string());
+                            .await;
                         });
                     }
                     Err(e) => {
@@ -324,6 +78,384 @@ impl NntpServer {
             .await;
 
         Ok(local_addr)
+    }
+
+    /// Track one connection, register its peer handle, run the session, and clean up on
+    /// every exit path.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_connection(
+        stream: tokio::net::TcpStream,
+        connection_id: ConnectionId,
+        remote_addr: SocketAddr,
+        local_addr: SocketAddr,
+        server_id: crate::state::ServerId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        protocol: Arc<NntpProtocol>,
+    ) {
+        use crate::state::server::{
+            ConnectionState as ServerConnectionState, ConnectionStatus, ProtocolConnectionInfo,
+        };
+
+        let (read_half, write_half) = tokio::io::split(stream);
+        let write_half_arc = Arc::new(tokio::sync::Mutex::new(write_half));
+
+        // Add connection to ServerInstance
+        let now = std::time::Instant::now();
+        let conn_state = ServerConnectionState {
+            id: connection_id,
+            remote_addr,
+            local_addr,
+            bytes_sent: 0,
+            bytes_received: 0,
+            packets_sent: 0,
+            packets_received: 0,
+            last_activity: now,
+            status: ConnectionStatus::Active,
+            status_changed_at: now,
+            protocol_info: ProtocolConnectionInfo::empty(),
+        };
+        app_state
+            .add_connection_to_server(server_id, conn_state)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Peer messaging: the dashboard's "message this peer" / "disconnect this peer" inject
+        // actions into THIS connection through the same executor the LLM path uses. Registered
+        // before the greeting, because a manual `*` rule can park that greeting for minutes and
+        // the operator must be able to reach the connection while it waits.
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &app_state,
+            server_id,
+            connection_id.as_u32(),
+        )
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            protocol.clone(),
+            app_state.clone(),
+            server_id,
+            connection_id.as_u32(),
+            write_half_arc.clone(),
+            status_tx.clone(),
+        );
+
+        Self::run_session(
+            BufReader::new(read_half),
+            &write_half_arc,
+            connection_id,
+            server_id,
+            &llm_client,
+            &app_state,
+            &status_tx,
+            &protocol,
+        )
+        .await;
+
+        // Every exit path - EOF, read error, close_connection, refused greeting - lands here.
+        app_state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
+        app_state
+            .remove_connection_from_server(server_id, connection_id)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    /// Write one buffer to the peer and count it.
+    async fn write_counted<W>(
+        write_half: &Arc<tokio::sync::Mutex<W>>,
+        app_state: &AppState,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
+        data: &[u8],
+        shutdown: bool,
+    ) where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        {
+            let mut write = write_half.lock().await;
+            let _ = write.write_all(data).await;
+            let _ = write.flush().await;
+            if shutdown {
+                let _ = write.shutdown().await;
+            }
+        }
+        app_state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                None,
+                Some(data.len() as u64),
+                None,
+                Some(1),
+            )
+            .await;
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_session<R, W>(
+        mut reader: BufReader<R>,
+        write_half_arc: &Arc<tokio::sync::Mutex<W>>,
+        connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: &Arc<NntpProtocol>,
+    ) where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let log = Log::new(Some(status_tx));
+
+        // Send initial greeting
+        log.debug(format!(
+            "NNTP sending greeting to connection {}",
+            connection_id
+        ));
+
+        let greeting_event = Event::new(
+            &NNTP_COMMAND_RECEIVED_EVENT,
+            serde_json::json!({
+                "command": "GREETING"
+            }),
+        );
+        match call_llm(
+            llm_client,
+            app_state,
+            server_id,
+            Some(connection_id),
+            &greeting_event,
+            protocol.as_ref(),
+        )
+        .await
+        {
+            Ok(execution_result) => {
+                for message in &execution_result.messages {
+                    log.info(message);
+                }
+
+                for protocol_result in execution_result.protocol_results {
+                    if let ActionResult::Output(data) = protocol_result {
+                        Self::write_counted(
+                            write_half_arc,
+                            app_state,
+                            server_id,
+                            connection_id,
+                            &data,
+                            false,
+                        )
+                        .await;
+
+                        // Sent summary + payload are FileOnly.
+                        let response = String::from_utf8_lossy(&data);
+                        let preview = crate::utils::truncate_for_log(&response, 100);
+                        log.debug(format!(
+                            "NNTP sent {} bytes on connection {}: {}",
+                            data.len(),
+                            connection_id,
+                            preview.trim()
+                        ));
+                        log.trace(format!("NNTP sent (text): {:?}", response.trim()));
+                    }
+                }
+            }
+            Err(e) => {
+                // RFC 3977 5.1: the initial greeting may be `400 service
+                // temporarily unavailable`, after which the server closes.
+                // Writing nothing left the client blocked reading a
+                // greeting line that was never coming.
+                let line = nntp_greeting_failure_line(&e);
+                log.warn(format!(
+                    "NNTP greeting LLM error on connection {} (refused: {}): {}",
+                    connection_id,
+                    line.trim_end(),
+                    e
+                ));
+                Self::write_counted(
+                    write_half_arc,
+                    app_state,
+                    server_id,
+                    connection_id,
+                    line.as_bytes(),
+                    true,
+                )
+                .await;
+                return;
+            }
+        }
+
+        // Read commands from client
+        let mut line = String::new();
+
+        while let Ok(n) = reader.read_line(&mut line).await {
+            if n == 0 {
+                break;
+            }
+            app_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    Some(n as u64),
+                    None,
+                    Some(1),
+                    None,
+                )
+                .await;
+
+            // Summary + payload FileOnly: the nntp_command_received
+            // event template surfaces the command to the TUI.
+            let preview = crate::utils::truncate_for_log(&line, 100);
+            log.debug(format!(
+                "NNTP received {} bytes on connection {}: {}",
+                n,
+                connection_id,
+                preview.trim()
+            ));
+            log.trace(format!("NNTP data (text): {:?}", line.trim()));
+
+            let event = Event::new(
+                &NNTP_COMMAND_RECEIVED_EVENT,
+                serde_json::json!({
+                    "command": line.trim()
+                }),
+            );
+
+            log.debug(format!("NNTP calling LLM for connection {}", connection_id));
+
+            match call_llm(
+                llm_client,
+                app_state,
+                server_id,
+                Some(connection_id),
+                &event,
+                protocol.as_ref(),
+            )
+            .await
+            {
+                Ok(execution_result) => {
+                    for message in &execution_result.messages {
+                        log.info(message);
+                    }
+
+                    log.debug(format!(
+                        "NNTP got {} protocol results",
+                        execution_result.protocol_results.len()
+                    ));
+
+                    // An action that failed to execute (a missing required
+                    // field, say) leaves protocol_results empty, and the
+                    // same reasoning as the LLM-error branch below applies:
+                    // NNTP is one response line per command, so writing
+                    // nothing desynchronises the client for the rest of the
+                    // session - it waits forever for a line that will never
+                    // come. Answer 403 instead. A model that deliberately
+                    // chose wait_for_more reports no failures and is left
+                    // alone.
+                    let wrote_nothing = !execution_result
+                        .protocol_results
+                        .iter()
+                        .any(|r| matches!(r, ActionResult::Output(_)));
+                    if wrote_nothing && !execution_result.failures.is_empty() {
+                        let detail = execution_result
+                            .failures
+                            .iter()
+                            .map(|f| format!("{}: {}", f.action, f.error))
+                            .collect::<Vec<_>>()
+                            .join("; ");
+                        let reply = format!(
+                            "403 netget: could not build a response ({})\r\n",
+                            detail.replace(['\r', '\n'], " ")
+                        );
+                        log.warn(format!(
+                            "NNTP action failure on connection {} (replying: {}): {}",
+                            connection_id,
+                            reply.trim_end(),
+                            detail
+                        ));
+                        Self::write_counted(
+                            write_half_arc,
+                            app_state,
+                            server_id,
+                            connection_id,
+                            reply.as_bytes(),
+                            false,
+                        )
+                        .await;
+                    }
+
+                    let mut close = false;
+                    for protocol_result in execution_result.protocol_results {
+                        match protocol_result {
+                            ActionResult::Output(data) => {
+                                Self::write_counted(
+                                    write_half_arc,
+                                    app_state,
+                                    server_id,
+                                    connection_id,
+                                    &data,
+                                    false,
+                                )
+                                .await;
+
+                                // Sent summary + payload are FileOnly.
+                                let response = String::from_utf8_lossy(&data);
+                                let preview = crate::utils::truncate_for_log(&response, 100);
+                                log.debug(format!(
+                                    "NNTP sent {} bytes on connection {}: {}",
+                                    data.len(),
+                                    connection_id,
+                                    preview.trim()
+                                ));
+                                log.trace(format!("NNTP sent (text): {:?}", response.trim()));
+                            }
+                            ActionResult::CloseConnection => {
+                                close = true;
+                                break;
+                            }
+                            _ => {}
+                        }
+                    }
+                    if close {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    // NNTP is strictly one response line per command, so
+                    // silence desynchronises the client for the rest of
+                    // the session. 403 is RFC 3977's "internal fault or
+                    // problem preventing action being taken" and is a
+                    // refusal on every command NNTP has, AUTHINFO
+                    // included - there is no way for this path to
+                    // authenticate anyone or hand back an article.
+                    let (reply, close) = nntp_command_failure_line(&e);
+                    log.warn(format!(
+                        "NNTP LLM error on connection {} (replying: {}): {}",
+                        connection_id,
+                        reply.trim_end(),
+                        e
+                    ));
+                    Self::write_counted(
+                        write_half_arc,
+                        app_state,
+                        server_id,
+                        connection_id,
+                        reply.as_bytes(),
+                        close,
+                    )
+                    .await;
+                    if close {
+                        break;
+                    }
+                }
+            }
+
+            line.clear();
+        }
+
+        log.info(format!("NNTP connection {} closed", connection_id));
     }
 }
 

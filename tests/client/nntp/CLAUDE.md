@@ -88,14 +88,27 @@ Tests use the shared helper functions in `tests/helpers/`:
 
 ## LLM Call Budget
 
-**Total LLM Calls**: 6 (3 tests × 2 calls each)
+**Total LLM Calls**: 12 (3 tests × 4 calls each)
 
-Budget breakdown:
+Budget breakdown per test:
 
-- Server startup: 1 LLM call per test (3 total)
-- Client connection: 1 LLM call per test (3 total)
+- Server startup: 1
+- Server greeting (`nntp_command_received` with `command: "GREETING"`): 1 — without a rule for
+  it the server answers `400` and closes, and the client's command never arrives
+- Client connection (`nntp_connected`): 1
+- The command's `nntp_command_received` on the server: 1
 
-This is well under the 10 LLM call budget for client tests.
+Mock actions must be names the protocols actually execute (`send_nntp_list`,
+`send_nntp_group`, `send_nntp_article` on the server; `nntp_list`, `nntp_group`,
+`nntp_article` on the client). `tests/helpers/mock_action_names.rs` fails the test otherwise;
+the earlier `send_nntp_command` / `send_nntp_line` / `send_nntp_terminator` rules never existed.
+
+### Test 4: Command channel (`command_channel_test.rs`)
+
+**LLM Calls**: 0. Starts a NetGet NNTP server with a `*` static handler and an NNTP client,
+then `AppState::send_to_client` injects `nntp_group`, an unknown verb (must be `Rejected`) and
+`nntp_quit`; asserts the command reached the server's access log and the client handle is gone
+after the quit.
 
 ## Runtime Estimate
 

@@ -102,22 +102,6 @@ transfers. This is the core protocol used between BitTorrent clients to exchange
     - Data: message_type, payload_len, payload_hex
     - LLM analyzes: piece availability, choke state, received pieces
 
-## Dashboard injection (command channel)
-
-The client registers a command channel (`command_support::register_command_channel`) right
-after the stream split — before the connected-event LLM call, which a manual rule can park.
-The read loop uses `read_exact` (NOT cancellation-safe), so the channel is drained by its own
-registered task (`command_loop`), not a `select!` arm. Both share the `Arc<Mutex<WriteHalf>>`.
-
-The wire verbs return `ClientActionResult::Custom { name: "peer_handshake" | "peer_message" }`,
-which the generic `handle_stream_client_command` cannot execute — so `command_loop` is a
-bespoke arm that routes each command through `execute_peer_action` (the same encoder the LLM
-path uses), records an `injected_action` access-log entry, and replies with the outcome. An
-injected `disconnect` writes nothing (BitTorrent has no graceful-close message) and
-half-closes the write side; the server reads EOF and the read loop runs its normal teardown.
-`remove_client_handle` is called on every read-loop exit so the rail stops offering `[ send ]`
-on a dead client.
-
 ## Limitations
 
 1. **No piece verification** - SHA1 hash checking not implemented (LLM must handle)

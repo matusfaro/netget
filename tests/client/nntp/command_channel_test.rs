@@ -1,15 +1,13 @@
-//! Dashboard injection into a running BitTorrent peer-wire client
-//! (`AppState::send_to_client`): a NetGet torrent-peer client connected to a NetGet
-//! torrent-peer server, with a wire verb injected from outside the client's loop.
-//!
-//! Zero LLM calls: the server uses a static handler and the client's LLM points at an
-//! unreachable URL (the loops tolerate that error). The client's read loop uses `read_exact`
-//! (not cancellation-safe), so the command channel is drained by its own task.
+//! The dashboard's `[ nntp_* ]` path on an NNTP client: `AppState::send_to_client` injects an
+//! action from outside the client's read loop, and the command reaches a NetGet NNTP server of
+//! our own. Zero LLM calls - the server answers through a `*` static handler and the client's
+//! LLM points at an unreachable URL (its connected-event call fails; the loop tolerates that,
+//! and the command task is independent of it by design).
 //!
 //! Run with:
-//!   ./cargo-isolated.sh test --no-default-features --features torrent-peer --test client -- torrent_peer::command_channel --test-threads=100
+//!   ./cargo-isolated.sh test --no-default-features --features nntp --test client -- nntp::command_channel --test-threads=100
 
-#![cfg(feature = "torrent-peer")]
+#![cfg(feature = "nntp")]
 
 use std::time::Duration;
 
@@ -35,13 +33,10 @@ async fn wait_for_port(state: &AppState, id: ServerId) -> u16 {
             if let Some(addr) = s.local_addr {
                 return addr.port();
             }
-            if s.port != 0 {
-                return s.port;
-            }
         }
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
-    panic!("server #{} never bound a port", id.as_u32());
+    panic!("NNTP server #{} never bound a port", id.as_u32());
 }
 
 async fn wait_for_client_handle(state: &AppState, id: ClientId) {
@@ -51,7 +46,10 @@ async fn wait_for_client_handle(state: &AppState, id: ClientId) {
         }
         tokio::time::sleep(Duration::from_millis(30)).await;
     }
-    panic!("client #{} never registered a command handle", id.as_u32());
+    panic!(
+        "NNTP client #{} never registered a command handle",
+        id.as_u32()
+    );
 }
 
 async fn wait_for_log_containing(state: &AppState, owner: AccessLogOwner, needle: &str) {
@@ -70,35 +68,29 @@ async fn wait_for_log_containing(state: &AppState, owner: AccessLogOwner, needle
 }
 
 #[tokio::test]
-async fn injected_peer_handshake_reaches_our_own_server() {
+async fn injected_nntp_command_reaches_our_own_server() {
     let state = new_state().await;
     let (tx, _rx) = mpsc::unbounded_channel();
 
-    // Server echoes the handshake's info_hash back, so an injected client handshake completes
-    // a real round-trip on the wire.
     let server_id = ServerForm {
-        protocol: "torrent-peer".to_string(),
+        protocol: "nntp".to_string(),
         port: Some(0),
         event_handlers: Some(vec![serde_json::json!({
-            "event_pattern": "peer_handshake",
+            "event_pattern": "*",
             "handler": {
                 "type": "static",
-                "actions": [ {
-                    "type": "send_handshake",
-                    "info_hash": "{{event.info_hash}}",
-                    "peer_id": "-NT0001-xxxxxxxxxxxx"
-                } ]
+                "actions": [ { "type": "send_nntp_response", "code": 200, "text": "static" } ]
             }
         })]),
         ..Default::default()
     }
     .create(&state, tx.clone())
     .await
-    .expect("create torrent-peer server");
+    .expect("create nntp server");
     let port = wait_for_port(&state, server_id).await;
 
     let client_id = ClientForm {
-        protocol: "torrent-peer".to_string(),
+        protocol: "nntp".to_string(),
         remote_addr: Some(format!("127.0.0.1:{port}")),
         instruction: Some("test client".to_string()),
         ..Default::default()
@@ -109,73 +101,68 @@ async fn injected_peer_handshake_reaches_our_own_server() {
         tx.clone(),
     )
     .await
-    .expect("create torrent-peer client");
+    .expect("create nntp client");
 
     wait_for_client_handle(&state, client_id).await;
 
-    // Inject a handshake (info_hash + peer_id, 40 hex chars each). The command loop encodes
-    // the fixed 68-byte handshake through the same execute_peer_action the LLM path uses.
-    let info_hash_hex = "abababababababababababababababababababab";
+    // The client's own wire verb, injected from outside its loop: "GROUP dashboard.marker\r\n".
     let outcome = state
         .send_to_client(
             client_id,
-            serde_json::json!({
-                "type": "peer_handshake",
-                "info_hash": info_hash_hex,
-                "peer_id": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-            }),
+            serde_json::json!({"type": "nntp_group", "group_name": "dashboard.marker"}),
             Duration::from_secs(5),
         )
         .await
         .expect("send_to_client");
-    match outcome {
-        ClientSendOutcome::Sent { bytes_sent } => assert_eq!(bytes_sent, 68),
-        other => panic!("expected Sent, got {other:?}"),
-    }
+    assert!(
+        matches!(outcome, ClientSendOutcome::Sent { bytes_sent: 24 }),
+        "expected Sent{{24}}, got {outcome:?}"
+    );
 
-    // The server parsed the handshake and logged it (echoed info_hash) …
-    wait_for_log_containing(
-        &state,
-        AccessLogOwner::Server(server_id.as_u32()),
-        info_hash_hex,
-    )
-    .await;
-    // … and the injection is in the client's own request log.
+    // Recorded on the client like LLM-produced traffic, and received by the server.
     wait_for_log_containing(
         &state,
         AccessLogOwner::Client(client_id.as_u32()),
         "injected_action",
     )
     .await;
+    wait_for_log_containing(
+        &state,
+        AccessLogOwner::Server(server_id.as_u32()),
+        "dashboard.marker",
+    )
+    .await;
 
-    // Unknown actions are rejected, not swallowed.
+    // An unknown verb is rejected, not silently dropped.
     let outcome = state
         .send_to_client(
             client_id,
-            serde_json::json!({"type": "no_such_action"}),
+            serde_json::json!({"type": "not_an_nntp_verb"}),
             Duration::from_secs(5),
         )
         .await
-        .expect("send_to_client (bad action)");
+        .expect("send_to_client unknown");
     assert!(
         matches!(outcome, ClientSendOutcome::Rejected { .. }),
-        "{outcome:?}"
+        "expected Rejected, got {outcome:?}"
     );
 
-    // Disconnect through the channel: half-close, server EOFs, read loop ends, handle gone.
+    // An injected nntp_quit writes QUIT, half-closes, and ends the session.
     let outcome = state
         .send_to_client(
             client_id,
-            serde_json::json!({"type": "disconnect"}),
+            serde_json::json!({"type": "nntp_quit"}),
             Duration::from_secs(5),
         )
         .await
-        .expect("send_to_client (disconnect)");
+        .expect("send_to_client quit");
     assert!(
         matches!(outcome, ClientSendOutcome::Disconnected),
-        "{outcome:?}"
+        "expected Disconnected, got {outcome:?}"
     );
+    wait_for_log_containing(&state, AccessLogOwner::Server(server_id.as_u32()), "QUIT").await;
 
+    // The command handle is gone, so the rail stops offering [ send ] on a dead client.
     for _ in 0..100 {
         if !state.has_client_handle(client_id).await {
             return;

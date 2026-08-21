@@ -274,6 +274,18 @@ Sends:
 6. **Read Loop**: Continuous line reading until disconnect
 7. **Close**: Connection removed when client closes or sends QUIT
 
+### Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+`handle_connection` registers a peer handle (`server::peer_support`) right after the connection
+is tracked and *before* the greeting event, so a manual `*` rule parking the greeting still
+leaves the operator able to reach the connection. `AppState::send_to_peer` runs the action
+through the same executor as the LLM path; every wire verb here returns `ActionResult::Output`
+and `close_connection` half-closes, so there is no `Custom` gap. Every read and every write the
+server itself makes goes through `update_connection_stats` (injected writes are counted by the
+generic peer task, not here), and the handle is removed on every exit path (EOF, read error,
+`close_connection`, refused greeting, overload 400) by the single cleanup in
+`handle_connection`. Test: `tests/server/nntp/peer_inject_test.rs` (zero LLM calls).
+
 ### State Management
 
 - `ProtocolState`: Idle/Processing/Accumulating (prevents concurrent LLM calls)

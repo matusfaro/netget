@@ -122,6 +122,22 @@ The `nntp_post` action follows the proper NNTP POST protocol flow:
 4. Article data is automatically sent (headers + body + terminator)
 5. Server responds with `240 Article received ok` or error code
 
+### Dashboard injection (`[ nntp_group ]`, `[ nntp_list ]`, … `[ nntp_quit ]`)
+
+`connect_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) *before* the read-loop task and therefore
+before the `nntp_connected` LLM call, which a manual rule can park. Because `read_line` is not
+cancellation-safe, commands are drained by a separate `command_loop` task (registered with
+`register_client_task`) that shares the write half, not by a `select!` arm. Every wire verb
+yields `ClientActionResult::Custom` (`nntp_command` / `nntp_post`), which the generic
+`handle_stream_client_command` cannot write, so `command_loop` routes the result through
+`apply_action` — the one function the LLM path also uses to encode commands (including the
+POST-then-340 article hand-off) — then records an `injected_action` access-log entry and
+replies with `ClientSendOutcome`. An injected `nntp_quit` writes `QUIT` and half-closes; the
+read loop sees EOF. The command handle is removed on every read-loop exit (missing welcome,
+read error, EOF, injected quit) so the rail stops offering `[ send ]` on a dead client. Test:
+`tests/client/nntp/command_channel_test.rs` (zero LLM calls).
+
 ## Response Codes
 
 Common NNTP status codes:
