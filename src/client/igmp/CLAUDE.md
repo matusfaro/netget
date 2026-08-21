@@ -266,3 +266,41 @@ NetGet also has an IGMP **server** (`src/server/igmp/`), which differs:
 - RFC 2236: Internet Group Management Protocol, Version 2 (IGMPv2)
 - RFC 3376: Internet Group Management Protocol, Version 3 (IGMPv3)
 - RFC 4607: Source-Specific Multicast for IP
+
+## Injected commands (the dashboard's `[ send ]`)
+
+The client registers a command channel (`command_support::register_command_channel`) and spawns
+the task that drains it **before** the connected-event LLM call, which is awaited inline in
+`connect_with_llm_actions` and which a manual `*` routing rule parks. Commands are drained by
+their own registered task rather than a `tokio::select!` arm: `recv_from` is cancellation-safe,
+but the receive loop awaits `call_llm_for_client` inline, so a `select!` arm there would stall
+for a whole LLM round-trip.
+
+Injected actions go through `IgmpClient::apply_action`, the same function the connected-event
+path and the receive loop use. Outcomes:
+
+| Injected action | `ClientSendOutcome` |
+|---|---|
+| `send_multicast` | `Sent { bytes_sent }` — the byte count `send_to` returned |
+| `join_multicast_group` / `leave_multicast_group` | `Executed { detail }` — **not** `Sent`. NetGet writes no bytes itself; `IP_ADD_MEMBERSHIP` makes the *kernel* emit the IGMP membership report, and the detail says so |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| unknown action, malformed parameters, **and `disconnect`** | `Rejected { error }` — IGMP's vocabulary has no `disconnect` verb (see `get_async_actions`); ending the client is `remove_client`, not a wire action |
+
+Two bugs were fixed while wiring this up, because both would have made the reported outcome a
+lie:
+
+1. **Group joins were applied to a throwaway socket.** `join_multicast_group` created a fresh
+   `socket2::Socket`, joined the group on it, and dropped it at the end of the match arm — so
+   the membership died immediately and the `UdpSocket` the receive loop polls never joined
+   anything. The client logged "Joined multicast group X" and received no multicast. Joins now
+   run on the client's own socket via `UdpSocket::join_multicast_v4`, and a duplicate join is
+   reported as `Executed { detail: "already a member of …" }` instead of failing with
+   `EADDRINUSE`.
+2. **The connected event's actions were discarded.** The initial `call_llm_for_client` was
+   `let _ = …`, so a model answering `igmp_client_connected` with a join was ignored. Its
+   actions now go through the same `apply_action`.
+
+Covered by `tests/client/igmp/command_channel_test.rs`. That test sends to a loopback UDP
+socket rather than a real group: `send_multicast` is a plain `send_to` on the client's own
+socket, so this exercises the whole injected path, while a real group would make the test
+depend on the host having a multicast-capable interface.

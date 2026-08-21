@@ -129,3 +129,24 @@ Common bootstrap nodes for joining the DHT network:
 - [BEP 5: DHT Protocol](http://www.bittorrent.org/beps/bep_0005.html)
 - [Kademlia: A Peer-to-peer Information System](https://pdos.csail.mit.edu/~petar/papers/maymounkov-kademlia-lncs.pdf)
 - [DHT Protocol Specification](https://wiki.theory.org/BitTorrentSpecification#Distributed_Hash_Table)
+
+## Injected commands (the dashboard's `[ send ]`)
+
+The client registers a command channel (`command_support::register_command_channel`) as soon
+as its UDP socket exists — **before** the connected-event LLM call, which a manual `*` routing
+rule can park for minutes. Commands are drained by their own registered task rather than a
+`tokio::select!` arm: `recv_from` is cancellation-safe, but the receive loop awaits
+`call_llm_for_client` inline, so a `select!` arm there would stall for a whole LLM round-trip.
+
+Injected actions go through `TorrentDhtClient::apply_action`, the same function the LLM path
+uses, so the bencode encoding exists exactly once. Outcomes:
+
+| Injected action | `ClientSendOutcome` |
+|---|---|
+| `dht_ping` / `dht_find_node` / `dht_get_peers` / `dht_announce_peer` / `dht_query` | `Sent { bytes_sent }` — the byte count `send_to` returned |
+| `disconnect` | `Disconnected` — aborts the receive loop, drops the handle, marks the client Disconnected. UDP has no wire close, so that is what "disconnected" can mean here |
+| unknown action / bad parameters | `Rejected { error }` |
+| anything that produces no datagram | `Executed { detail }` |
+
+Covered by `tests/client/torrent_dht/command_channel_test.rs`, which asserts the datagram
+really arrives at a stand-in node and that `bytes_sent` equals what reached the wire.

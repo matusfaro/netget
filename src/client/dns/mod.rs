@@ -74,6 +74,32 @@ impl DnsClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Wrap the hickory client in Arc<Mutex> for sharing across tasks. It lives out here,
+        // not inside the conversation task, because the command loop needs the same handle:
+        // an injected `send_dns_query` has to go through the one connected resolver, not a
+        // second one of its own.
+        let client_arc = Arc::new(Mutex::new(client));
+        let protocol = Arc::new(DnsClientProtocol::new());
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        //
+        // Registered BEFORE the connected-event LLM call below: a dashboard-created client
+        // defaults to a `*` -> manual routing rule, so that call can park for minutes waiting
+        // for a human, and [ send ] must work for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            client_arc.clone(),
+            protocol.clone(),
+            client_id,
+            app_state.clone(),
+            llm_client.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Drive the LLM conversation in a registered background task.
         //
         // It used to run inline here, so `connect()` did not return until the LLM
@@ -83,10 +109,14 @@ impl DnsClient {
         let conversation_state = app_state.clone();
         let conversation_llm = llm_client.clone();
         let conversation_tx = status_tx.clone();
+        let conversation_client = client_arc.clone();
+        let conversation_protocol = protocol.clone();
         let handle = tokio::spawn(async move {
             let app_state = conversation_state;
             let llm_client = conversation_llm;
             let status_tx = conversation_tx;
+            let client_arc = conversation_client;
+            let protocol = conversation_protocol;
 
             let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
                 debug!(
@@ -96,7 +126,6 @@ impl DnsClient {
                 return;
             };
 
-            let protocol = Arc::new(DnsClientProtocol::new());
             let event = Event::new(
                 &DNS_CLIENT_CONNECTED_EVENT,
                 serde_json::json!({
@@ -108,9 +137,6 @@ impl DnsClient {
                 .get_memory_for_client(client_id)
                 .await
                 .unwrap_or_default();
-
-            // Wrap client in Arc<Mutex> for sharing across tasks
-            let client_arc = Arc::new(Mutex::new(client));
 
             match call_llm_for_client(
                 &llm_client,
@@ -213,275 +239,429 @@ impl DnsClient {
         status_tx: &'a mpsc::UnboundedSender<String>,
     ) -> Pin<Box<dyn Future<Output = Result<Vec<serde_json::Value>>> + Send + 'a>> {
         Box::pin(async move {
-            let mut follow_ups: Vec<serde_json::Value> = Vec::new();
-            match protocol.execute_action(action)? {
-                crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }
-                    if name == "dns_query" =>
-                {
-                    // Extract query parameters
-                    let domain = data
-                        .get("domain")
-                        .and_then(|v| v.as_str())
-                        .context("Missing domain in query")?;
+            match Self::apply_dns_action(client, protocol, action, client_id, app_state, status_tx)
+                .await?
+            {
+                DnsApplied::Queried { event_data, .. } => Ok(Self::report_dns_response(
+                    event_data, protocol, client_id, app_state, llm_client, status_tx,
+                )
+                .await),
+                DnsApplied::Other(_) => Ok(Vec::new()),
+            }
+        })
+    }
 
-                    let query_type_str = data
-                        .get("query_type")
-                        .and_then(|v| v.as_str())
-                        .context("Missing query_type")?;
+    /// Run one DNS action against the live hickory client, without involving the LLM.
+    ///
+    /// Split out from [`Self::execute_dns_action`] so the injected-command path can answer
+    /// its caller as soon as the resolver replies, and hand the model its
+    /// `dns_response_received` event afterwards — a manual routing rule parked on that event
+    /// would otherwise hold the dashboard's \[send\] open for its whole timeout.
+    async fn apply_dns_action(
+        client: &Arc<Mutex<AsyncClient>>,
+        protocol: &Arc<DnsClientProtocol>,
+        action: serde_json::Value,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<DnsApplied> {
+        match protocol.execute_action(action)? {
+            crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }
+                if name == "dns_query" =>
+            {
+                // Extract query parameters
+                let domain = data
+                    .get("domain")
+                    .and_then(|v| v.as_str())
+                    .context("Missing domain in query")?;
 
-                    let recursion_desired = data
-                        .get("recursion_desired")
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(true);
+                let query_type_str = data
+                    .get("query_type")
+                    .and_then(|v| v.as_str())
+                    .context("Missing query_type")?;
 
-                    // Parse domain name
-                    let name = Name::from_utf8(domain)
-                        .context(format!("Invalid domain name: {}", domain))?;
+                let recursion_desired = data
+                    .get("recursion_desired")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
 
-                    // Parse record type
-                    let record_type = Self::parse_record_type(query_type_str)?;
+                // Parse domain name
+                let name =
+                    Name::from_utf8(domain).context(format!("Invalid domain name: {}", domain))?;
 
-                    debug!(
-                        "DNS client {} querying {} for {} record",
-                        client_id, domain, query_type_str
+                // Parse record type
+                let record_type = Self::parse_record_type(query_type_str)?;
+
+                debug!(
+                    "DNS client {} querying {} for {} record",
+                    client_id, domain, query_type_str
+                );
+
+                // Send DNS query
+                let query = client
+                    .lock()
+                    .await
+                    .query(name.clone(), DNSClass::IN, record_type);
+
+                // Set recursion desired flag
+                if !recursion_desired {
+                    // hickory-client doesn't expose query options easily,
+                    // so we'll just note this for future enhancement
+                    trace!(
+                        "DNS client {} note: recursion_desired=false requested",
+                        client_id
                     );
+                }
 
-                    // Send DNS query
-                    let query = client
-                        .lock()
-                        .await
-                        .query(name.clone(), DNSClass::IN, record_type);
+                match query.await {
+                    Ok(response) => {
+                        let response_code = response.response_code();
+                        let answers = response.answers();
 
-                    // Set recursion desired flag
-                    if !recursion_desired {
-                        // hickory-client doesn't expose query options easily,
-                        // so we'll just note this for future enhancement
                         trace!(
-                            "DNS client {} note: recursion_desired=false requested",
-                            client_id
+                            "DNS client {} received response: {} answers, code: {:?}",
+                            client_id,
+                            answers.len(),
+                            response_code
                         );
-                    }
 
-                    match query.await {
-                        Ok(response) => {
-                            let response_code = response.response_code();
-                            let answers = response.answers();
-
-                            trace!(
-                                "DNS client {} received response: {} answers, code: {:?}",
-                                client_id,
-                                answers.len(),
-                                response_code
-                            );
-
-                            // Format answers for LLM
-                            let mut answer_list = Vec::new();
-                            for answer in answers {
-                                let record_data = match answer.record_type() {
-                                    RecordType::A => {
-                                        if let Some(a) = answer.data().and_then(|d| d.as_a()) {
-                                            serde_json::json!({
-                                                "type": "A",
-                                                "ip": a.to_string(),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    RecordType::AAAA => {
-                                        if let Some(aaaa) = answer.data().and_then(|d| d.as_aaaa())
-                                        {
-                                            serde_json::json!({
-                                                "type": "AAAA",
-                                                "ip": aaaa.to_string(),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    RecordType::CNAME => {
-                                        if let Some(cname) =
-                                            answer.data().and_then(|d| d.as_cname())
-                                        {
-                                            serde_json::json!({
-                                                "type": "CNAME",
-                                                "target": cname.to_string(),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    RecordType::MX => {
-                                        if let Some(mx) = answer.data().and_then(|d| d.as_mx()) {
-                                            serde_json::json!({
-                                                "type": "MX",
-                                                "exchange": mx.exchange().to_string(),
-                                                "preference": mx.preference(),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    RecordType::TXT => {
-                                        if let Some(txt) = answer.data().and_then(|d| d.as_txt()) {
-                                            let text_data: Vec<String> = txt
-                                                .iter()
-                                                .map(|bytes| {
-                                                    String::from_utf8_lossy(bytes).to_string()
-                                                })
-                                                .collect();
-                                            serde_json::json!({
-                                                "type": "TXT",
-                                                "text": text_data.join(""),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    RecordType::NS => {
-                                        if let Some(ns) = answer.data().and_then(|d| d.as_ns()) {
-                                            serde_json::json!({
-                                                "type": "NS",
-                                                "nameserver": ns.to_string(),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    RecordType::SOA => {
-                                        if let Some(soa) = answer.data().and_then(|d| d.as_soa()) {
-                                            serde_json::json!({
-                                                "type": "SOA",
-                                                "mname": soa.mname().to_string(),
-                                                "rname": soa.rname().to_string(),
-                                                "serial": soa.serial(),
-                                                "refresh": soa.refresh(),
-                                                "retry": soa.retry(),
-                                                "expire": soa.expire(),
-                                                "minimum": soa.minimum(),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    RecordType::PTR => {
-                                        if let Some(ptr) = answer.data().and_then(|d| d.as_ptr()) {
-                                            serde_json::json!({
-                                                "type": "PTR",
-                                                "domain": ptr.to_string(),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    RecordType::SRV => {
-                                        if let Some(srv) = answer.data().and_then(|d| d.as_srv()) {
-                                            serde_json::json!({
-                                                "type": "SRV",
-                                                "priority": srv.priority(),
-                                                "weight": srv.weight(),
-                                                "port": srv.port(),
-                                                "target": srv.target().to_string(),
-                                                "ttl": answer.ttl(),
-                                            })
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    _ => {
+                        // Format answers for LLM
+                        let mut answer_list = Vec::new();
+                        for answer in answers {
+                            let record_data = match answer.record_type() {
+                                RecordType::A => {
+                                    if let Some(a) = answer.data().and_then(|d| d.as_a()) {
                                         serde_json::json!({
-                                            "type": format!("{:?}", answer.record_type()),
-                                            "data": format!("{:?}", answer.data()),
+                                            "type": "A",
+                                            "ip": a.to_string(),
                                             "ttl": answer.ttl(),
                                         })
-                                    }
-                                };
-                                answer_list.push(record_data);
-                            }
-
-                            // Call LLM with response
-                            if let Some(instruction) =
-                                app_state.get_instruction_for_client(client_id).await
-                            {
-                                let event = Event::new(
-                                    &DNS_CLIENT_RESPONSE_RECEIVED_EVENT,
-                                    serde_json::json!({
-                                        "query_id": response.id(),
-                                        "domain": domain,
-                                        "query_type": query_type_str,
-                                        "answers": answer_list,
-                                        "response_code": Self::response_code_to_string(response_code),
-                                    }),
-                                );
-
-                                let memory = app_state
-                                    .get_memory_for_client(client_id)
-                                    .await
-                                    .unwrap_or_default();
-
-                                match call_llm_for_client(
-                                    llm_client,
-                                    app_state,
-                                    client_id.to_string(),
-                                    &instruction,
-                                    &memory,
-                                    Some(&event),
-                                    protocol.as_ref(),
-                                    status_tx,
-                                )
-                                .await
-                                {
-                                    Ok(ClientLlmResult {
-                                        actions,
-                                        memory_updates,
-                                    }) => {
-                                        // Update memory
-                                        if let Some(mem) = memory_updates {
-                                            app_state.set_memory_for_client(client_id, mem).await;
-                                        }
-
-                                        // Hand follow-up actions back to the caller's work
-                                        // queue rather than recursing into them here —
-                                        // recursion here is what overflowed the stack.
-                                        follow_ups.extend(actions);
-                                    }
-                                    Err(e) => {
-                                        error!("LLM error for DNS client {}: {}", client_id, e);
+                                    } else {
+                                        continue;
                                     }
                                 }
-                            }
+                                RecordType::AAAA => {
+                                    if let Some(aaaa) = answer.data().and_then(|d| d.as_aaaa()) {
+                                        serde_json::json!({
+                                            "type": "AAAA",
+                                            "ip": aaaa.to_string(),
+                                            "ttl": answer.ttl(),
+                                        })
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                RecordType::CNAME => {
+                                    if let Some(cname) = answer.data().and_then(|d| d.as_cname()) {
+                                        serde_json::json!({
+                                            "type": "CNAME",
+                                            "target": cname.to_string(),
+                                            "ttl": answer.ttl(),
+                                        })
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                RecordType::MX => {
+                                    if let Some(mx) = answer.data().and_then(|d| d.as_mx()) {
+                                        serde_json::json!({
+                                            "type": "MX",
+                                            "exchange": mx.exchange().to_string(),
+                                            "preference": mx.preference(),
+                                            "ttl": answer.ttl(),
+                                        })
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                RecordType::TXT => {
+                                    if let Some(txt) = answer.data().and_then(|d| d.as_txt()) {
+                                        let text_data: Vec<String> = txt
+                                            .iter()
+                                            .map(|bytes| String::from_utf8_lossy(bytes).to_string())
+                                            .collect();
+                                        serde_json::json!({
+                                            "type": "TXT",
+                                            "text": text_data.join(""),
+                                            "ttl": answer.ttl(),
+                                        })
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                RecordType::NS => {
+                                    if let Some(ns) = answer.data().and_then(|d| d.as_ns()) {
+                                        serde_json::json!({
+                                            "type": "NS",
+                                            "nameserver": ns.to_string(),
+                                            "ttl": answer.ttl(),
+                                        })
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                RecordType::SOA => {
+                                    if let Some(soa) = answer.data().and_then(|d| d.as_soa()) {
+                                        serde_json::json!({
+                                            "type": "SOA",
+                                            "mname": soa.mname().to_string(),
+                                            "rname": soa.rname().to_string(),
+                                            "serial": soa.serial(),
+                                            "refresh": soa.refresh(),
+                                            "retry": soa.retry(),
+                                            "expire": soa.expire(),
+                                            "minimum": soa.minimum(),
+                                            "ttl": answer.ttl(),
+                                        })
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                RecordType::PTR => {
+                                    if let Some(ptr) = answer.data().and_then(|d| d.as_ptr()) {
+                                        serde_json::json!({
+                                            "type": "PTR",
+                                            "domain": ptr.to_string(),
+                                            "ttl": answer.ttl(),
+                                        })
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                RecordType::SRV => {
+                                    if let Some(srv) = answer.data().and_then(|d| d.as_srv()) {
+                                        serde_json::json!({
+                                            "type": "SRV",
+                                            "priority": srv.priority(),
+                                            "weight": srv.weight(),
+                                            "port": srv.port(),
+                                            "target": srv.target().to_string(),
+                                            "ttl": answer.ttl(),
+                                        })
+                                    } else {
+                                        continue;
+                                    }
+                                }
+                                _ => {
+                                    serde_json::json!({
+                                        "type": format!("{:?}", answer.record_type()),
+                                        "data": format!("{:?}", answer.data()),
+                                        "ttl": answer.ttl(),
+                                    })
+                                }
+                            };
+                            answer_list.push(record_data);
                         }
-                        Err(e) => {
-                            error!("DNS client {} query error: {}", client_id, e);
-                            return Err(anyhow::anyhow!("DNS query failed: {}", e));
-                        }
+
+                        let detail = format!(
+                            "dns_query {domain} {query_type_str} -> {} with {} answer(s) \
+                                 (hickory owns the wire encoding; no byte count is observable)",
+                            Self::response_code_to_string(response_code),
+                            answer_list.len()
+                        );
+
+                        Ok(DnsApplied::Queried {
+                            event_data: serde_json::json!({
+                                "query_id": response.id(),
+                                "domain": domain,
+                                "query_type": query_type_str,
+                                "answers": answer_list,
+                                "response_code": Self::response_code_to_string(response_code),
+                            }),
+                            detail,
+                        })
+                    }
+                    Err(e) => {
+                        error!("DNS client {} query error: {}", client_id, e);
+                        Err(anyhow::anyhow!("DNS query failed: {}", e))
                     }
                 }
-                crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
-                    info!("DNS client {} disconnecting", client_id);
-                    app_state
-                        .update_client_status(client_id, ClientStatus::Disconnected)
-                        .await;
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
+            }
+            crate::llm::actions::client_trait::ClientActionResult::Disconnect => {
+                info!("DNS client {} disconnecting", client_id);
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                Ok(DnsApplied::Other("disconnect".to_string()))
+            }
+            crate::llm::actions::client_trait::ClientActionResult::WaitForMore => {
+                debug!("DNS client {} waiting for more", client_id);
+                Ok(DnsApplied::Other(
+                    "wait_for_more: no query sent".to_string(),
+                ))
+            }
+            other => {
+                // Other action results not applicable to DNS
+                Ok(DnsApplied::Other(format!(
+                    "{other:?} is not a DNS client verb; no query sent"
+                )))
+            }
+        }
+    }
+
+    /// Hand one completed query's answers to the model as a `dns_response_received` event
+    /// and return whatever follow-up actions it asked for.
+    async fn report_dns_response(
+        event_data: serde_json::Value,
+        protocol: &Arc<DnsClientProtocol>,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Vec<serde_json::Value> {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return Vec::new();
+        };
+
+        let event = Event::new(&DNS_CLIENT_RESPONSE_RECEIVED_EVENT, event_data);
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions,
+                memory_updates,
+            }) => {
+                // Update memory
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
                 }
-                crate::llm::actions::client_trait::ClientActionResult::WaitForMore => {
-                    debug!("DNS client {} waiting for more", client_id);
+
+                // Hand follow-up actions back to the caller's work queue rather than
+                // recursing into them here — recursion here is what overflowed the stack.
+                actions
+            }
+            Err(e) => {
+                error!("LLM error for DNS client {}: {}", client_id, e);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// A query reports `Executed`, never `Sent`: hickory owns the wire encoding and the
+    /// socket, and reports no byte count, so there is no truthful number to hand back. The
+    /// detail string carries the response code and answer count instead, which is what the
+    /// caller actually wants to see.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        client: Arc<Mutex<AsyncClient>>,
+        protocol: Arc<DnsClientProtocol>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let is_disconnect = action.get("type").and_then(|v| v.as_str()) == Some("disconnect");
+
+            // A completed query is reported to the model only after the caller has been
+            // answered, so `queried` carries the event payload past the reply.
+            let mut queried: Option<serde_json::Value> = None;
+            let outcome = match Self::apply_dns_action(
+                &client,
+                &protocol,
+                action.clone(),
+                client_id,
+                &app_state,
+                &status_tx,
+            )
+            .await
+            {
+                Ok(DnsApplied::Queried { event_data, detail }) => {
+                    queried = Some(event_data);
+                    Ok(ClientSendOutcome::Executed { detail })
                 }
-                _ => {
-                    // Other action results not applicable to DNS
+                Ok(DnsApplied::Other(_)) if is_disconnect => Ok(ClientSendOutcome::Disconnected),
+                Ok(DnsApplied::Other(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                // `execute_action` failing and the query itself failing are different
+                // things: the first is the model naming a verb this client does not have,
+                // the second is a network fault. Only the first is a Rejected.
+                Err(e) if e.to_string().starts_with("Unknown DNS client action") => {
+                    Ok(ClientSendOutcome::Rejected {
+                        error: e.to_string(),
+                    })
                 }
+                Err(e) => Err(e),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("DNS client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                break;
             }
 
-            Ok(follow_ups)
-        })
+            if let Some(event_data) = queried {
+                let follow_ups = Self::report_dns_response(
+                    event_data,
+                    &protocol,
+                    client_id,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await;
+                Self::run_dns_actions(
+                    &client,
+                    &protocol,
+                    follow_ups,
+                    client_id,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Parse DNS record type from string
@@ -523,4 +703,16 @@ impl DnsClient {
             _ => format!("{:?}", code),
         }
     }
+}
+
+/// What [`DnsClient::apply_dns_action`] did with one action.
+enum DnsApplied {
+    /// A query completed. `event_data` is the `dns_response_received` payload the model
+    /// still has to be shown; `detail` summarises it for the injecting caller.
+    Queried {
+        event_data: serde_json::Value,
+        detail: String,
+    },
+    /// The action ran but sent no query; the string says why.
+    Other(String),
 }

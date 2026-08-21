@@ -25,7 +25,23 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
 use crate::state::{ClientId, ClientStatus};
+
+/// What one executed action did to the MongoDB database handle.
+///
+/// Returned by [`MongodbClient::apply_action`], the single place an action reaches the
+/// server — the connected-event LLM path and injected dashboard commands both go through it.
+#[cfg(feature = "mongodb")]
+enum Applied {
+    /// An operation ran. `detail` is the injected-action outcome text; `event` is the
+    /// `mongodb_result_received` the client raises next, exactly as the LLM path does.
+    Ran { detail: String, event: Event },
+    /// The session should end.
+    Disconnect,
+    /// The action executed but touched the database in no way.
+    Nothing(&'static str),
+}
 
 /// MongoDB client that connects to a MongoDB server
 pub struct MongodbClient;
@@ -125,12 +141,30 @@ impl MongodbClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Wrap database in Arc for shared access
+        // Wrap database in Arc for shared access. `Database` is a cheap handle onto the
+        // driver's connection pool and is `Send + Sync`, so the LLM path and the injected
+        // command loop can hold it at once with no mutex.
         let db_arc = Arc::new(db);
+        let protocol = Arc::new(MongodbClientProtocol::new());
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the connected-event LLM call, which a manual `*` rule can park
+        // for minutes — the operator must be able to reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            protocol.clone(),
+            db_arc.clone(),
+            client_id,
+            llm_client.clone(),
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(crate::client::mongodb::actions::MongodbClientProtocol::new());
             let event = Event::new(
                 &MONGODB_CLIENT_CONNECTED_EVENT,
                 serde_json::json!({
@@ -144,6 +178,7 @@ impl MongodbClient {
                 .await
                 .unwrap_or_default();
 
+            let protocol_clone = protocol.clone();
             let db_clone = db_arc.clone();
             let app_state_clone = app_state.clone();
             let status_tx_clone = status_tx.clone();
@@ -159,7 +194,7 @@ impl MongodbClient {
                     &instruction,
                     &memory,
                     Some(&event),
-                    protocol.as_ref(),
+                    protocol_clone.as_ref(),
                     &status_tx_clone,
                 )
                 .await
@@ -178,7 +213,7 @@ impl MongodbClient {
                             if let Err(e) = Self::execute_llm_action(
                                 client_id,
                                 action,
-                                &protocol,
+                                &protocol_clone,
                                 &db_clone,
                                 &app_state_clone,
                                 &llm_client,
@@ -215,6 +250,105 @@ impl MongodbClient {
         Err(anyhow::anyhow!("MongoDB client feature not enabled"))
     }
 
+    /// Drain injected commands until the channel closes (the client was removed or stopped)
+    /// or an injected `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this client:
+    /// the driver owns the socket, so every verb yields `ClientActionResult::Custom` and the
+    /// effect goes through the shared [`Self::apply_action`].
+    #[cfg(feature = "mongodb")]
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        protocol: Arc<MongodbClientProtocol>,
+        db: Arc<Database>,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+
+            let mut follow_up: Option<Event> = None;
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => match Self::apply_action(client_id, result, &db, &status_tx).await {
+                    Err(e) => Err(e),
+                    Ok(Applied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                    Ok(Applied::Nothing(what)) => Ok(ClientSendOutcome::Executed {
+                        detail: what.to_string(),
+                    }),
+                    Ok(Applied::Ran { detail, event }) => {
+                        follow_up = Some(event);
+                        Ok(ClientSendOutcome::Executed { detail })
+                    }
+                },
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("MongoDB client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+
+            // The model sees an injected operation's result exactly as it sees one it asked
+            // for — after the reply, so the dashboard is not held for an LLM round-trip.
+            if let Some(event) = follow_up {
+                if let Err(e) = Self::raise_result_event(
+                    client_id,
+                    event,
+                    &protocol,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await
+                {
+                    error!("MongoDB client {} result event failed: {}", client_id, e);
+                }
+            }
+        }
+
+        // Every exit path lands here: drop the command handle so the dashboard stops
+        // offering [ send ] on a client whose loop is gone.
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
     /// Execute an action from the LLM
     #[cfg(feature = "mongodb")]
     async fn execute_llm_action(
@@ -226,9 +360,44 @@ impl MongodbClient {
         llm_client: &OllamaClient,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        match Self::apply_action(client_id, protocol.execute_action(action)?, db, status_tx).await?
+        {
+            Applied::Ran { event, .. } => {
+                Self::raise_result_event(
+                    client_id, event, protocol, app_state, llm_client, status_tx,
+                )
+                .await?;
+            }
+            Applied::Disconnect => {
+                info!("MongoDB client {} disconnecting", client_id);
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+            }
+            Applied::Nothing(what) => {
+                trace!(
+                    "MongoDB client {} action had no effect: {}",
+                    client_id,
+                    what
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run one executed action against the database. Shared by the LLM path and injected
+    /// commands so the BSON conversion and driver calls exist exactly once.
+    #[cfg(feature = "mongodb")]
+    async fn apply_action(
+        client_id: ClientId,
+        result: crate::llm::actions::client_trait::ClientActionResult,
+        db: &Arc<Database>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
         use crate::llm::actions::client_trait::ClientActionResult;
 
-        match protocol.execute_action(action)? {
+        match result {
             ClientActionResult::Custom { name, data } if name == "mongodb_find" => {
                 let collection_name = data
                     .get("collection")
@@ -282,18 +451,13 @@ impl MongodbClient {
                     collection_name
                 ));
 
-                // Send result event to LLM
-                Self::send_result_event(
-                    client_id,
-                    "find",
-                    Some(documents.clone()),
-                    None,
-                    protocol,
-                    app_state,
-                    llm_client,
-                    status_tx,
-                )
-                .await?;
+                let detail = format!(
+                    "find on '{}' returned {} documents; no byte count — the driver owns the socket",
+                    collection_name,
+                    documents.len()
+                );
+                let event = result_event("find", Some(documents), None);
+                Ok(Applied::Ran { detail, event })
             }
             ClientActionResult::Custom { name, data } if name == "mongodb_insert" => {
                 let collection_name = data
@@ -325,18 +489,12 @@ impl MongodbClient {
                     collection_name, result.inserted_id
                 ));
 
-                // Send result event to LLM
-                Self::send_result_event(
-                    client_id,
-                    "insert",
-                    None,
-                    Some(1),
-                    protocol,
-                    app_state,
-                    llm_client,
-                    status_tx,
-                )
-                .await?;
+                let detail = format!(
+                    "insert into '{}' acknowledged (id {:?}); no byte count — the driver owns the socket",
+                    collection_name, result.inserted_id
+                );
+                let event = result_event("insert", None, Some(1));
+                Ok(Applied::Ran { detail, event })
             }
             ClientActionResult::Custom { name, data } if name == "mongodb_update" => {
                 let collection_name = data
@@ -371,18 +529,12 @@ impl MongodbClient {
                     result.modified_count, collection_name
                 ));
 
-                // Send result event to LLM
-                Self::send_result_event(
-                    client_id,
-                    "update",
-                    None,
-                    Some(result.modified_count as u64),
-                    protocol,
-                    app_state,
-                    llm_client,
-                    status_tx,
-                )
-                .await?;
+                let detail = format!(
+                    "update on '{}' modified {} documents; no byte count — the driver owns the socket",
+                    collection_name, result.modified_count
+                );
+                let event = result_event("update", None, Some(result.modified_count));
+                Ok(Applied::Ran { detail, event })
             }
             ClientActionResult::Custom { name, data } if name == "mongodb_delete" => {
                 let collection_name = data
@@ -414,34 +566,31 @@ impl MongodbClient {
                     result.deleted_count, collection_name
                 ));
 
-                // Send result event to LLM
-                Self::send_result_event(
+                let detail = format!(
+                    "delete on '{}' removed {} documents; no byte count — the driver owns the socket",
+                    collection_name, result.deleted_count
+                );
+                let event = result_event("delete", None, Some(result.deleted_count));
+                Ok(Applied::Ran { detail, event })
+            }
+            ClientActionResult::Custom { name, .. } => {
+                trace!(
+                    "MongoDB client {} ignoring custom result '{}'",
                     client_id,
-                    "delete",
-                    None,
-                    Some(result.deleted_count),
-                    protocol,
-                    app_state,
-                    llm_client,
-                    status_tx,
-                )
-                .await?;
+                    name
+                );
+                Ok(Applied::Nothing("custom result not handled by this client"))
             }
-            ClientActionResult::Disconnect => {
-                info!("MongoDB client {} disconnecting", client_id);
-                app_state
-                    .update_client_status(client_id, ClientStatus::Disconnected)
-                    .await;
-            }
-            ClientActionResult::WaitForMore => {
-                trace!("MongoDB client {} waiting for more input", client_id);
-            }
-            _ => {
-                trace!("MongoDB client {} unhandled action result", client_id);
-            }
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            ClientActionResult::WaitForMore => Ok(Applied::Nothing("wait_for_more")),
+            ClientActionResult::NoAction => Ok(Applied::Nothing("no_action")),
+            ClientActionResult::SendData(_) => Ok(Applied::Nothing(
+                "send_data is not meaningful for a mongodb driver handle",
+            )),
+            ClientActionResult::Multiple(_) => Ok(Applied::Nothing(
+                "multiple results not handled by this client",
+            )),
         }
-
-        Ok(())
     }
 
     #[cfg(not(feature = "mongodb"))]
@@ -457,37 +606,16 @@ impl MongodbClient {
         Err(anyhow::anyhow!("MongoDB client feature not enabled"))
     }
 
-    /// Send result event to LLM
+    /// Send a prepared result event to the LLM.
     #[cfg(feature = "mongodb")]
-    async fn send_result_event(
+    async fn raise_result_event(
         client_id: ClientId,
-        result_type: &str,
-        documents: Option<Vec<Document>>,
-        count: Option<u64>,
+        event: Event,
         protocol: &Arc<MongodbClientProtocol>,
         app_state: &Arc<AppState>,
         llm_client: &OllamaClient,
         status_tx: &mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        let mut event_data = serde_json::json!({
-            "result_type": result_type,
-        });
-
-        if let Some(docs) = documents {
-            // Convert BSON documents to JSON
-            let json_docs: Vec<serde_json::Value> = docs
-                .iter()
-                .filter_map(|doc| serde_json::to_value(doc).ok())
-                .collect();
-            event_data["documents"] = serde_json::json!(json_docs);
-        }
-
-        if let Some(c) = count {
-            event_data["count"] = serde_json::json!(c);
-        }
-
-        let event = Event::new(&MONGODB_CLIENT_RESULT_RECEIVED_EVENT, event_data);
-
         let memory = app_state
             .get_memory_for_client(client_id)
             .await
@@ -536,18 +664,27 @@ impl MongodbClient {
 
         Ok(())
     }
+}
 
-    #[cfg(not(feature = "mongodb"))]
-    async fn send_result_event(
-        _client_id: ClientId,
-        _result_type: &str,
-        _documents: Option<Vec<()>>,
-        _count: Option<u64>,
-        _protocol: &Arc<MongodbClientProtocol>,
-        _app_state: &Arc<AppState>,
-        _llm_client: &OllamaClient,
-        _status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
-        Err(anyhow::anyhow!("MongoDB client feature not enabled"))
+/// Build the `mongodb_result_received` event for one completed operation.
+#[cfg(feature = "mongodb")]
+fn result_event(result_type: &str, documents: Option<Vec<Document>>, count: Option<u64>) -> Event {
+    let mut event_data = serde_json::json!({
+        "result_type": result_type,
+    });
+
+    if let Some(docs) = documents {
+        // Convert BSON documents to JSON
+        let json_docs: Vec<serde_json::Value> = docs
+            .iter()
+            .filter_map(|doc| serde_json::to_value(doc).ok())
+            .collect();
+        event_data["documents"] = serde_json::json!(json_docs);
     }
+
+    if let Some(c) = count {
+        event_data["count"] = serde_json::json!(c);
+    }
+
+    Event::new(&MONGODB_CLIENT_RESULT_RECEIVED_EVENT, event_data)
 }

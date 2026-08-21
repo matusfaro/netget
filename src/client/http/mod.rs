@@ -6,19 +6,62 @@ pub use actions::HttpClientProtocol;
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::client::http::actions::{
     HTTP_CLIENT_CONNECTED_EVENT, HTTP_CLIENT_RESPONSE_RECEIVED_EVENT,
 };
 use crate::client::llm_budget::call_llm_for_client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
+
+/// How often the command loop re-checks that its client still exists. HTTP has no
+/// socket to notice a close on, so this is what the old idle task was for.
+const REMOVAL_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// One completed HTTP exchange.
+///
+/// Split out of [`HttpClient::make_request`] so the injected-command loop can await
+/// the network round-trip - and report a truthful outcome - without also awaiting the
+/// LLM call the response event triggers.
+pub struct HttpExchange {
+    pub status_code: u16,
+    pub status_text: String,
+    pub headers: serde_json::Map<String, serde_json::Value>,
+    pub body: String,
+}
+
+/// What one executed action did. Shared vocabulary between the connected-event
+/// handler and the injected-command loop.
+enum Applied {
+    /// The action ran; `detail` says what it did.
+    Executed(String),
+    /// The action asked to end the session.
+    Disconnect,
+}
+
+/// How an `http_request` is issued.
+#[derive(Clone, Copy)]
+enum Dispatch {
+    /// Spawn the request and return immediately. Used by the connected-event
+    /// handler, which runs inline in `connect()` and must not block client creation
+    /// on a request that can take the full 30s timeout.
+    Spawn,
+    /// Await the HTTP exchange so the caller can report what actually happened. Used
+    /// by the injected-command loop. The response event is still delivered to the
+    /// LLM, from its own registered task, so a parked manual handler cannot wedge the
+    /// command loop for the length of a human's think time.
+    Await,
+}
 
 /// HTTP client that makes requests to remote HTTP servers
 pub struct HttpClient;
@@ -74,6 +117,23 @@ impl HttpClient {
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Injected commands (the dashboard's [ send ]). Registered BEFORE the
+        // connected-event LLM call below: a dashboard-created client defaults to a
+        // `*` manual rule, so that call can park for minutes waiting for a human and
+        // [ send ] has to work for the whole park.
+        //
+        // This task also replaces the old "poll get_client() every 5s" idle task -
+        // that check is now one arm of the command loop's select!.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_state = app_state.clone();
+        let cmd_llm = llm_client.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(command_rx, client_id, cmd_state, cmd_llm, cmd_tx).await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with http_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -97,60 +157,48 @@ impl HttpClient {
             {
                 Ok(result) => {
                     // Execute actions from LLM response
-                    use crate::llm::actions::client_trait::{Client, ClientActionResult};
                     let protocol = crate::client::http::actions::HttpClientProtocol;
 
                     for action in result.actions {
                         match protocol.execute_action(action.clone()) {
-                            Ok(ClientActionResult::Custom { name, data }) => {
-                                if name == "http_request" {
-                                    // Extract request parameters
-                                    let method =
-                                        data["method"].as_str().unwrap_or("GET").to_string();
-                                    let path = data["path"].as_str().unwrap_or("/").to_string();
-                                    let headers = data["headers"].as_object().cloned();
-                                    let body = data["body"].as_str().map(|s| s.to_string());
-
-                                    // Actually make the HTTP request
-                                    let llm_clone = llm_client.clone();
-                                    let state_clone = app_state.clone();
-                                    let status_clone = status_tx.clone();
-
-                                    let request_handle = tokio::spawn(async move {
-                                        if let Err(e) = HttpClient::make_request(
-                                            client_id,
-                                            method,
-                                            path,
-                                            headers,
-                                            body,
-                                            state_clone,
-                                            llm_clone,
-                                            status_clone,
-                                        )
-                                        .await
-                                        {
-                                            error!("HTTP request failed: {}", e);
-                                        }
-                                    });
-                                    // Registered so an in-flight request (and the LLM
-                                    // call it makes on completion) is aborted when the
-                                    // client is stopped.
-                                    app_state
-                                        .register_client_task(client_id, request_handle)
-                                        .await;
+                            Ok(action_result) => {
+                                match Self::apply_action(
+                                    action_result,
+                                    Dispatch::Spawn,
+                                    client_id,
+                                    &app_state,
+                                    &llm_client,
+                                    &status_tx,
+                                )
+                                .await
+                                {
+                                    Ok(Applied::Disconnect) => {
+                                        info!("LLM requested disconnect after connect");
+                                        // Drop the command handle so the dashboard stops
+                                        // offering [ send ]; that also ends the command loop.
+                                        app_state.remove_client_handle(client_id).await;
+                                        app_state
+                                            .update_client_status(
+                                                client_id,
+                                                ClientStatus::Disconnected,
+                                            )
+                                            .await;
+                                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                        return Ok("0.0.0.0:0".parse().unwrap());
+                                    }
+                                    Ok(Applied::Executed(detail)) => {
+                                        debug!(
+                                            "HTTP client {} after connect: {}",
+                                            client_id, detail
+                                        );
+                                    }
+                                    Err(e) => {
+                                        error!(
+                                            "HTTP client {} request after connect failed: {}",
+                                            client_id, e
+                                        );
+                                    }
                                 }
-                            }
-                            Ok(ClientActionResult::Disconnect) => {
-                                info!("LLM requested disconnect after connect");
-                                return Ok("0.0.0.0:0".parse().unwrap());
-                            }
-                            Ok(ClientActionResult::WaitForMore) => {
-                                // No action needed
-                            }
-                            Ok(ClientActionResult::SendData(_))
-                            | Ok(ClientActionResult::NoAction)
-                            | Ok(ClientActionResult::Multiple(_)) => {
-                                // These are not applicable for HTTP client in this context
                             }
                             Err(e) => {
                                 error!("Action execution error: {}", e);
@@ -164,30 +212,237 @@ impl HttpClient {
             }
         }
 
-        // For HTTP client, we'll spawn a background task that processes LLM-requested actions
-        // The actual requests are made on-demand via actions, not in a read loop
-        let task_registrar = app_state.clone();
-        let handle = tokio::spawn(async move {
-            // This task monitors for client disconnection requests
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("HTTP client {} stopped", client_id);
-                    break;
-                }
-            }
-        });
-        // Registered so stop_client tears this down immediately instead of leaving it
-        // to notice the removal on its next 5s poll.
-        task_registrar.register_client_task(client_id, handle).await;
-
         // Return a dummy local address (HTTP is connectionless)
         Ok("0.0.0.0:0".parse().unwrap())
     }
 
-    /// Make an HTTP request
+    /// Drain injected commands until the channel closes (client removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// `command_support::handle_stream_client_command` cannot serve this client:
+    /// there is no write half, and `send_http_request` yields
+    /// `ClientActionResult::Custom`. So the action goes through [`Self::apply_action`]
+    /// - the same function the connected-event path uses - and the outcome is
+    /// recorded and replied exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let protocol = HttpClientProtocol;
+        let mut removal_check = tokio::time::interval(REMOVAL_CHECK_INTERVAL);
+        removal_check.tick().await; // the first tick completes immediately
+
+        loop {
+            tokio::select! {
+                received = command_rx.recv() => {
+                    let Some(command) = received else { break };
+                    if Self::handle_command(
+                        &protocol,
+                        command,
+                        client_id,
+                        &app_state,
+                        &llm_client,
+                        &status_tx,
+                    )
+                    .await
+                    {
+                        break;
+                    }
+                }
+                _ = removal_check.tick() => {
+                    if app_state.get_client(client_id).await.is_none() {
+                        info!("HTTP client {} stopped", client_id);
+                        break;
+                    }
+                }
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+
+    /// Execute one injected action, record it, and reply. Returns `true` when the
+    /// command loop should stop.
+    async fn handle_command(
+        protocol: &HttpClientProtocol,
+        command: ClientCommand,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> bool {
+        let action = command.action.clone();
+        let outcome = match protocol.execute_action(action.clone()) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(action_result) => match Self::apply_action(
+                action_result,
+                Dispatch::Await,
+                client_id,
+                app_state,
+                llm_client,
+                status_tx,
+            )
+            .await
+            {
+                // Never `Sent`: reqwest owns the socket and does not report how many
+                // bytes the request serialised to, so a byte count here would be
+                // invented. `Executed` carries the response status instead, which is
+                // both true and more useful.
+                Ok(Applied::Executed(detail)) => Ok(ClientSendOutcome::Executed { detail }),
+                Ok(Applied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Err(e) => Err(e),
+            },
+        };
+
+        let outcome_json = match &outcome {
+            Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+            Err(e) => serde_json::json!({"error": e.to_string()}),
+        };
+        app_state
+            .record_access_log(
+                AccessLogOwner::Client(client_id.as_u32()),
+                protocol.protocol_name(),
+                None,
+                "injected_action",
+                action,
+                vec![outcome_json],
+            )
+            .await;
+
+        let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+        if let Err(e) = &outcome {
+            error!("HTTP client {} injected action failed: {}", client_id, e);
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        crate::client::command_support::reply(command, outcome);
+
+        if disconnect {
+            app_state
+                .update_client_status(client_id, ClientStatus::Disconnected)
+                .await;
+        }
+        disconnect
+    }
+
+    /// Turn one executed action into an HTTP request (or a session end).
+    ///
+    /// Shared by the connected-event handler and the injected-command loop so the
+    /// `http_request` decoding exists exactly once.
+    async fn apply_action(
+        action_result: ClientActionResult,
+        dispatch: Dispatch,
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        match action_result {
+            ClientActionResult::Custom { name, data } if name == "http_request" => {
+                let method = data["method"].as_str().unwrap_or("GET").to_string();
+                let path = data["path"].as_str().unwrap_or("/").to_string();
+                let headers = data["headers"].as_object().cloned();
+                let body = data["body"].as_str().map(|s| s.to_string());
+
+                match dispatch {
+                    Dispatch::Spawn => {
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let (log_method, log_path) = (method.clone(), path.clone());
+
+                        let request_handle = tokio::spawn(async move {
+                            if let Err(e) = HttpClient::make_request(
+                                client_id,
+                                method,
+                                path,
+                                headers,
+                                body,
+                                state_clone,
+                                llm_clone,
+                                status_clone,
+                            )
+                            .await
+                            {
+                                error!("HTTP request failed: {}", e);
+                            }
+                        });
+                        // Registered so an in-flight request (and the LLM call it makes
+                        // on completion) is aborted when the client is stopped.
+                        app_state
+                            .register_client_task(client_id, request_handle)
+                            .await;
+                        Ok(Applied::Executed(format!(
+                            "http_request {} {} dispatched",
+                            log_method, log_path
+                        )))
+                    }
+                    Dispatch::Await => {
+                        let exchange = Self::perform_request(
+                            client_id,
+                            method.clone(),
+                            path.clone(),
+                            headers,
+                            body,
+                            app_state,
+                            status_tx,
+                        )
+                        .await?;
+                        let detail = format!(
+                            "http_request {} {} -> {} ({} byte body)",
+                            method,
+                            path,
+                            exchange.status_code,
+                            exchange.body.len()
+                        );
+
+                        let llm_clone = llm_client.clone();
+                        let state_clone = app_state.clone();
+                        let status_clone = status_tx.clone();
+                        let notify_handle = tokio::spawn(async move {
+                            HttpClient::notify_response(
+                                client_id,
+                                exchange,
+                                state_clone,
+                                llm_clone,
+                                status_clone,
+                            )
+                            .await;
+                        });
+                        app_state
+                            .register_client_task(client_id, notify_handle)
+                            .await;
+                        Ok(Applied::Executed(detail))
+                    }
+                }
+            }
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            ClientActionResult::WaitForMore => Ok(Applied::Executed("wait_for_more".to_string())),
+            ClientActionResult::NoAction => Ok(Applied::Executed("no_action".to_string())),
+            // Not swallowed: an action this client cannot carry out says so, rather
+            // than looking identical to success.
+            ClientActionResult::Custom { name, .. } => Ok(Applied::Executed(format!(
+                "custom result '{name}' is not handled by the HTTP client"
+            ))),
+            ClientActionResult::SendData(_) => Ok(Applied::Executed(
+                "send_data has no meaning for a request/response HTTP client".to_string(),
+            )),
+            ClientActionResult::Multiple(_) => Ok(Applied::Executed(
+                "multiple results are not produced by the HTTP client".to_string(),
+            )),
+        }
+    }
+
+    /// Make an HTTP request and hand the response to the LLM.
     #[allow(clippy::too_many_arguments)]
     pub async fn make_request(
         client_id: ClientId,
@@ -199,6 +454,26 @@ impl HttpClient {
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        let exchange = Self::perform_request(
+            client_id, method, path, headers, body, &app_state, &status_tx,
+        )
+        .await?;
+        Self::notify_response(client_id, exchange, app_state, llm_client, status_tx).await;
+        Ok(())
+    }
+
+    /// Perform the HTTP round-trip only. No LLM involvement, so a caller can await
+    /// this and know exactly what the server answered.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn perform_request(
+        client_id: ClientId,
+        method: String,
+        path: String,
+        headers: Option<serde_json::Map<String, serde_json::Value>>,
+        body: Option<String>,
+        app_state: &AppState,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<HttpExchange> {
         // Get base URL from client
         let base_url = app_state
             .with_client_mut(client_id, |client| {
@@ -274,58 +549,72 @@ impl HttpClient {
                     client_id, status_code, status
                 );
 
-                // Call LLM with response
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol =
-                        Arc::new(crate::client::http::actions::HttpClientProtocol::new());
-                    let event = Event::new(
-                        &HTTP_CLIENT_RESPONSE_RECEIVED_EVENT,
-                        serde_json::json!({
-                            "status_code": status_code,
-                            "status_text": status.to_string(),
-                            "headers": resp_headers,
-                            "body": body_text,
-                        }),
-                    );
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-                        }
-                        Err(e) => {
-                            error!("LLM error for HTTP client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                Ok(HttpExchange {
+                    status_code,
+                    status_text: status.to_string(),
+                    headers: resp_headers,
+                    body: body_text,
+                })
             }
             Err(e) => {
-                Log::new(Some(&status_tx))
+                Log::new(Some(status_tx))
                     .error(format!("HTTP client {} request failed: {}", client_id, e));
                 Err(e.into())
+            }
+        }
+    }
+
+    /// Hand a completed exchange to the LLM as an `http_response_received` event.
+    async fn notify_response(
+        client_id: ClientId,
+        exchange: HttpExchange,
+        app_state: Arc<AppState>,
+        llm_client: OllamaClient,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+
+        let protocol = Arc::new(crate::client::http::actions::HttpClientProtocol::new());
+        let event = Event::new(
+            &HTTP_CLIENT_RESPONSE_RECEIVED_EVENT,
+            serde_json::json!({
+                "status_code": exchange.status_code,
+                "status_text": exchange.status_text,
+                "headers": exchange.headers,
+                "body": exchange.body,
+            }),
+        );
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            &llm_client,
+            &app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            &status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                // Update memory
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for HTTP client {}: {}", client_id, e);
             }
         }
     }

@@ -209,3 +209,37 @@ See `tests/client/ldap/CLAUDE.md` for E2E testing strategy.
 - RFC 4511 - LDAP: The Protocol
 - RFC 4510 - LDAP: Technical Specification Road Map
 - ldap3 crate documentation: https://docs.rs/ldap3/
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running LDAP client. The channel is
+registered with `command_support::register_command_channel` **before** the `ldap_connected`
+LLM call and drained by its own task (`command_loop`), registered through
+`register_client_task`. Registering first is what makes `[ send ]` usable while a manual `*`
+routing rule has the connect event parked waiting for a human.
+
+Both the LLM path (`execute_ldap_action`) and injected commands go through one `apply_action`,
+so an injected `bind` / `search` / `add` / `modify` / `delete` produces the same LDAP messages
+as one the model asked for, and the matching response event
+(`ldap_bind_response` / `ldap_search_results` / `ldap_modify_response`) fires either way. On
+the injected path that event is raised **after** the outcome is replied, so `[ send ]` is not
+held for an LLM round-trip.
+
+**Outcome semantics** (`ClientSendOutcome`):
+
+| Situation | Outcome |
+|---|---|
+| an operation completed | `Executed { detail }` — the DN and **the server's own result message**, success or failure |
+| a result with no wire effect (`wait_for_more`, unhandled custom) | `Executed { detail }` naming which |
+| unknown action type or bad parameters | `Rejected { error }` |
+| `disconnect` | the connection is unbound first, then `Disconnected`; the loop ends and the handle is dropped |
+| the operation errored at the transport level | `Err` — `send_to_client` returns the error |
+
+**Never `Sent`.** `ldap3`'s synchronous `LdapConn` owns the socket, so NetGet cannot know how
+many bytes an operation put on the wire. A failed bind is still `Executed`: the action *did*
+reach the server and the server *did* answer — the detail carries that answer verbatim rather
+than being upgraded to a success or downgraded to an error.
+
+Test: `tests/client/ldap/command_channel_test.rs` (zero LLM calls; a NetGet LDAP server with a
+zero-action `*` static handler falls through to its own fail-closed default, which is the only
+way to get a response carrying the request's real messageID — a static handler cannot echo it).

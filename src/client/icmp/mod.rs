@@ -24,10 +24,14 @@ use tracing::{debug, error};
 
 use crate::client::llm_budget::call_llm_for_client;
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
+// Imported anonymously: `socket2::Protocol` already owns the name here, and only the
+// trait's methods (`protocol_name`) are needed.
+use crate::llm::actions::protocol_trait::Protocol as _;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::ClientId;
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 use crate::{console_debug, console_info};
 
 pub use actions::IcmpClientProtocol;
@@ -111,6 +115,29 @@ impl IcmpClient {
         let socket = Arc::new(socket);
         let protocol = Arc::new(IcmpClientProtocol::new());
 
+        // Command channel for injected actions (the dashboard's [ send ]). Registered, and
+        // drained by a live task, BEFORE the connected-event LLM call below: that call is
+        // awaited inline here, so a manual `*` routing rule parks it - and the whole point
+        // of the channel is that the operator can still reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        // Filled in once the receive loop exists (it is spawned after the connected-event
+        // call), so an injected `disconnect` can actually stop it and release the socket.
+        let read_abort: Arc<std::sync::OnceLock<tokio::task::AbortHandle>> =
+            Arc::new(std::sync::OnceLock::new());
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            protocol.clone(),
+            socket.clone(),
+            pending_requests.clone(),
+            target_ip,
+            client_id,
+            app_state.clone(),
+            status_tx.clone(),
+            read_abort.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -140,7 +167,7 @@ impl IcmpClient {
                     }
 
                     // Execute initial actions
-                    Self::execute_actions(
+                    if let Err(e) = Self::execute_actions(
                         result.actions,
                         &socket,
                         &pending_requests,
@@ -148,12 +175,25 @@ impl IcmpClient {
                         &status_tx,
                         protocol.as_ref(),
                     )
-                    .await?;
+                    .await
+                    {
+                        // Early return: drop the command handle so the dashboard does not
+                        // offer [ send ] into a client that never started.
+                        app_state.remove_client_handle(client_id).await;
+                        return Err(e);
+                    }
                 }
                 Err(e) => {
                     error!("ICMP client LLM call failed: {}", e);
                 }
             }
+        }
+
+        // An injected `disconnect` that arrived while the connected-event call was parked
+        // has already dropped the command handle. Honour it rather than starting a receive
+        // loop the operator just asked to stop.
+        if !app_state.has_client_handle(client_id).await {
+            return Ok(local_addr);
         }
 
         // Spawn receive loop
@@ -340,12 +380,98 @@ impl IcmpClient {
                     }
                 }
             }
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead client, and a late send fails fast.
+            state_clone.remove_client_handle(client_id).await;
+            let _ = status_clone.send("__UPDATE_UI__".to_string());
         });
+        let _ = read_abort.set(task_handle.abort_handle());
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
 
         Ok(local_addr)
+    }
+
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this client:
+    /// `send_echo_request` yields `ClientActionResult::Custom` and the transport is a raw
+    /// `socket2::Socket`, not an `AsyncWrite`. The action goes through [`Self::apply_action`]
+    /// - the same function the connected-event path and the receive loop use.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<ClientCommand>,
+        protocol: Arc<IcmpClientProtocol>,
+        socket: Arc<Socket>,
+        pending_requests: Arc<Mutex<HashMap<(u16, u16), PendingRequest>>>,
+        target_ip: Ipv4Addr,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        read_abort: Arc<std::sync::OnceLock<tokio::task::AbortHandle>>,
+    ) {
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => {
+                    Self::apply_action(result, &socket, &pending_requests, target_ip, &status_tx)
+                        .await
+                        .map(|applied| match applied {
+                            Applied::Disconnect => ClientSendOutcome::Disconnected,
+                            Applied::Sent(0) => ClientSendOutcome::Executed {
+                                detail: "executed (no packet sent)".to_string(),
+                            },
+                            Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                            Applied::Nothing(detail) => ClientSendOutcome::Executed { detail },
+                        })
+                }
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("ICMP client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // ICMP is connectionless, so "disconnected" means: stop receiving, release
+                // the raw socket, drop the handle so [ send ] is greyed out again.
+                if let Some(abort) = read_abort.get() {
+                    abort.abort();
+                }
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
     }
 
     /// Execute actions from LLM
@@ -358,78 +484,102 @@ impl IcmpClient {
         protocol: &IcmpClientProtocol,
     ) -> Result<()> {
         for action in actions {
-            match protocol.execute_action(action)? {
-                ClientActionResult::Custom { name, data } => {
-                    if name == "send_echo_request" {
-                        let dest_ip: Ipv4Addr = data["destination_ip"]
-                            .as_str()
-                            .unwrap_or(&target_ip.to_string())
-                            .parse()?;
-                        let identifier = data["identifier"].as_u64().unwrap_or(1234) as u16;
-                        let sequence = data["sequence"].as_u64().unwrap_or(1) as u16;
-                        let payload_hex = data["payload_hex"].as_str().unwrap_or("");
-                        let ttl = data["ttl"].as_u64().unwrap_or(64) as u8;
-
-                        let payload = if payload_hex.is_empty() {
-                            Vec::new()
-                        } else {
-                            hex::decode(payload_hex)?
-                        };
-
-                        // Build and send echo request
-                        let packet = Self::build_echo_request(
-                            Ipv4Addr::UNSPECIFIED,
-                            dest_ip,
-                            identifier,
-                            sequence,
-                            &payload,
-                            ttl,
-                        );
-
-                        let dest_addr = SocketAddr::new(std::net::IpAddr::V4(dest_ip), 0);
-                        socket.send_to(&packet, &dest_addr.into())?;
-
-                        // Track pending request
-                        {
-                            let mut pending = pending_requests.lock().await;
-                            pending.insert(
-                                (identifier, sequence),
-                                PendingRequest {
-                                    sent_at: Instant::now(),
-                                    identifier,
-                                    sequence,
-                                    destination_ip: dest_ip,
-                                },
-                            );
-                        }
-
-                        console_debug!(
-                            status_tx,
-                            "ICMP sent echo request to {} (id={}, seq={})",
-                            dest_ip,
-                            identifier,
-                            sequence
-                        );
-                        /* TODO: Timestamp support requires pnet to add timestamp packet types
-                        } else if name == "send_timestamp_request" {
-                            // TODO: Implement timestamp request
-                            debug!("Timestamp request not yet implemented");
-                        */
-                    }
-                }
-                ClientActionResult::WaitForMore => {
-                    // Just continue listening
-                    debug!("ICMP client waiting for more responses");
-                }
-                ClientActionResult::Disconnect => {
-                    debug!("ICMP client disconnect requested");
-                    break;
-                }
-                _ => {}
+            let result = protocol.execute_action(action)?;
+            if matches!(
+                Self::apply_action(result, socket, pending_requests, target_ip, status_tx).await?,
+                Applied::Disconnect
+            ) {
+                debug!("ICMP client disconnect requested");
+                break;
             }
         }
 
         Ok(())
+    }
+
+    /// Apply one executed action. Shared by the connected-event path, the receive loop and
+    /// injected commands so the echo-request encoding exists exactly once.
+    async fn apply_action(
+        result: ClientActionResult,
+        socket: &Arc<Socket>,
+        pending_requests: &Arc<Mutex<HashMap<(u16, u16), PendingRequest>>>,
+        target_ip: Ipv4Addr,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } => {
+                if name == "send_echo_request" {
+                    let dest_ip: Ipv4Addr = data["destination_ip"]
+                        .as_str()
+                        .unwrap_or(&target_ip.to_string())
+                        .parse()?;
+                    let identifier = data["identifier"].as_u64().unwrap_or(1234) as u16;
+                    let sequence = data["sequence"].as_u64().unwrap_or(1) as u16;
+                    let payload_hex = data["payload_hex"].as_str().unwrap_or("");
+                    let ttl = data["ttl"].as_u64().unwrap_or(64) as u8;
+
+                    let payload = if payload_hex.is_empty() {
+                        Vec::new()
+                    } else {
+                        hex::decode(payload_hex)?
+                    };
+
+                    // Build and send echo request
+                    let packet = Self::build_echo_request(
+                        Ipv4Addr::UNSPECIFIED,
+                        dest_ip,
+                        identifier,
+                        sequence,
+                        &payload,
+                        ttl,
+                    );
+
+                    let dest_addr = SocketAddr::new(std::net::IpAddr::V4(dest_ip), 0);
+                    let sent = socket.send_to(&packet, &dest_addr.into())?;
+
+                    // Track pending request
+                    {
+                        let mut pending = pending_requests.lock().await;
+                        pending.insert(
+                            (identifier, sequence),
+                            PendingRequest {
+                                sent_at: Instant::now(),
+                                identifier,
+                                sequence,
+                                destination_ip: dest_ip,
+                            },
+                        );
+                    }
+
+                    console_debug!(
+                        status_tx,
+                        "ICMP sent echo request to {} (id={}, seq={})",
+                        dest_ip,
+                        identifier,
+                        sequence
+                    );
+                    /* TODO: Timestamp support requires pnet to add timestamp packet types
+                    } else if name == "send_timestamp_request" {
+                        // TODO: Implement timestamp request
+                        debug!("Timestamp request not yet implemented");
+                    */
+                    Ok(Applied::Sent(sent))
+                } else {
+                    Ok(Applied::Nothing(format!(
+                        "custom result '{name}' is not an ICMP request; nothing sent"
+                    )))
+                }
+            }
+            ClientActionResult::WaitForMore => {
+                // Just continue listening
+                debug!("ICMP client waiting for more responses");
+                Ok(Applied::Nothing("wait_for_more".to_string()))
+            }
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            other => Ok(Applied::Nothing(format!(
+                "action result {other:?} produced no packet"
+            ))),
+        }
     }
 
     /// Build an ICMP echo request packet with IP header
@@ -516,4 +666,15 @@ fn icmp_type_to_string(icmp_type: pnet::packet::icmp::IcmpType) -> &'static str 
         IcmpTypes::Traceroute => "TRACEROUTE",
         _ => "UNKNOWN",
     }
+}
+
+/// What [`IcmpClient::apply_action`] did with one action.
+#[derive(Debug)]
+enum Applied {
+    /// Packet bytes actually handed to `send_to` (0 when nothing was sent).
+    Sent(usize),
+    /// Ran, but put nothing on the wire; the string says why.
+    Nothing(String),
+    /// The session should end.
+    Disconnect,
 }

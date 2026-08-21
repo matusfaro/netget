@@ -95,3 +95,26 @@ address instead of at first fetch.
 ```
 Connect to localhost:8080 via rss and fetch /tech-news.xml, show me the latest 5 items
 ```
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running RSS client. The handle is
+registered **before** the `rss_connected` LLM call, because a dashboard-created client
+defaults to a `*` → manual rule and that call can park for minutes waiting for a human. This
+also fixes a smaller problem: before, a model that answered the connect event with nothing
+left a client with no tasks at all and no way to ask it for anything.
+
+The fetch machinery now takes a `FetchCtx` instead of nine positional arguments, and splits
+into `fetch_chain` (fetch → `notify_feed_fetched` → queue what comes back) and two entry
+points over it: `fetch_loop`, the model's own chain from the connect path, which marks the
+client `Disconnected` once it drains; and `injected_chain`, which does not — an injected
+fetch is one operation on a client the operator is still holding open. `apply_action` decides
+what one executed action means and is shared by all three callers, so `resolve_feed_url`
+happens in exactly one place.
+
+**Outcome semantics — `Executed`, never `Sent`.** reqwest owns the socket and reports no wire
+byte count for the GET. The command loop **awaits** the fetch and reports
+`Executed { detail: "fetch_rss_feed http://host/news.xml -> 2 items" }`, which proves the feed
+was fetched *and* parsed; a failed fetch is an `Err`, an unknown action is `Rejected`,
+`disconnect` is `Disconnected`. The `rss_feed_fetched` event fires from its own registered
+task, so a manual rule parking that LLM call cannot wedge the command loop.

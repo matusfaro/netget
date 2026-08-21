@@ -647,3 +647,31 @@ let task = ScheduledTask {
 | Use case        | Production routing | Topology discovery  |
 
 **Winner**: Query client for NetGet's use cases! 🎉
+
+## Injected commands (the dashboard's `[ send ]`)
+
+The client registers a command channel (`command_support::register_command_channel`) as soon as
+the raw socket exists, **before** the task that makes the connected-event LLM call. Commands are
+drained by their own registered task rather than a `tokio::select!` arm: the receive loop awaits
+`call_llm_for_client` inline, so a `select!` arm there would stall for a whole LLM round-trip.
+Both tasks use the same raw socket fd.
+
+Injected actions go through `OspfClient::apply_action`, the same function the receive loop uses,
+so packet building and `sendto` exist exactly once. `handle_ospf_action` and `send_ospf_packet`
+now return the byte count `sendto` accepted rather than `()`, which is what makes a truthful
+`Sent` possible at all. Outcomes:
+
+| Injected action | `ClientSendOutcome` |
+|---|---|
+| `send_hello` / `send_database_description` / `send_link_state_request` | `Sent { bytes_sent }` — the count `sendto` returned |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| `disconnect` | `Disconnected` — aborts the receive loop, drops the handle, marks the client Disconnected. OSPF has no wire close |
+| unknown action | `Rejected { error }` |
+
+**Privilege.** Everything above needs the raw IP-89 socket, which needs root/`CAP_NET_RAW`.
+(The protocol's metadata declares `PrivilegeRequirement::Root`, which is over-broad — it really
+wants `CAP_NET_RAW` — and is left as-is.) Without the privilege `connect()` fails before the
+channel is ever registered, and the contract that failure has to honour is rule 3: **no command
+handle is left behind**, so the dashboard greys `[ send ]` out and a late `send_to_client` fails
+fast instead of hanging. `tests/client/ospf/command_channel_test.rs` asserts that unprivileged
+behaviour on every run and `#[ignore]`s only the test that actually multicasts a Hello.

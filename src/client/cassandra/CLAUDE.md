@@ -335,3 +335,40 @@ See `tests/client/cassandra/CLAUDE.md` for E2E testing approach.
 - [ScyllaDB Docs](https://rust-driver.docs.scylladb.com/)
 - [CQL Reference](https://cassandra.apache.org/doc/latest/cassandra/cql/)
 - [Cassandra Protocol Spec](https://github.com/apache/cassandra/blob/trunk/doc/native_protocol_v4.spec)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running Cassandra client. The channel is
+registered with `command_support::register_command_channel` **before** the
+`cassandra_connected` LLM call and drained by its own task (`command_loop`), registered through
+`register_client_task`.
+
+Registering first matters more here than anywhere else in this family: this protocol *awaits*
+its connect-event LLM call inline in `connect_with_llm_actions`, so under a manual `*` routing
+rule client creation itself parks. The command loop is a separate task precisely so `[ send ]`
+still reaches the session during that park.
+
+Both the LLM path (`execute_actions`) and injected commands go through one `apply_action`, so
+an injected `execute_cql_query` produces the same wire traffic as one the model asked for, and
+the `cassandra_result_received` event fires either way. On the injected path that event is
+raised **after** the outcome is replied.
+
+**Outcome semantics** (`ClientSendOutcome`):
+
+| Situation | Outcome |
+|---|---|
+| `execute_cql_query` ran | `Executed { detail }` — row count plus the truncated CQL |
+| a result with no wire effect (`wait_for_more`, unhandled custom) | `Executed { detail }` naming which |
+| unknown action type or bad parameters | `Rejected { error }` |
+| `disconnect` | `Disconnected`, then the loop ends and the handle is dropped |
+| the statement failed | `Err` — `send_to_client` returns the error |
+
+**Never `Sent`.** The scylla driver owns the socket and its connection pool, so NetGet cannot
+know how many bytes a statement put on the wire. Every loop exit calls `remove_client_handle`.
+
+The command loop replaced the old 30-second "keepalive" polling task, and it also holds the
+`Arc<Session>` — which is what keeps the session alive at all. Previously the only `Arc<Session>`
+belonged to the connect-time LLM path and was dropped when `connect_with_llm_actions` returned.
+
+Test: `tests/client/cassandra/command_channel_test.rs` (zero LLM calls; a NetGet Cassandra
+server with a `*` static handler receives the injected statement).

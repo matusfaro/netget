@@ -231,3 +231,26 @@ LLM memory allows stateful interactions:
 - [reqwest documentation](https://docs.rs/reqwest)
 - [h2 crate](https://docs.rs/h2)
 - [HTTP/2 Explained](https://http2-explained.haxx.se/)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running HTTP/2 client. The handle is
+registered before `connect()` returns, and the old "poll `get_client()` every 5 s" task is
+gone — its removal check is one arm of the command loop's `select!`.
+
+**This is currently the only way anything reaches `Http2Client::make_request`.** The HTTP/2
+client raises no connected event: `HTTP2_CLIENT_CONNECTED_EVENT` is declared in `actions.rs`
+and never emitted, and nothing else called `make_request`, so before the command channel the
+client initialised itself and then did nothing for the rest of its life. Wiring an
+`http2_connected` LLM call is the remaining gap.
+
+**Outcome semantics — `Executed`, never `Sent`.** reqwest owns the socket and never reports
+how many bytes a request serialised to. The command loop **awaits** the exchange and reports
+`Executed { detail: "http2_request GET /path -> 200 (17 byte body)" }`; a failed request is
+an `Err`, an unknown action is `Rejected`, `disconnect` is `Disconnected`. The
+`http2_response_received` event fires from its own registered task, so a manual rule parking
+that LLM call cannot wedge the command loop.
+
+`perform_request` also now prefixes `http://` when the client was opened on a bare
+`host:port` (the common case), which reqwest requires; `http2_prior_knowledge()` speaks
+cleartext h2c, so that is the correct scheme for it.

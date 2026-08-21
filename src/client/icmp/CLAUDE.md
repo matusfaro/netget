@@ -331,3 +331,34 @@ See `tests/client/icmp/CLAUDE.md` for test strategy and E2E test details.
 - RFC 1122 - Requirements for Internet Hosts
 - pnet documentation: https://docs.rs/pnet/latest/pnet/
 - socket2 documentation: https://docs.rs/socket2/latest/socket2/
+
+## Injected commands (the dashboard's `[ send ]`)
+
+The client registers a command channel (`command_support::register_command_channel`) as soon as
+the raw socket exists, and spawns the task that drains it **before** the connected-event LLM
+call, which is awaited inline in `connect_with_llm_actions` and which a manual `*` routing rule
+parks. Commands are drained by their own registered task rather than a `tokio::select!` arm:
+the receive loop awaits `call_llm_for_client` inline, so a `select!` arm there would stall for a
+whole LLM round-trip.
+
+Injected actions go through `IcmpClient::apply_action`, the same function `execute_actions`
+(the LLM path) now loops over, so the echo-request encoding exists exactly once. Outcomes:
+
+| Injected action | `ClientSendOutcome` |
+|---|---|
+| `send_echo_request` | `Sent { bytes_sent }` — the byte count `Socket::send_to` returned (20-byte IP header + 8-byte ICMP header + payload). The pending-request map is updated exactly as on the LLM path, so an injected ping still gets its RTT |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| `disconnect` | `Disconnected` — aborts the receive loop, drops the handle, marks the client Disconnected. ICMP has no wire close |
+| unknown action | `Rejected { error }` |
+
+**Privilege.** Everything above needs the raw socket, which needs root/`CAP_NET_RAW`. Without
+it `connect()` fails before the channel is ever registered, and the contract that failure has
+to honour is rule 3: **no command handle is left behind**, so the dashboard greys `[ send ]`
+out and a late `send_to_client` fails fast instead of hanging. The connected-event error path
+now removes the handle explicitly before its early `return Err(…)`.
+`tests/client/icmp/command_channel_test.rs` asserts that unprivileged behaviour on every run
+and `#[ignore]`s only the test that actually puts a packet on the wire.
+
+The receive loop is a real tokio task (non-blocking `recv_from` plus a 10 ms sleep), not the
+fire-and-forget `spawn_blocking` shape the server side had — the command task is genuinely
+alive alongside it.

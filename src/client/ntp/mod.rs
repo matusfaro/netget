@@ -7,16 +7,18 @@ use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{error, info, trace};
 
 use crate::client::llm_budget::call_llm_for_client;
 use crate::client::ntp::actions::NTP_CLIENT_RESPONSE_RECEIVED_EVENT;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// NTP client that queries NTP servers
 pub struct NtpClient;
@@ -58,10 +60,43 @@ impl NtpClient {
         let socket = Arc::new(socket);
         let socket_clone = socket.clone();
 
+        // Only one query may own the socket's receive side at a time: the connect-time
+        // query and any injected `query_time` would otherwise race for the same datagram
+        // and one of them would parse the other's reply.
+        let query_lock = Arc::new(Mutex::new(()));
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        //
+        // Registered BEFORE the initial LLM call below, which a manual `*` routing rule can
+        // park for minutes - [ send ] must work for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        let cmd_state = app_state.clone();
+        let cmd_status_tx = status_tx.clone();
+        let cmd_llm = llm_client.clone();
+        let cmd_socket = socket.clone();
+        let cmd_lock = query_lock.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx,
+                cmd_socket,
+                remote_sock_addr,
+                cmd_lock,
+                client_id,
+                cmd_llm,
+                cmd_state,
+                cmd_status_tx,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn task to handle LLM-directed queries
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
         let task_registrar = app_state.clone();
+        let query_lock_for_llm = query_lock.clone();
         let task_handle = tokio::spawn(async move {
             // Initial LLM call to get first action (usually query_time)
             if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -86,77 +121,52 @@ impl NtpClient {
                     }) => {
                         // Execute initial actions
                         for action in actions {
-                            use crate::llm::actions::client_trait::Client;
                             match protocol.as_ref().execute_action(action) {
-                                Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data: _ }) if name == "ntp_query" => {
-                                    // Send NTP query
-                                    let ntp_packet = Self::build_ntp_request();
-                                    if socket_clone.send_to(&ntp_packet, remote_sock_addr).await.is_ok() {
-                                        trace!("NTP client {} sent query to {}", client_id, remote_sock_addr);
-
-                                        // Wait for response
-                                        let mut buffer = vec![0u8; 48];
-                                        match tokio::time::timeout(
-                                            std::time::Duration::from_secs(5),
-                                            socket_clone.recv_from(&mut buffer)
-                                        ).await {
-                                            Ok(Ok((n, from_addr))) => {
-                                                trace!("NTP client {} received {} bytes from {}", client_id, n, from_addr);
-
-                                                // Parse NTP response
-                                                let timestamps = Self::parse_ntp_response(&buffer[..n]);
-
-                                                // Call LLM with response event
-                                                let event = Event::new(
-                                                    &NTP_CLIENT_RESPONSE_RECEIVED_EVENT,
-                                                    serde_json::json!({
-                                                        "origin_timestamp": timestamps.origin_timestamp,
-                                                        "receive_timestamp": timestamps.receive_timestamp,
-                                                        "transmit_timestamp": timestamps.transmit_timestamp,
-                                                        "stratum": timestamps.stratum,
-                                                        "precision": timestamps.precision,
-                                                    }),
-                                                );
-
-                                                let memory = app_state.get_memory_for_client(client_id).await.unwrap_or_default();
-
-                                                match call_llm_for_client(
-                                                    &llm_client,
-                                                    &app_state,
-                                                    client_id.to_string(),
-                                                    &instruction,
-                                                    &memory,
-                                                    Some(&event),
-                                                    protocol.as_ref(),
-                                                    &status_tx,
-                                                ).await {
-                                                    Ok(ClientLlmResult { actions: _, memory_updates }) => {
-                                                        // Update memory
-                                                        if let Some(mem) = memory_updates {
-                                                            app_state.set_memory_for_client(client_id, mem).await;
-                                                        }
-                                                    }
-                                                    Err(e) => {
-                                                        error!("LLM error for NTP client {}: {}", client_id, e);
-                                                    }
-                                                }
-                                            }
-                                            Ok(Err(e)) => {
-                                                error!("NTP client {} recv error: {}", client_id, e);
-                                            }
-                                            Err(_) => {
-                                                error!("NTP client {} timed out waiting for response", client_id);
-                                            }
+                                Ok(ClientActionResult::Custom { name, data: _ })
+                                    if name == "ntp_query" =>
+                                {
+                                    // Send the query, then read and report the reply. Same
+                                    // two functions the injected-command path uses.
+                                    match Self::send_query(&socket_clone, remote_sock_addr).await {
+                                        Ok(sent) => {
+                                            trace!(
+                                                "NTP client {} sent {} byte query to {}",
+                                                client_id,
+                                                sent,
+                                                remote_sock_addr
+                                            );
+                                            Self::await_and_report_response(
+                                                &socket_clone,
+                                                &query_lock_for_llm,
+                                                client_id,
+                                                &llm_client,
+                                                &app_state,
+                                                &status_tx,
+                                                &instruction,
+                                                protocol.as_ref(),
+                                            )
+                                            .await;
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "NTP client {} failed to send query: {}",
+                                                client_id, e
+                                            );
                                         }
                                     }
                                 }
-                                Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
+                                Ok(ClientActionResult::Disconnect) => {
                                     info!("NTP client {} disconnecting", client_id);
-                                    app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                    app_state
+                                        .update_client_status(client_id, ClientStatus::Disconnected)
+                                        .await;
                                     let _ = status_tx.send("__UPDATE_UI__".to_string());
                                     break;
                                 }
-                                _ => {}
+                                Ok(_) => {}
+                                Err(e) => {
+                                    error!("NTP client {} rejected action: {}", client_id, e);
+                                }
                             }
                         }
                     }
@@ -166,7 +176,9 @@ impl NtpClient {
                 }
             }
 
-            // Mark as disconnected after query completes
+            // Mark as disconnected after query completes. The socket stays bound and the
+            // command channel stays registered: an injected `query_time` can still run
+            // another query, which is the multi-query path this client otherwise lacks.
             app_state
                 .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
@@ -177,6 +189,215 @@ impl NtpClient {
             .await;
 
         Ok(local_addr)
+    }
+
+    /// Put one NTP request on the wire, returning the byte count `send_to` reported.
+    async fn send_query(socket: &Arc<UdpSocket>, remote: SocketAddr) -> Result<usize> {
+        let packet = Self::build_ntp_request();
+        let sent = socket.send_to(&packet, remote).await?;
+        Ok(sent)
+    }
+
+    /// Wait for the server's reply to a query we just sent, parse it, and hand it to the
+    /// model as an `ntp_response_received` event.
+    ///
+    /// Holds `query_lock` across the receive so two concurrent queries cannot steal each
+    /// other's datagram.
+    #[allow(clippy::too_many_arguments)]
+    async fn await_and_report_response(
+        socket: &Arc<UdpSocket>,
+        query_lock: &Arc<Mutex<()>>,
+        client_id: ClientId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        instruction: &str,
+        protocol: &dyn Client,
+    ) {
+        let mut buffer = vec![0u8; 48];
+        let received = {
+            let _guard = query_lock.lock().await;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                socket.recv_from(&mut buffer),
+            )
+            .await
+        };
+
+        let n = match received {
+            Ok(Ok((n, from_addr))) => {
+                trace!(
+                    "NTP client {} received {} bytes from {}",
+                    client_id,
+                    n,
+                    from_addr
+                );
+                n
+            }
+            Ok(Err(e)) => {
+                error!("NTP client {} recv error: {}", client_id, e);
+                return;
+            }
+            Err(_) => {
+                error!("NTP client {} timed out waiting for response", client_id);
+                return;
+            }
+        };
+
+        let timestamps = Self::parse_ntp_response(&buffer[..n]);
+
+        let event = Event::new(
+            &NTP_CLIENT_RESPONSE_RECEIVED_EVENT,
+            serde_json::json!({
+                "origin_timestamp": timestamps.origin_timestamp,
+                "receive_timestamp": timestamps.receive_timestamp,
+                "transmit_timestamp": timestamps.transmit_timestamp,
+                "stratum": timestamps.stratum,
+                "precision": timestamps.precision,
+            }),
+        );
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            instruction,
+            &memory,
+            Some(&event),
+            protocol,
+            status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+            }
+            Err(e) => {
+                error!("LLM error for NTP client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// `query_time` reports `Sent { 48 }` the moment the request datagram is on the wire —
+    /// the reply is then awaited and reported to the model *after* the caller has been
+    /// answered, so a manual routing rule parked on `ntp_response_received` cannot hold the
+    /// dashboard's [ send ] open for its whole timeout.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        socket: Arc<UdpSocket>,
+        remote: SocketAddr,
+        query_lock: Arc<Mutex<()>>,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let protocol = NtpClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+
+            // `query_time` is the only verb that puts bytes on the wire; the reply is
+            // handled after the caller is answered, so `queried` carries that follow-up.
+            let mut queried = false;
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(ClientActionResult::Custom { name, .. }) if name == "ntp_query" => {
+                    match Self::send_query(&socket, remote).await {
+                        Ok(bytes_sent) => {
+                            queried = true;
+                            Ok(ClientSendOutcome::Sent { bytes_sent })
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                Ok(ClientActionResult::Custom { name, .. }) => Ok(ClientSendOutcome::Executed {
+                    detail: format!("custom result '{name}' is not an NTP client verb"),
+                }),
+                Ok(ClientActionResult::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Ok(ClientActionResult::WaitForMore) => Ok(ClientSendOutcome::Executed {
+                    detail: "analyze_response is interpretation only; nothing written to the wire"
+                        .to_string(),
+                }),
+                Ok(_) => Ok(ClientSendOutcome::Executed {
+                    detail: "action produced no NTP request".to_string(),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("NTP client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send(format!(
+                    "[CLIENT] NTP client {} disconnected (injected action)",
+                    client_id
+                ));
+                break;
+            }
+
+            if queried {
+                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
+                    Self::await_and_report_response(
+                        &socket,
+                        &query_lock,
+                        client_id,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                        &instruction,
+                        &protocol,
+                    )
+                    .await;
+                }
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Build an NTP request packet (48 bytes)

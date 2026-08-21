@@ -12,11 +12,14 @@ use tracing::{debug, error, info, trace};
 
 use crate::client::llm_budget::call_llm_for_client;
 use crate::client::rip::actions::{RIP_CLIENT_CONNECTED_EVENT, RIP_CLIENT_RESPONSE_RECEIVED_EVENT};
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// RIP protocol version
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -241,8 +244,31 @@ impl RipClient {
             memory: String::new(),
         }));
 
-        // Call LLM with connected event
         let protocol = Arc::new(crate::client::rip::actions::RipClientProtocol::new());
+
+        // Command channel for injected actions (the dashboard's [ send ]). Registered, and
+        // drained by a live task, BEFORE the connected-event LLM call below: that call is
+        // awaited inline here, so a manual `*` routing rule parks it - and the whole point
+        // of the channel is that the operator can still reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        // Filled in once the receive loop exists (it is spawned after the connected-event
+        // call), so an injected `disconnect` can actually stop it and release the socket.
+        let read_abort: Arc<std::sync::OnceLock<tokio::task::AbortHandle>> =
+            Arc::new(std::sync::OnceLock::new());
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            protocol.clone(),
+            socket_arc.clone(),
+            remote_sock_addr,
+            client_id,
+            app_state.clone(),
+            status_tx.clone(),
+            read_abort.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
+        // Call LLM with connected event
         let event = Event::new(
             &RIP_CLIENT_CONNECTED_EVENT,
             serde_json::json!({
@@ -274,46 +300,35 @@ impl RipClient {
 
                     // Execute initial actions
                     for action in actions {
-                        use crate::llm::actions::client_trait::Client;
                         match protocol.as_ref().execute_action(action) {
-                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
-                                name,
-                                data,
-                            }) => {
-                                if name == "send_rip_request" {
-                                    // Send RIP request
-                                    if let Some(version) = data["version"].as_u64() {
-                                        let rip_version = if version == 1 {
-                                            RipVersion::V1
-                                        } else {
-                                            RipVersion::V2
-                                        };
-                                        let request = RipMessage::request(rip_version);
-                                        let bytes = request.encode();
-
-                                        if let Err(e) =
-                                            socket_arc.send_to(&bytes, remote_sock_addr).await
-                                        {
-                                            error!("Failed to send RIP request: {}", e);
-                                        } else {
-                                            debug!(
-                                                "RIP client {} sent request (version {})",
-                                                client_id, version
-                                            );
-                                        }
+                            Ok(result) => {
+                                match Self::apply_action(
+                                    client_id,
+                                    result,
+                                    &socket_arc,
+                                    remote_sock_addr,
+                                )
+                                .await
+                                {
+                                    Ok(Applied::Disconnect) => {
+                                        info!("RIP client {} disconnecting", client_id);
+                                        app_state.remove_client_handle(client_id).await;
+                                        app_state
+                                            .update_client_status(
+                                                client_id,
+                                                ClientStatus::Disconnected,
+                                            )
+                                            .await;
+                                        return Ok(local_addr);
                                     }
+                                    Ok(_) => {}
+                                    Err(e) => error!("Failed to send RIP request: {}", e),
                                 }
                             }
-                            Ok(
-                                crate::llm::actions::client_trait::ClientActionResult::Disconnect,
-                            ) => {
-                                info!("RIP client {} disconnecting", client_id);
-                                app_state
-                                    .update_client_status(client_id, ClientStatus::Disconnected)
-                                    .await;
-                                return Ok(local_addr);
-                            }
-                            _ => {}
+                            Err(e) => error!(
+                                "RIP client {} could not execute action after connect: {}",
+                                client_id, e
+                            ),
                         }
                     }
                 }
@@ -321,6 +336,13 @@ impl RipClient {
                     error!("LLM error for RIP client {}: {}", client_id, e);
                 }
             }
+        }
+
+        // An injected `disconnect` that arrived while the connected-event call was parked
+        // has already dropped the command handle. Honour it rather than starting a receive
+        // loop the operator just asked to stop.
+        if !app_state.has_client_handle(client_id).await {
+            return Ok(local_addr);
         }
 
         // Spawn receive loop
@@ -406,27 +428,21 @@ impl RipClient {
 
                                                     // Execute actions
                                                     for action in actions {
-                                                        use crate::llm::actions::client_trait::Client;
                                                         match protocol.as_ref().execute_action(action) {
-                                                            Ok(crate::llm::actions::client_trait::ClientActionResult::Custom { name, data }) => {
-                                                                if name == "send_rip_request" {
-                                                                    if let Some(version) = data["version"].as_u64() {
-                                                                        let rip_version = if version == 1 { RipVersion::V1 } else { RipVersion::V2 };
-                                                                        let request = RipMessage::request(rip_version);
-                                                                        let bytes = request.encode();
-
-                                                                        if let Err(e) = socket_clone.send_to(&bytes, remote_sock_addr).await {
-                                                                            error!("Failed to send RIP request: {}", e);
-                                                                        }
+                                                            Ok(result) => {
+                                                                match Self::apply_action(client_id, result, &socket_clone, remote_sock_addr).await {
+                                                                    Ok(Applied::Disconnect) => {
+                                                                        info!("RIP client {} disconnecting", client_id);
+                                                                        app_state.remove_client_handle(client_id).await;
+                                                                        app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
+                                                                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                                                        return;
                                                                     }
+                                                                    Ok(_) => {}
+                                                                    Err(e) => error!("Failed to send RIP request: {}", e),
                                                                 }
                                                             }
-                                                            Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                                                                info!("RIP client {} disconnecting", client_id);
-                                                                app_state.update_client_status(client_id, ClientStatus::Disconnected).await;
-                                                                return;
-                                                            }
-                                                            _ => {}
+                                                            Err(e) => error!("RIP client {} could not execute action: {}", client_id, e),
                                                         }
                                                     }
                                                 }
@@ -470,11 +486,144 @@ impl RipClient {
                     }
                 }
             }
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead client, and a late send fails fast.
+            app_state.remove_client_handle(client_id).await;
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
+        let _ = read_abort.set(task_handle.abort_handle());
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
 
         Ok(local_addr)
     }
+
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this client:
+    /// `send_rip_request` yields `ClientActionResult::Custom` and the transport is a datagram
+    /// socket, not an `AsyncWrite`. The action goes through [`Self::apply_action`] - the same
+    /// function the LLM path uses - so the RIP encoding exists exactly once.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<ClientCommand>,
+        protocol: Arc<crate::client::rip::actions::RipClientProtocol>,
+        socket: Arc<UdpSocket>,
+        remote_addr: SocketAddr,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        read_abort: Arc<std::sync::OnceLock<tokio::task::AbortHandle>>,
+    ) {
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(client_id, result, &socket, remote_addr)
+                    .await
+                    .map(|applied| match applied {
+                        Applied::Disconnect => ClientSendOutcome::Disconnected,
+                        Applied::Sent(0) => ClientSendOutcome::Executed {
+                            detail: "executed (no datagram sent)".to_string(),
+                        },
+                        Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                        Applied::Nothing(detail) => ClientSendOutcome::Executed { detail },
+                    }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("RIP client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // UDP has no wire close, so "disconnected" means: stop receiving, release
+                // the socket, drop the handle so [ send ] is greyed out again. If the
+                // receive loop has not been spawned yet (the connected-event call is still
+                // parked), the missing handle makes `connect_with_llm_actions` skip it.
+                if let Some(abort) = read_abort.get() {
+                    abort.abort();
+                }
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
+    }
+
+    /// Put one executed action on the wire. Shared by the connected-event path, the receive
+    /// loop and injected commands so the RIP request encoding exists exactly once.
+    async fn apply_action(
+        client_id: ClientId,
+        result: ClientActionResult,
+        socket: &UdpSocket,
+        remote_addr: SocketAddr,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } if name == "send_rip_request" => {
+                let version = data["version"]
+                    .as_u64()
+                    .context("send_rip_request is missing 'version'")?;
+                let rip_version = if version == 1 {
+                    RipVersion::V1
+                } else {
+                    RipVersion::V2
+                };
+                let bytes = RipMessage::request(rip_version).encode();
+                let sent = socket.send_to(&bytes, remote_addr).await?;
+                debug!(
+                    "RIP client {} sent request (version {}, {} bytes)",
+                    client_id, version, sent
+                );
+                Ok(Applied::Sent(sent))
+            }
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            ClientActionResult::WaitForMore => Ok(Applied::Nothing("wait_for_more".to_string())),
+            ClientActionResult::Custom { name, .. } => Ok(Applied::Nothing(format!(
+                "custom result '{name}' is not a RIP request; nothing sent"
+            ))),
+            other => Ok(Applied::Nothing(format!(
+                "action result {other:?} produced no datagram"
+            ))),
+        }
+    }
+}
+
+/// What [`RipClient::apply_action`] did with one action.
+#[derive(Debug)]
+enum Applied {
+    /// Datagram bytes actually handed to `send_to` (0 when nothing was sent).
+    Sent(usize),
+    /// Ran, but produced no datagram; the string says why.
+    Nothing(String),
+    /// The session should end.
+    Disconnect,
 }

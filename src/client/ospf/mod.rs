@@ -24,11 +24,13 @@ use crate::client::ospf::actions::{
     OSPF_CLIENT_LSU_RECEIVED_EVENT,
 };
 use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::protocol::{Event, StartupParams};
 use crate::server::socket_helpers::create_ospf_raw_socket;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 // OSPF Constants
 const OSPF_VERSION: u8 = 2;
@@ -151,6 +153,13 @@ impl OspfClient {
         let status_tx_clone = status_tx.clone();
         let protocol = Arc::new(OspfClientProtocol::new());
         let protocol_for_loop = protocol.clone();
+        let protocol_for_commands = protocol.clone();
+
+        // Command channel for injected actions (the dashboard's [ send ]). Registered BEFORE
+        // the connected-event LLM call below, which a manual `*` routing rule can park for
+        // minutes - the operator must be able to reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
 
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
@@ -181,6 +190,8 @@ impl OspfClient {
 
         // Spawn receive loop
         let socket_fd_for_send = socket_fd;
+        let app_state_for_commands = app_state.clone();
+        let status_tx_for_commands = status_tx.clone();
         let protocol = protocol_for_loop;
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
@@ -317,14 +328,134 @@ impl OspfClient {
             app_state
                 .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead client, and a late send fails fast.
+            app_state.remove_client_handle(client_id).await;
             let _ = status_tx.send(format!("[CLIENT] OSPF client {} disconnected", client_id));
             let _ = status_tx.send("__UPDATE_UI__".to_string());
         });
+        // Kept so an injected `disconnect` can actually stop the receive loop and release
+        // the raw socket - OSPF has no wire close to send.
+        let read_abort = task_handle.abort_handle();
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
 
+        // The receive loop awaits `call_llm_for_client` inline, so a `select!` arm there
+        // would stall for the whole LLM round-trip. Drain commands in their own registered
+        // task instead; both use the same raw socket fd.
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            protocol_for_commands,
+            socket_fd_for_send,
+            client_id,
+            app_state_for_commands,
+            status_tx_for_commands,
+            read_abort,
+        ));
+        task_registrar
+            .register_client_task(client_id, cmd_task)
+            .await;
+
         Ok(local_addr)
+    }
+
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this client:
+    /// every OSPF verb yields `ClientActionResult::Custom` and the transport is a raw IP
+    /// socket driven through `libc::sendto`, not an `AsyncWrite`. The action goes through
+    /// [`Self::apply_action`] - the same function the receive loop uses.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<ClientCommand>,
+        protocol: Arc<OspfClientProtocol>,
+        socket_fd: i32,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        read_abort: tokio::task::AbortHandle,
+    ) {
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => {
+                    Self::apply_action(client_id, result, socket_fd).map(|applied| match applied {
+                        Applied::Disconnect => ClientSendOutcome::Disconnected,
+                        Applied::Sent(0) => ClientSendOutcome::Executed {
+                            detail: "executed (no packet sent)".to_string(),
+                        },
+                        Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                        Applied::Nothing(detail) => ClientSendOutcome::Executed { detail },
+                    })
+                }
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("OSPF client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                read_abort.abort();
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
+    }
+
+    /// Apply one executed action. Shared by the receive loop and injected commands so the
+    /// OSPF packet building and `sendto` exist exactly once.
+    fn apply_action(
+        client_id: ClientId,
+        result: ClientActionResult,
+        socket_fd: i32,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } if name.starts_with("ospf_") => {
+                let sent = Self::handle_ospf_action(&name, &data, socket_fd)?;
+                Ok(Applied::Sent(sent))
+            }
+            ClientActionResult::Disconnect => {
+                info!("OSPF client {} disconnecting", client_id);
+                Ok(Applied::Disconnect)
+            }
+            ClientActionResult::WaitForMore => Ok(Applied::Nothing("wait_for_more".to_string())),
+            ClientActionResult::Custom { name, .. } => Ok(Applied::Nothing(format!(
+                "custom result '{name}' is not an OSPF verb; nothing sent"
+            ))),
+            other => Ok(Applied::Nothing(format!(
+                "action result {other:?} produced no packet"
+            ))),
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -389,33 +520,34 @@ impl OspfClient {
                         // Execute actions
                         for action in result.actions {
                             match protocol.execute_action(action) {
-                                Ok(ClientActionResult::Custom { name, data }) => {
-                                    if name.starts_with("ospf_") {
-                                        if let Err(e) =
-                                            Self::handle_ospf_action(&name, &data, socket_fd)
-                                        {
+                                Ok(action_result) => {
+                                    match Self::apply_action(client_id, action_result, socket_fd) {
+                                        Ok(Applied::Disconnect) => {
+                                            app_state.remove_client_handle(client_id).await;
+                                            app_state
+                                                .update_client_status(
+                                                    client_id,
+                                                    ClientStatus::Disconnected,
+                                                )
+                                                .await;
+                                            let _ = status_tx.send(format!(
+                                                "[CLIENT] OSPF client {} disconnected",
+                                                client_id
+                                            ));
+                                            let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                            return;
+                                        }
+                                        Ok(Applied::Nothing(detail)) => {
+                                            trace!("OSPF client {}: {}", client_id, detail);
+                                        }
+                                        Ok(Applied::Sent(_)) => {}
+                                        Err(e) => {
                                             error!("Failed to execute OSPF action: {}", e);
                                             let _ = status_tx
                                                 .send(format!("✗ OSPF action error: {}", e));
                                         }
                                     }
                                 }
-                                Ok(ClientActionResult::Disconnect) => {
-                                    info!("OSPF client {} disconnecting", client_id);
-                                    app_state
-                                        .update_client_status(client_id, ClientStatus::Disconnected)
-                                        .await;
-                                    let _ = status_tx.send(format!(
-                                        "[CLIENT] OSPF client {} disconnected",
-                                        client_id
-                                    ));
-                                    let _ = status_tx.send("__UPDATE_UI__".to_string());
-                                    return;
-                                }
-                                Ok(ClientActionResult::WaitForMore) => {
-                                    trace!("OSPF client {} waiting for more", client_id);
-                                }
-                                Ok(_) => {}
                                 Err(e) => {
                                     error!("Failed to execute action: {}", e);
                                 }
@@ -572,11 +704,13 @@ impl OspfClient {
         ))
     }
 
+    /// Build and send one OSPF packet. Returns the number of bytes `sendto` accepted, so
+    /// an injected action can report a truthful `ClientSendOutcome::Sent`.
     fn handle_ospf_action(
         action_name: &str,
         data: &serde_json::Value,
         socket_fd: i32,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         let packet = match action_name {
             "ospf_send_hello" => {
                 crate::server::ospf::actions::OspfProtocol::build_hello_packet(data)?
@@ -603,13 +737,13 @@ impl OspfClient {
         };
 
         // Send packet
-        Self::send_ospf_packet(socket_fd, dest_ip, &packet)?;
+        let sent = Self::send_ospf_packet(socket_fd, dest_ip, &packet)?;
 
-        debug!("OSPF sent {} bytes to {}", packet.len(), dest_ip);
-        Ok(())
+        debug!("OSPF sent {} bytes to {}", sent, dest_ip);
+        Ok(sent)
     }
 
-    fn send_ospf_packet(socket_fd: i32, dest_ip: Ipv4Addr, ospf_data: &[u8]) -> Result<()> {
+    fn send_ospf_packet(socket_fd: i32, dest_ip: Ipv4Addr, ospf_data: &[u8]) -> Result<usize> {
         unsafe {
             let mut dest_addr = std::mem::zeroed::<libc::sockaddr_in>();
             #[cfg(target_os = "macos")]
@@ -636,8 +770,19 @@ impl OspfClient {
             if n < 0 {
                 return Err(std::io::Error::last_os_error().into());
             }
-        }
 
-        Ok(())
+            Ok(n as usize)
+        }
     }
+}
+
+/// What [`OspfClient::apply_action`] did with one action.
+#[derive(Debug)]
+enum Applied {
+    /// Packet bytes `sendto` accepted (0 when nothing was sent).
+    Sent(usize),
+    /// Ran, but put nothing on the wire; the string says why.
+    Nothing(String),
+    /// The session should end.
+    Disconnect,
 }

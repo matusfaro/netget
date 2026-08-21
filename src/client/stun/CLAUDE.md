@@ -255,3 +255,35 @@ Key points:
 - **IPv6 Support** - Full IPv6 binding requests
 - **Connection Reuse** - Keep UDP socket alive for multiple queries
 - **Rate Limiting** - Prevent STUN server abuse
+
+## Command channel (injected actions)
+
+The client registers a `command_support` command channel, so `AppState::send_to_client` — the
+dashboard's `[ send ]` — can execute an action inside the running client. The channel is
+registered **before** the `stun_connected` LLM call, which a `*` → manual routing rule can park
+for minutes.
+
+The command loop **replaced** the bare 5-second "has the client been removed yet?" watchdog
+task described above. It still performs that check, on a `tokio::select!` timer arm.
+
+| Action | `ClientSendOutcome` |
+|---|---|
+| `send_binding_request` | `Executed { detail }` — see below |
+| `wait_for_more` | `Executed` |
+| `disconnect` | `Disconnected`; the command loop ends and the handle is dropped |
+| anything else | `Rejected { error }` |
+
+**Why a binding request reports `Executed` and not `Sent` — a real gap, stated rather than
+papered over.** The exchange runs inside `stunclient`, which binds and owns its own UDP socket
+(see "No Connection Reuse" above) and reports no byte count. There is no number NetGet could
+hand back that would be true, so it hands back the discovered external address instead:
+`binding exchange completed via stunclient: external address 203.0.113.45:54321 (byte count not
+observable - stunclient owns the socket)`. Closing this would mean replacing `stunclient` with
+a hand-rolled RFC 5389 encoder over NetGet's own socket — a protocol rewrite, not a
+command-channel change.
+
+`send_binding_request` is now `query_external_address` (run the exchange) plus
+`report_binding_response` (fire the `stun_binding_response` event). The split lets the command
+loop answer its caller as soon as the exchange completes and report to the model afterwards, so
+a manual rule parked on that event cannot hold `[ send ]` open for its whole timeout. The
+public `send_binding_request` is the composition of the two and behaves as before.

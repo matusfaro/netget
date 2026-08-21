@@ -13,12 +13,14 @@ use crate::client::llm_budget::call_llm_for_client;
 use crate::client::stun::actions::{
     STUN_CLIENT_BINDING_RESPONSE_EVENT, STUN_CLIENT_CONNECTED_EVENT,
 };
+use crate::llm::actions::client_trait::ClientActionResult;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// STUN client for discovering external IP/port behind NAT
 pub struct StunClient;
@@ -67,6 +69,14 @@ impl StunClient {
             client_id, remote_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        //
+        // Registered BEFORE the connected-event LLM call below: a dashboard-created client
+        // defaults to a `*` -> manual routing rule, so that call can park for minutes waiting
+        // for a human, and [ send ] must work for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -133,20 +143,14 @@ impl StunClient {
                 .await;
         }
 
-        // Spawn background task that monitors for client removal
+        // Command loop. This replaces the bare 5-second "has the client been removed yet?"
+        // watchdog that used to live here: it still performs that check, and it is now also
+        // what makes an injected action reach a running STUN client.
         // Registered with AppState so stop_client can abort this task —
         // dropping a JoinHandle only detaches it in Tokio.
         let task_registrar = app_state.clone();
         let task_handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                // Check if client was removed
-                if app_state.get_client(client_id).await.is_none() {
-                    info!("STUN client {} stopped", client_id);
-                    break;
-                }
-            }
+            Self::command_loop(command_rx, client_id, llm_client, app_state, status_tx).await;
         });
         task_registrar
             .register_client_task(client_id, task_handle)
@@ -185,13 +189,30 @@ impl StunClient {
         Ok(())
     }
 
-    /// Send STUN binding request
+    /// Send STUN binding request and report the result to the model.
     pub async fn send_binding_request(
         client_id: ClientId,
         app_state: Arc<AppState>,
         llm_client: OllamaClient,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
+        let discovered = Self::query_external_address(client_id, &app_state, &status_tx).await?;
+        Self::report_binding_response(client_id, &discovered, &app_state, &llm_client, &status_tx)
+            .await;
+        Ok(())
+    }
+
+    /// Run one STUN binding exchange and return what it discovered.
+    ///
+    /// Split out from [`Self::send_binding_request`] so the injected-command path can answer
+    /// the caller as soon as the exchange completes and hand the model its
+    /// `stun_binding_response` event afterwards - a manual routing rule parked on that event
+    /// would otherwise hold the dashboard's \[send\] open for its whole timeout.
+    async fn query_external_address(
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<StunDiscovery> {
         // Get STUN server address from client
         let stun_server = app_state
             .with_client_mut(client_id, |client| {
@@ -234,59 +255,14 @@ impl StunClient {
 
                 let local_addr = udp_socket.local_addr()?;
 
-                // Call LLM with binding response
-                if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-                    let protocol = Arc::new(StunClientProtocol::new());
-                    let event = Event::new(
-                        &STUN_CLIENT_BINDING_RESPONSE_EVENT,
-                        serde_json::json!({
-                            "external_ip": external_addr.ip().to_string(),
-                            "external_port": external_addr.port(),
-                            "external_addr": external_addr.to_string(),
-                            "local_addr": local_addr.to_string(),
-                            "stun_server": stun_server,
-                        }),
-                    );
-
-                    let memory = app_state
-                        .get_memory_for_client(client_id)
-                        .await
-                        .unwrap_or_default();
-
-                    match call_llm_for_client(
-                        &llm_client,
-                        &app_state,
-                        client_id.to_string(),
-                        &instruction,
-                        &memory,
-                        Some(&event),
-                        protocol.as_ref(),
-                        &status_tx,
-                    )
-                    .await
-                    {
-                        Ok(ClientLlmResult {
-                            actions: _,
-                            memory_updates,
-                        }) => {
-                            // Update memory
-                            if let Some(mem) = memory_updates {
-                                app_state.set_memory_for_client(client_id, mem).await;
-                            }
-
-                            // Note: We don't execute follow-up actions here to avoid recursion
-                            // The LLM response is primarily for interpretation/logging
-                        }
-                        Err(e) => {
-                            error!("LLM error for STUN client {}: {}", client_id, e);
-                        }
-                    }
-                }
-
-                Ok(())
+                Ok(StunDiscovery {
+                    external_addr,
+                    local_addr,
+                    stun_server,
+                })
             }
             Err(e) => {
-                Log::new(Some(&status_tx)).error(format!(
+                Log::new(Some(status_tx)).error(format!(
                     "STUN client {} binding request failed: {}",
                     client_id, e
                 ));
@@ -294,4 +270,194 @@ impl StunClient {
             }
         }
     }
+
+    /// Hand a completed binding exchange to the model as a `stun_binding_response` event.
+    async fn report_binding_response(
+        client_id: ClientId,
+        discovered: &StunDiscovery,
+        app_state: &Arc<AppState>,
+        llm_client: &OllamaClient,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+
+        let protocol = Arc::new(StunClientProtocol::new());
+        let event = Event::new(
+            &STUN_CLIENT_BINDING_RESPONSE_EVENT,
+            serde_json::json!({
+                "external_ip": discovered.external_addr.ip().to_string(),
+                "external_port": discovered.external_addr.port(),
+                "external_addr": discovered.external_addr.to_string(),
+                "local_addr": discovered.local_addr.to_string(),
+                "stun_server": discovered.stun_server,
+            }),
+        );
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: _,
+                memory_updates,
+            }) => {
+                // Update memory
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+
+                // Note: We don't execute follow-up actions here to avoid recursion
+                // The LLM response is primarily for interpretation/logging
+            }
+            Err(e) => {
+                error!("LLM error for STUN client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    /// Drain injected commands, and keep the old client-removal watchdog on the same task.
+    ///
+    /// `send_binding_request` reports `Executed`, never `Sent`: the exchange runs inside
+    /// `stunclient`, which owns its own UDP socket and reports no byte count, so there is no
+    /// truthful number to hand back. The detail string carries the discovered external
+    /// address, which is the thing the caller actually wants to see.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::client_trait::Client;
+        use crate::llm::actions::protocol_trait::Protocol;
+
+        let protocol = StunClientProtocol::new();
+
+        loop {
+            let command = tokio::select! {
+                command = command_rx.recv() => match command {
+                    Some(command) => command,
+                    // Channel closed: the client row (and its handle) is gone.
+                    None => break,
+                },
+                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                    // The watchdog this loop replaced: a removed client leaves nothing to
+                    // command, so stop rather than sitting on a dead handle.
+                    if app_state.get_client(client_id).await.is_none() {
+                        info!("STUN client {} stopped", client_id);
+                        break;
+                    }
+                    continue;
+                }
+            };
+
+            let action = command.action.clone();
+
+            // A successful exchange is reported to the model only after the caller has been
+            // answered, so `discovered` carries it past the reply.
+            let mut discovered: Option<StunDiscovery> = None;
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(ClientActionResult::Custom { name, .. }) if name == "send_binding_request" => {
+                    match Self::query_external_address(client_id, &app_state, &status_tx).await {
+                        Ok(result) => {
+                            let detail = format!(
+                                "binding exchange completed via stunclient: external address {} \
+                                 (byte count not observable - stunclient owns the socket)",
+                                result.external_addr
+                            );
+                            discovered = Some(result);
+                            Ok(ClientSendOutcome::Executed { detail })
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                Ok(ClientActionResult::Custom { name, .. }) => Ok(ClientSendOutcome::Executed {
+                    detail: format!("custom result '{name}' is not a STUN client verb"),
+                }),
+                Ok(ClientActionResult::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Ok(ClientActionResult::WaitForMore) => Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_more: nothing sent".to_string(),
+                }),
+                Ok(_) => Ok(ClientSendOutcome::Executed {
+                    detail: "action produced no STUN exchange".to_string(),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("STUN client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                Log::new(Some(&status_tx)).info(format!(
+                    "STUN client {} disconnected (injected action)",
+                    client_id
+                ));
+                break;
+            }
+
+            if let Some(result) = discovered {
+                Self::report_binding_response(
+                    client_id,
+                    &result,
+                    &app_state,
+                    &llm_client,
+                    &status_tx,
+                )
+                .await;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+    }
+}
+
+/// What one STUN binding exchange discovered.
+struct StunDiscovery {
+    external_addr: SocketAddr,
+    local_addr: SocketAddr,
+    stun_server: String,
 }

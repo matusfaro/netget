@@ -3,7 +3,7 @@ pub mod actions;
 
 pub use actions::CassandraClientProtocol;
 
-use crate::llm::actions::client_trait::Client;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
 use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -18,12 +18,27 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
 use crate::state::{ClientId, ClientStatus};
 use serde_json::json;
 
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::frame::Compression;
+
+/// What one executed action did to the Cassandra session.
+enum Applied {
+    /// A CQL statement ran; the rows are what the model is told about.
+    Query {
+        query: String,
+        rows: Vec<serde_json::Value>,
+        row_count: usize,
+    },
+    /// The session should end.
+    Disconnect,
+    /// The action executed but touched the session in no way.
+    Nothing(&'static str),
+}
 
 /// Cassandra client that connects to a Cassandra/ScyllaDB server
 pub struct CassandraClient;
@@ -83,7 +98,10 @@ impl CassandraClient {
             .await
             .context(format!("Failed to connect to Cassandra at {}", remote_addr))?;
 
+        // `Session` is `Sync` and every query method takes `&self`, so a bare `Arc` is enough
+        // to share it between the LLM path and the injected-command loop — no mutex needed.
         let session_arc = Arc::new(session);
+        let protocol = Arc::new(CassandraClientProtocol::new());
 
         // Parse address to get SocketAddr
         let socket_addr: SocketAddr = remote_addr
@@ -102,9 +120,25 @@ impl CassandraClient {
         let _ = status_tx.send(format!("[CLIENT] Cassandra client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Command channel for injected actions (the dashboard's [ send ]).
+        // Registered BEFORE the connected-event LLM call, which this protocol *awaits inline*
+        // — so under a manual `*` rule the call below parks and client creation parks with
+        // it. The command loop is a separate task precisely so [ send ] still works then.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            protocol.clone(),
+            session_arc.clone(),
+            client_id,
+            llm_client.clone(),
+            app_state.clone(),
+            status_tx.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
-            let protocol = Arc::new(CassandraClientProtocol::new());
             let event = Event::new(
                 &CASSANDRA_CLIENT_CONNECTED_EVENT,
                 json!({
@@ -160,39 +194,112 @@ impl CassandraClient {
             }
         }
 
-        // Spawn background task for handling state machine
-        // Note: Cassandra is request-response, so we don't have a continuous read loop
-        // Instead, queries are executed on-demand via async actions
-        // Registered with AppState so stop_client can abort this task —
-        // dropping a JoinHandle only detaches it in Tokio.
-        let task_registrar = app_state.clone();
-        let task_handle = tokio::spawn(async move {
-            info!("Cassandra client {} task started", client_id);
-
-            // Keep connection alive and monitor status
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-
-                // Check if client is still active
-                if let Some(client) = app_state.get_client(client_id).await {
-                    match client.status {
-                        ClientStatus::Disconnected | ClientStatus::Error(_) => {
-                            info!("Cassandra client {} task terminating", client_id);
-                            break;
-                        }
-                        _ => {}
-                    }
-                } else {
-                    // Client removed from state
-                    break;
-                }
-            }
-        });
-        task_registrar
-            .register_client_task(client_id, task_handle)
-            .await;
-
         Ok(socket_addr)
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed or stopped)
+    /// or an injected `disconnect` ends the session.
+    ///
+    /// This task is also what keeps the session alive: before it existed the only `Arc<Session>`
+    /// belonged to the connect-time LLM path and was dropped when `connect_with_llm_actions`
+    /// returned.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<ClientCommand>,
+        protocol: Arc<CassandraClientProtocol>,
+        session: Arc<Session>,
+        client_id: ClientId,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+
+            let mut follow_up: Option<(Vec<serde_json::Value>, usize)> = None;
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => match Self::apply_action(result, &session, client_id).await {
+                    Err(e) => Err(e),
+                    Ok(Applied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                    Ok(Applied::Nothing(what)) => Ok(ClientSendOutcome::Executed {
+                        detail: what.to_string(),
+                    }),
+                    Ok(Applied::Query {
+                        query,
+                        rows,
+                        row_count,
+                    }) => {
+                        let detail = format!(
+                            "CQL executed by the scylla driver ({} rows); \
+                             no byte count — the driver owns the socket: {}",
+                            row_count,
+                            crate::utils::truncate::truncate_for_log(&query, 80)
+                        );
+                        follow_up = Some((rows, row_count));
+                        Ok(ClientSendOutcome::Executed { detail })
+                    }
+                },
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!(
+                    "Cassandra client {} injected action failed: {}",
+                    client_id, e
+                );
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                Self::mark_disconnected(client_id, &app_state, &status_tx).await;
+                break;
+            }
+
+            // The model sees an injected query's result exactly as it sees one it asked for —
+            // after the reply, so the dashboard is not held for an LLM round-trip.
+            if let Some((rows, row_count)) = follow_up {
+                Self::report_result(
+                    rows,
+                    row_count,
+                    &protocol,
+                    &session,
+                    client_id,
+                    &llm_client,
+                    &app_state,
+                    &status_tx,
+                )
+                .await;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 
     /// Execute a list of actions returned by the LLM
@@ -206,213 +313,232 @@ impl CassandraClient {
         status_tx: mpsc::UnboundedSender<String>,
     ) {
         for action in actions {
-            match protocol.execute_action(action) {
-                Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
-                    name,
-                    data,
-                }) if name == "cql_query" => {
-                    // Execute CQL query
-                    if let Some(query_str) = data.get("query").and_then(|v| v.as_str()) {
-                        debug!(
-                            "Cassandra client {} executing query: {}",
-                            client_id, query_str
-                        );
-
-                        // Note: Cassandra uses request-response model
-                        // No need for complex state machine like streaming protocols
-
-                        // Parse consistency level
-                        let consistency_str = data
-                            .get("consistency")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("ONE");
-
-                        // Execute query using the public API with consistency level
-                        use scylla::statement::Consistency;
-
-                        // Set consistency level based on string
-                        let consistency = match consistency_str.to_uppercase().as_str() {
-                            "ONE" => Consistency::One,
-                            "TWO" => Consistency::Two,
-                            "THREE" => Consistency::Three,
-                            "QUORUM" => Consistency::Quorum,
-                            "ALL" => Consistency::All,
-                            "LOCAL_QUORUM" => Consistency::LocalQuorum,
-                            "EACH_QUORUM" => Consistency::EachQuorum,
-                            "LOCAL_ONE" => Consistency::LocalOne,
-                            "ANY" => Consistency::Any,
-                            _ => {
-                                debug!(
-                                    "Unknown consistency level '{}', defaulting to ONE",
-                                    consistency_str
-                                );
-                                Consistency::One
-                            }
-                        };
-
-                        debug!(
-                            "Cassandra client {} executing query with consistency {:?}",
-                            client_id, consistency
-                        );
-
-                        // Execute query with consistency (scylla 1.3 API doesn't allow per-query consistency easily)
-                        // We'll use the default for now
-                        match session.query_unpaged(query_str, &[]).await {
-                            Ok(query_result) => {
-                                // Convert result to JSON using scylla 1.3 API
-                                // First convert to RowsResult, then deserialize rows
-                                use scylla::value::Row;
-
-                                let rows_data: Vec<serde_json::Value>;
-                                let row_count: usize;
-
-                                // Convert to RowsResult
-                                match query_result.into_rows_result() {
-                                    Ok(rows_result) => {
-                                        // Try to get rows as untyped Row
-                                        match rows_result.rows::<Row>() {
-                                            Ok(rows_iter) => {
-                                                let collected_rows: Vec<_> = rows_iter
-                                                    .collect::<Result<Vec<_>, _>>()
-                                                    .unwrap_or_default();
-                                                row_count = collected_rows.len();
-
-                                                // Convert each row to JSON
-                                                rows_data = collected_rows
-                                                    .into_iter()
-                                                    .map(|row| {
-                                                        // Row provides column access
-                                                        let columns: Vec<String> =
-                                                            (0..row.columns.len())
-                                                                .map(|i| {
-                                                                    format!("{:?}", row.columns[i])
-                                                                })
-                                                                .collect();
-
-                                                        json!({
-                                                            "columns": columns,
-                                                        })
-                                                    })
-                                                    .collect();
-                                            }
-                                            Err(e) => {
-                                                // Deserialization error
-                                                debug!("Cassandra client {} result deserialization error: {}", client_id, e);
-                                                row_count = 0;
-                                                rows_data = vec![json!({
-                                                    "message": "Query succeeded but result parsing not supported for this schema",
-                                                    "error": format!("{}", e),
-                                                })];
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        // Not a rows result (e.g., INSERT, UPDATE, DELETE succeeded)
-                                        debug!(
-                                            "Cassandra client {} query succeeded (non-SELECT): {}",
-                                            client_id, e
-                                        );
-                                        row_count = 0;
-                                        rows_data = vec![];
-                                    }
-                                }
-
-                                trace!(
-                                    "Cassandra client {} received {} rows",
-                                    client_id,
-                                    row_count
-                                );
-
-                                // Call LLM with result
-                                if let Some(instruction) =
-                                    app_state.get_instruction_for_client(client_id).await
-                                {
-                                    let event = Event::new(
-                                        &CASSANDRA_CLIENT_RESULT_RECEIVED_EVENT,
-                                        json!({
-                                            "rows": rows_data,
-                                            "row_count": row_count,
-                                        }),
-                                    );
-
-                                    let memory = app_state
-                                        .get_memory_for_client(client_id)
-                                        .await
-                                        .unwrap_or_default();
-
-                                    match call_llm_for_client(
-                                        &llm_client,
-                                        &app_state,
-                                        client_id.to_string(),
-                                        &instruction,
-                                        &memory,
-                                        Some(&event),
-                                        protocol.as_ref(),
-                                        &status_tx,
-                                    )
-                                    .await
-                                    {
-                                        Ok(ClientLlmResult {
-                                            actions: next_actions,
-                                            memory_updates,
-                                        }) => {
-                                            // Update memory
-                                            if let Some(mem) = memory_updates {
-                                                app_state
-                                                    .set_memory_for_client(client_id, mem)
-                                                    .await;
-                                            }
-
-                                            // Execute next actions (boxed to avoid infinite type recursion)
-                                            Box::pin(Self::execute_actions(
-                                                next_actions,
-                                                protocol.clone(),
-                                                session.clone(),
-                                                client_id,
-                                                llm_client.clone(),
-                                                app_state.clone(),
-                                                status_tx.clone(),
-                                            ))
-                                            .await;
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                "LLM error for Cassandra client {}: {}",
-                                                client_id, e
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Cassandra client {} query error: {}", client_id, e);
-                                let _ = status_tx
-                                    .send(format!("[CLIENT] Cassandra query error: {}", e));
-                            }
-                        }
-                    }
-                }
-                Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                    info!("Cassandra client {} disconnecting", client_id);
-                    app_state
-                        .update_client_status(client_id, ClientStatus::Disconnected)
-                        .await;
-                    let _ = status_tx.send(format!(
-                        "[CLIENT] Cassandra client {} disconnected",
-                        client_id
-                    ));
-                    let _ = status_tx.send("__UPDATE_UI__".to_string());
-                    break;
-                }
-                Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
-                    // Do nothing, wait for next action
-                    debug!("Cassandra client {} waiting for more actions", client_id);
-                }
+            let result = match protocol.execute_action(action) {
+                Ok(result) => result,
                 Err(e) => {
                     error!("Cassandra client {} action error: {}", client_id, e);
+                    continue;
                 }
-                _ => {}
+            };
+
+            match Self::apply_action(result, &session, client_id).await {
+                Ok(Applied::Query {
+                    rows, row_count, ..
+                }) => {
+                    Self::report_result(
+                        rows,
+                        row_count,
+                        &protocol,
+                        &session,
+                        client_id,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                    )
+                    .await;
+                }
+                Ok(Applied::Disconnect) => {
+                    info!("Cassandra client {} disconnecting", client_id);
+                    Self::mark_disconnected(client_id, &app_state, &status_tx).await;
+                    break;
+                }
+                Ok(Applied::Nothing(what)) => {
+                    debug!(
+                        "Cassandra client {} action had no effect: {}",
+                        client_id, what
+                    );
+                }
+                Err(e) => {
+                    error!("Cassandra client {} query error: {}", client_id, e);
+                    let _ = status_tx.send(format!("[CLIENT] Cassandra query error: {}", e));
+                }
             }
         }
+    }
+
+    /// Run one executed action against the session. Shared by the LLM path and injected
+    /// commands so the CQL execution path exists exactly once.
+    async fn apply_action(
+        result: ClientActionResult,
+        session: &Arc<Session>,
+        client_id: ClientId,
+    ) -> Result<Applied> {
+        match result {
+            ClientActionResult::Custom { name, data } if name == "cql_query" => {
+                let query_str = data
+                    .get("query")
+                    .and_then(|v| v.as_str())
+                    .context("Missing 'query' in cql_query action data")?
+                    .to_string();
+
+                // Consistency is parsed for the log only: scylla 1.3 does not expose a
+                // convenient per-statement consistency override on `query_unpaged`.
+                let consistency_str = data
+                    .get("consistency")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("ONE");
+                debug!(
+                    "Cassandra client {} executing query (consistency {}): {}",
+                    client_id, consistency_str, query_str
+                );
+
+                let query_result = session
+                    .query_unpaged(query_str.as_str(), &[])
+                    .await
+                    .context("CQL query failed")?;
+
+                // Converted inline rather than in a helper so the driver's `QueryResult`
+                // type never has to be named (its module path moves between scylla releases).
+                let (rows, row_count) = {
+                    use scylla::value::Row;
+                    match query_result.into_rows_result() {
+                        Ok(rows_result) => match rows_result.rows::<Row>() {
+                            Ok(rows_iter) => {
+                                let collected: Vec<_> =
+                                    rows_iter.collect::<Result<Vec<_>, _>>().unwrap_or_default();
+                                let count = collected.len();
+                                let data: Vec<serde_json::Value> = collected
+                                    .into_iter()
+                                    .map(|row| {
+                                        let columns: Vec<String> = (0..row.columns.len())
+                                            .map(|i| format!("{:?}", row.columns[i]))
+                                            .collect();
+                                        json!({ "columns": columns })
+                                    })
+                                    .collect();
+                                (data, count)
+                            }
+                            Err(e) => {
+                                debug!(
+                                    "Cassandra client {} result deserialization error: {}",
+                                    client_id, e
+                                );
+                                (
+                                    vec![json!({
+                                        "message": "Query succeeded but result parsing not supported for this schema",
+                                        "error": format!("{}", e),
+                                    })],
+                                    0,
+                                )
+                            }
+                        },
+                        Err(e) => {
+                            // Not a rows result (e.g. INSERT / UPDATE / DELETE succeeded)
+                            debug!(
+                                "Cassandra client {} query succeeded (non-SELECT): {}",
+                                client_id, e
+                            );
+                            (Vec::new(), 0)
+                        }
+                    }
+                };
+                trace!("Cassandra client {} received {} rows", client_id, row_count);
+
+                Ok(Applied::Query {
+                    query: query_str,
+                    rows,
+                    row_count,
+                })
+            }
+            ClientActionResult::Custom { name, .. } => {
+                debug!(
+                    "Cassandra client {} ignoring custom result '{}'",
+                    client_id, name
+                );
+                Ok(Applied::Nothing("custom result not handled by this client"))
+            }
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
+            ClientActionResult::WaitForMore => Ok(Applied::Nothing("wait_for_more")),
+            ClientActionResult::NoAction => Ok(Applied::Nothing("no_action")),
+            ClientActionResult::SendData(_) => Ok(Applied::Nothing(
+                "send_data is not meaningful for a scylla session",
+            )),
+            ClientActionResult::Multiple(_) => Ok(Applied::Nothing(
+                "multiple results not handled by this client",
+            )),
+        }
+    }
+
+    /// Raise `cassandra_result_received` and run whatever the model answers.
+    #[allow(clippy::too_many_arguments)]
+    async fn report_result(
+        rows_data: Vec<serde_json::Value>,
+        row_count: usize,
+        protocol: &Arc<CassandraClientProtocol>,
+        session: &Arc<Session>,
+        client_id: ClientId,
+        llm_client: &OllamaClient,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        let Some(instruction) = app_state.get_instruction_for_client(client_id).await else {
+            return;
+        };
+
+        let event = Event::new(
+            &CASSANDRA_CLIENT_RESULT_RECEIVED_EVENT,
+            json!({
+                "rows": rows_data,
+                "row_count": row_count,
+            }),
+        );
+
+        let memory = app_state
+            .get_memory_for_client(client_id)
+            .await
+            .unwrap_or_default();
+
+        match call_llm_for_client(
+            llm_client,
+            app_state,
+            client_id.to_string(),
+            &instruction,
+            &memory,
+            Some(&event),
+            protocol.as_ref(),
+            status_tx,
+        )
+        .await
+        {
+            Ok(ClientLlmResult {
+                actions: next_actions,
+                memory_updates,
+            }) => {
+                // Update memory
+                if let Some(mem) = memory_updates {
+                    app_state.set_memory_for_client(client_id, mem).await;
+                }
+
+                // Execute next actions (boxed to avoid infinite type recursion)
+                Box::pin(Self::execute_actions(
+                    next_actions,
+                    protocol.clone(),
+                    session.clone(),
+                    client_id,
+                    llm_client.clone(),
+                    app_state.clone(),
+                    status_tx.clone(),
+                ))
+                .await;
+            }
+            Err(e) => {
+                error!("LLM error for Cassandra client {}: {}", client_id, e);
+            }
+        }
+    }
+
+    async fn mark_disconnected(
+        client_id: ClientId,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) {
+        app_state
+            .update_client_status(client_id, ClientStatus::Disconnected)
+            .await;
+        let _ = status_tx.send(format!(
+            "[CLIENT] Cassandra client {} disconnected",
+            client_id
+        ));
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 }

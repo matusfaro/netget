@@ -44,10 +44,13 @@ The client accepts startup parameters:
 - `user` - Username (default: "postgres")
 - `password` - Password (default: empty)
 
-Connection string format:
+Connection string format — note that the port is its own keyword. NetGet's `remote_addr` is
+`host:port`, but libpq keyword syntax has no such form: `host=127.0.0.1:5433` is read as a
+*hostname* containing a colon and resolution fails, so `connect_with_llm_actions` splits the
+port out.
 
 ```
-host=127.0.0.1:5432 user=postgres password=secret dbname=mydb
+host=127.0.0.1 port=5432 user=postgres password=secret dbname=mydb
 ```
 
 ### LLM Control
@@ -213,3 +216,35 @@ See `tests/client/postgresql/CLAUDE.md` for E2E testing approach.
 - **Advanced Types** - JSON, arrays, custom types
 - **Authentication Methods** - SCRAM-SHA-256, MD5, etc.
 - **Connection Options** - SSL mode, timeouts, keepalive
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running PostgreSQL client. The channel
+is registered with `command_support::register_command_channel` **before** the
+`postgresql_connected` LLM call and drained by its own task (`command_loop`), registered
+through `register_client_task`. Registering first is what makes `[ send ]` usable while a
+manual `*` routing rule has the connect event parked waiting for a human.
+
+Both the LLM path and injected commands go through one `apply_action`, so an injected
+`execute_query` produces the same wire traffic as one the model asked for, and the
+`postgresql_query_result` event fires either way. On the injected path that event is raised
+**after** the outcome is replied, so `[ send ]` is not held for an LLM round-trip.
+
+**Outcome semantics** (`ClientSendOutcome`):
+
+| Situation | Outcome |
+|---|---|
+| `execute_query` / `begin`/`commit`/`rollback_transaction` ran | `Executed { detail }` — row count plus the truncated SQL |
+| a result with no wire effect (`wait_for_more`, unhandled custom) | `Executed { detail }` naming which |
+| unknown action type or bad parameters | `Rejected { error }` |
+| `disconnect` | `Disconnected`, then the loop ends and the handle is dropped |
+| the query failed on the server | `Err` — `send_to_client` returns the error |
+
+**Never `Sent`.** `tokio_postgres` owns the socket, so NetGet cannot know how many bytes a
+query put on the wire. Every loop exit calls `remove_client_handle`.
+
+The command loop also holds the `Arc<Mutex<tokio_postgres::Client>>`, which is what keeps the
+session usable for a client created with no instruction.
+
+Test: `tests/client/postgresql/command_channel_test.rs` (zero LLM calls; a NetGet PostgreSQL
+server with a `*` static handler receives the injected query).

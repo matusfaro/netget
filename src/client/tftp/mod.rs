@@ -141,6 +141,35 @@ impl TftpClient {
         }));
         let protocol = Arc::new(TftpClientProtocol::new());
 
+        // Where the next client packet goes. Starts at the well-known port and is rewritten
+        // by the transfer loop the moment the server answers from its freshly allocated TID
+        // (RFC 1350 §4). Shared, because an injected `send_ack` issued from the command loop
+        // must go to the same place the transfer loop would send it - writing to port 69
+        // after the first reply is the failure this address exists to prevent.
+        let transfer_addr = Arc::new(Mutex::new(server_addr));
+
+        // Command channel for injected actions (the dashboard's [ send ]).
+        //
+        // Registered BEFORE the connected-event LLM call below. That call runs inline here,
+        // and a dashboard-created client defaults to a `*` -> manual routing rule, so it can
+        // park for minutes waiting for a human; [ send ] must work for the whole park.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        let cmd_task = tokio::spawn(Self::command_loop(
+            command_rx,
+            socket.clone(),
+            server_addr,
+            transfer_addr.clone(),
+            llm_client.clone(),
+            app_state.clone(),
+            status_tx.clone(),
+            client_id,
+            client_data.clone(),
+            protocol.clone(),
+        ));
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Ask the model what to do with this server.
         let event = Event::new(
             &TFTP_CLIENT_CONNECTED_EVENT,
@@ -217,10 +246,11 @@ impl TftpClient {
                         }
                     };
 
-                    let handle = tokio::spawn(Self::run_transfer(
+                    match Self::start_transfer(
                         direction,
                         socket.clone(),
                         server_addr,
+                        transfer_addr.clone(),
                         filename,
                         mode,
                         llm_client.clone(),
@@ -230,15 +260,26 @@ impl TftpClient {
                         instruction.clone(),
                         client_data.clone(),
                         protocol.clone(),
-                    ));
-                    app_state.register_client_task(client_id, handle).await;
-                    started = true;
+                    )
+                    .await
+                    {
+                        Ok(_) => started = true,
+                        Err(e) => {
+                            error!("TFTP client {} failed to send request: {}", client_id, e);
+                            app_state
+                                .update_client_status(client_id, ClientStatus::Error(e.to_string()))
+                                .await;
+                        }
+                    }
                 }
                 Ok(ClientActionResult::Disconnect) => {
                     info!("TFTP client {} disconnecting on model request", client_id);
                     app_state
                         .update_client_status(client_id, ClientStatus::Disconnected)
                         .await;
+                    // Early return: drop the command handle too, or the dashboard would
+                    // keep offering [ send ] into a client that never opened a transfer.
+                    app_state.remove_client_handle(client_id).await;
                     return Ok(local_addr);
                 }
                 Ok(_) => {}
@@ -258,12 +299,17 @@ impl TftpClient {
         Ok(local_addr)
     }
 
-    /// Drive one RRQ or WRQ transfer to completion.
+    /// Put the RRQ or WRQ on the wire and spawn the loop that drives the transfer.
+    ///
+    /// Returns the number of request bytes that actually left the socket, so an injected
+    /// `tftp_read_file` can be reported as `Sent` with a real count rather than as a
+    /// fire-and-forget dispatch. Called by both the connected-event path and the command loop.
     #[allow(clippy::too_many_arguments)]
-    async fn run_transfer(
+    async fn start_transfer(
         direction: Direction,
         socket: Arc<UdpSocket>,
         server_addr: SocketAddr,
+        transfer_addr: Arc<Mutex<SocketAddr>>,
         filename: String,
         mode: String,
         llm_client: OllamaClient,
@@ -273,19 +319,18 @@ impl TftpClient {
         instruction: String,
         client_data: Arc<Mutex<ClientData>>,
         protocol: Arc<TftpClientProtocol>,
-    ) {
+    ) -> Result<usize> {
         let opcode = match direction {
             Direction::Read => OP_RRQ,
             Direction::Write => OP_WRQ,
         };
         let request = build_request_packet(opcode, &filename, &mode);
-        if let Err(e) = socket.send_to(&request, server_addr).await {
-            error!("TFTP client {} failed to send request: {}", client_id, e);
-            app_state
-                .update_client_status(client_id, ClientStatus::Error(e.to_string()))
-                .await;
-            return;
-        }
+
+        // A new request means a new server TID; until the first reply arrives, packets go
+        // back to the well-known port.
+        *transfer_addr.lock().await = server_addr;
+
+        let sent = socket.send_to(&request, server_addr).await?;
         debug!(
             "TFTP client {} sent {} for '{}' ({})",
             client_id,
@@ -299,9 +344,38 @@ impl TftpClient {
             filename
         ));
 
+        let handle = tokio::spawn(Self::run_transfer(
+            socket,
+            transfer_addr,
+            llm_client,
+            app_state.clone(),
+            status_tx,
+            client_id,
+            instruction,
+            client_data,
+            protocol,
+        ));
+        app_state.register_client_task(client_id, handle).await;
+
+        Ok(sent)
+    }
+
+    /// Drive one RRQ or WRQ transfer to completion. The request itself was already sent by
+    /// [`Self::start_transfer`].
+    #[allow(clippy::too_many_arguments)]
+    async fn run_transfer(
+        socket: Arc<UdpSocket>,
+        transfer_addr: Arc<Mutex<SocketAddr>>,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+        instruction: String,
+        client_data: Arc<Mutex<ClientData>>,
+        protocol: Arc<TftpClientProtocol>,
+    ) {
         // The server answers from a freshly allocated TID, so the peer address of the first
         // reply — not the well-known port — is where subsequent packets go (RFC 1350 §4).
-        let mut transfer_addr = server_addr;
         let mut learned_tid = false;
 
         let mut buffer = vec![0u8; 4 + TFTP_BLOCK_SIZE];
@@ -335,7 +409,7 @@ impl TftpClient {
             };
 
             if !learned_tid {
-                transfer_addr = peer;
+                *transfer_addr.lock().await = peer;
                 learned_tid = true;
                 trace!("TFTP client {} learned server TID {}", client_id, peer);
             }
@@ -432,7 +506,8 @@ impl TftpClient {
                                         wrote_short_block = true;
                                     }
                                 }
-                                if let Err(e) = socket.send_to(&bytes, transfer_addr).await {
+                                let dest = *transfer_addr.lock().await;
+                                if let Err(e) = socket.send_to(&bytes, dest).await {
                                     error!("TFTP client {} send failed: {}", client_id, e);
                                 }
                             }
@@ -489,5 +564,147 @@ impl TftpClient {
                 return;
             }
         }
+    }
+
+    /// Drain injected commands until the channel closes (the client was removed) or an
+    /// injected `disconnect` ends the session.
+    ///
+    /// Every verb here reaches the wire, so every successful outcome is a real byte count:
+    /// `send_ack` / `send_data_block` become one `send_to` of the packet the protocol's own
+    /// executor built, and `tftp_read_file` / `tftp_write_file` go through
+    /// [`Self::start_transfer`], which awaits the RRQ/WRQ send before spawning the loop that
+    /// drives the rest.
+    ///
+    /// Note the destination: packets go to the **current** transfer address, which the
+    /// receive loop rewrites to the server's TID after the first reply. An injected ACK sent
+    /// to the well-known port would be ignored by a conforming server.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        socket: Arc<UdpSocket>,
+        server_addr: SocketAddr,
+        transfer_addr: Arc<Mutex<SocketAddr>>,
+        llm_client: OllamaClient,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        client_id: ClientId,
+        client_data: Arc<Mutex<ClientData>>,
+        protocol: Arc<TftpClientProtocol>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(ClientActionResult::SendData(bytes)) => {
+                    let dest = *transfer_addr.lock().await;
+                    match socket.send_to(&bytes, dest).await {
+                        Ok(bytes_sent) => Ok(ClientSendOutcome::Sent { bytes_sent }),
+                        Err(e) => Err(anyhow::anyhow!("send to {dest} failed: {e}")),
+                    }
+                }
+                Ok(ClientActionResult::Custom { name, data }) => {
+                    let direction = match name.as_str() {
+                        "tftp_read_file" => Some(Direction::Read),
+                        "tftp_write_file" => Some(Direction::Write),
+                        _ => None,
+                    };
+                    let filename = data
+                        .get("filename")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let mode = data
+                        .get("mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("octet")
+                        .to_string();
+
+                    match direction {
+                        None => Ok(ClientSendOutcome::Executed {
+                            detail: format!("custom result '{name}' is not a TFTP client verb"),
+                        }),
+                        Some(_) if filename.is_empty() => Ok(ClientSendOutcome::Rejected {
+                            error: format!("{name} needs a non-empty 'filename'"),
+                        }),
+                        Some(direction) => {
+                            let instruction = app_state
+                                .get_instruction_for_client(client_id)
+                                .await
+                                .unwrap_or_default();
+                            match Self::start_transfer(
+                                direction,
+                                socket.clone(),
+                                server_addr,
+                                transfer_addr.clone(),
+                                filename,
+                                mode,
+                                llm_client.clone(),
+                                app_state.clone(),
+                                status_tx.clone(),
+                                client_id,
+                                instruction,
+                                client_data.clone(),
+                                protocol.clone(),
+                            )
+                            .await
+                            {
+                                Ok(bytes_sent) => Ok(ClientSendOutcome::Sent { bytes_sent }),
+                                Err(e) => Err(e),
+                            }
+                        }
+                    }
+                }
+                Ok(ClientActionResult::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Ok(ClientActionResult::WaitForMore) => Ok(ClientSendOutcome::Executed {
+                    detail: "wait_for_more: nothing written to the wire".to_string(),
+                }),
+                Ok(_) => Ok(ClientSendOutcome::Executed {
+                    detail: "action produced no TFTP packet".to_string(),
+                }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("TFTP client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                info!("TFTP client {} disconnecting on injected action", client_id);
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                break;
+            }
+        }
+
+        app_state.remove_client_handle(client_id).await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
     }
 }

@@ -439,3 +439,36 @@ tail -f /var/log/mongodb/mongod.log
 - [MongoDB Rust Driver Tutorial](https://www.mongodb.com/docs/drivers/rust/)
 - [BSON Rust Crate](https://docs.rs/bson/latest/bson/)
 - [MongoDB Manual](https://www.mongodb.com/docs/manual/)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running MongoDB client. The channel is
+registered with `command_support::register_command_channel` **before** the `mongodb_connected`
+LLM call and drained by its own task (`command_loop`), registered through
+`register_client_task`. Registering first is what makes `[ send ]` usable while a manual `*`
+routing rule has the connect event parked waiting for a human.
+
+Both the LLM path and injected commands go through one `apply_action`, so an injected
+`find_documents` / `insert_document` / `update_documents` / `delete_documents` does exactly
+what the model's own would, and the `mongodb_result_received` event fires either way. On the
+injected path that event is raised **after** the outcome is replied, so `[ send ]` is not held
+for an LLM round-trip.
+
+**Outcome semantics** (`ClientSendOutcome`):
+
+| Situation | Outcome |
+|---|---|
+| find / insert / update / delete ran | `Executed { detail }` — the collection and the document count |
+| a result with no wire effect (`wait_for_more`, unhandled custom) | `Executed { detail }` naming which |
+| unknown action type or bad parameters | `Rejected { error }` |
+| `disconnect` | `Disconnected`, then the loop ends and the handle is dropped |
+| the driver returned an error (BSON conversion, server error) | `Err` — `send_to_client` returns the error |
+
+**Never `Sent`.** The `mongodb` driver owns the socket and its connection pool, so NetGet
+cannot know how many bytes an operation put on the wire. Every loop exit calls
+`remove_client_handle`.
+
+Test: `tests/client/mongodb/command_channel_test.rs`. It needs a server to talk to, and the
+MongoDB **server** is behind its own `mongodb-server` feature, so the test is gated on
+`all(feature = "mongodb", feature = "mongodb-server")` and compiles to nothing under
+`--features mongodb` alone.

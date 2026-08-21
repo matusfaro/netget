@@ -220,3 +220,27 @@ See `tests/client/http/CLAUDE.md` for E2E testing approach.
 - **Cookie Management** - Persistent sessions
 - **WebSocket Upgrade** - For real-time communication
 - **Custom TLS Config** - Client certificates, custom CA
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running HTTP client. The handle is
+registered **before** the `http_connected` LLM call, because a dashboard-created client
+defaults to a `*` → manual rule and that call can park for minutes waiting for a human.
+
+The old "poll `get_client()` every 5 s and exit when it is gone" task is gone. Its removal
+check is now one arm of the command loop's `select!`; the other arm drains
+`ClientCommand`s. Both the connected-event handler and the command loop go through one
+`apply_action`, so the `http_request` decoding exists once.
+
+**Outcome semantics — `Executed`, never `Sent`.** reqwest owns the socket and never reports
+how many bytes a request serialised to, so a `Sent { bytes_sent }` here would be a number
+someone made up. The command loop **awaits** the exchange and reports
+`Executed { detail: "http_request GET /path -> 200 (17 byte body)" }`; a request that never
+completes is an `Err`, an unknown action is `Rejected`, and `disconnect` is `Disconnected`
+(the loop ends and the handle is dropped).
+
+The `http_response_received` event still fires, but from its own registered task rather
+than inline — otherwise a manual rule parking that LLM call would wedge the command loop
+for the length of a human's think time and `send_to_client` would time out on a request
+that in fact succeeded. `make_request` is unchanged for callers; it is now
+`perform_request` (network only) followed by `notify_response` (the LLM event).

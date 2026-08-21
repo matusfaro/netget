@@ -393,3 +393,31 @@ LLM will:
 - [hickory-client Documentation](https://docs.rs/hickory-client/)
 - [Google Public DNS DoH](https://developers.google.com/speed/public-dns/docs/doh)
 - [Cloudflare DoH](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running DoH client. The handle is
+registered **before** the `doh_connected` LLM call, because a dashboard-created client
+defaults to a `*` → manual rule and that call can park for minutes waiting for a human.
+
+The query itself lives in `perform_query` (encode → HTTPS → parse → event payload), which
+both the LLM chain and the command loop reach through one `apply_action`; `execute_llm_actions`
+no longer inlines it.
+
+**Outcome semantics — `Executed`, never `Sent`.** reqwest owns the socket and reports no wire
+byte count, so a number would be invented. The command loop **awaits** the query and reports
+`Executed { detail: "query_dns example.com A -> 1 answers (NoError)" }`; a failed query is an
+`Err`, an unknown action is `Rejected`, `disconnect` is `Disconnected`. The
+`doh_response_received` event fires from its own registered task, so a manual rule parking
+that LLM call cannot wedge the command loop.
+
+### 7. Cannot talk to NetGet's own DoH server
+
+This client builds a plain `reqwest::Client`, which does full certificate verification, while
+`src/server/doh/` is TLS-only with a self-signed certificate from
+`tls_cert_manager::generate_default_tls_config()`. So the two cannot interoperate, and
+`tests/client/doh/e2e_test.rs` — which points this client at a NetGet DoH server — fails for
+that reason, not for anything to do with the command channel. Fixing it means an explicit
+"trust this certificate" startup parameter, not `danger_accept_invalid_certs` by default.
+`tests/client/doh/command_channel_test.rs` therefore uses a plain-HTTP `application/dns-message`
+stub as its peer.

@@ -390,3 +390,48 @@ See `tests/client/mysql/CLAUDE.md` for E2E test details.
 - [mysql_async crate](https://docs.rs/mysql_async/)
 - [MySQL Protocol](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basics.html)
 - [SQL Injection Prevention](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html)
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` can inject an action into a running MySQL client. The channel is
+registered with `command_support::register_command_channel` **before** the `mysql_connected`
+LLM call and drained by its own task (`command_loop`), registered through
+`register_client_task`. Registering first is what makes `[ send ]` usable while a manual `*`
+routing rule has the connect event parked waiting for a human.
+
+Both the LLM path and injected commands go through one `apply_action`, so an injected
+`execute_query` produces byte-for-byte the same wire traffic as one the model asked for, and
+the `mysql_result_received` event fires either way. On the injected path that event is raised
+**after** the outcome is replied, so `[ send ]` is not held for an LLM round-trip.
+
+**Outcome semantics** (`ClientSendOutcome`):
+
+| Situation | Outcome |
+|---|---|
+| `execute_query` / `begin`/`commit`/`rollback_transaction` ran | `Executed { detail }` — row count plus the truncated SQL |
+| `wait_for_more`, or a result with no wire effect | `Executed { detail }` naming which |
+| unknown action type or bad parameters | `Rejected { error }` |
+| `disconnect` | `Disconnected`, then the loop ends and the handle is dropped |
+| the query failed on the server | `Err` — `send_to_client` returns the error |
+
+**Never `Sent`.** `mysql_async` owns the socket, so NetGet cannot know how many bytes a query
+put on the wire; reporting a byte count would be a guess. The command loop's exit — an
+injected `disconnect`, or `remove_client`/`disconnect_client` dropping the sender — calls
+`remove_client_handle`, so the dashboard stops offering `[ send ]` into a dead client.
+
+The command loop also holds the `Arc<Mutex<Conn>>`, which is what keeps the connection alive
+for a client created with no instruction; before it existed the only `Conn` was dropped when
+`connect_with_llm_actions` returned.
+
+### Connection options are pinned on purpose
+
+`OptsBuilder` sets `max_allowed_packet`, `wait_timeout` and `prefer_socket(false)`. Left
+unset, `Conn::new` runs `SELECT @@max_allowed_packet, @@wait_timeout, @@socket` and feeds each
+answer to `from_value`, which **panics** rather than erroring when the value is not the type it
+expects. The server a NetGet client talks to is often one whose replies a model composed, so
+that panic is reachable from an ordinary LLM answer — connecting NetGet's MySQL client to
+NetGet's own MySQL server used to abort the task. Supplying the values means the settings query
+is never issued.
+
+Test: `tests/client/mysql/command_channel_test.rs` (zero LLM calls; a NetGet MySQL server with
+a `*` static handler receives the injected query).

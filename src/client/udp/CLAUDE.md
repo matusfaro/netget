@@ -285,3 +285,28 @@ nc -u -l 8080
 - Socket errors (ECONNREFUSED, ENETUNREACH) logged and client marked as Error status
 - LLM errors reset client to Idle state and continue listening
 - Invalid action parameters return errors without affecting socket state
+
+## Command channel (injected actions)
+
+The client registers a `command_support` command channel, so `AppState::send_to_client` — the
+dashboard's `[ send ]` — can execute an action inside the running client. The channel is
+registered **before** the `udp_connected` LLM call, which a `*` → manual routing rule can park
+for minutes.
+
+Commands are drained by their own registered task rather than a `select!` arm in the receive
+loop: `recv_from` is cancellation-safe, but the loop body awaits an LLM call inline, so an arm
+there would stall every injected command for the length of that call. The socket is an
+`Arc<UdpSocket>` and `send_to` needs only `&self`, so no write-half mutex is involved.
+
+Injected and LLM-produced actions share one code path, `UdpClient::apply_action_result`.
+
+| Action | `ClientSendOutcome` |
+|---|---|
+| `send_udp_datagram` | `Sent { bytes_sent }` — the count `send_to` returned, so it is the real one |
+| `change_target` | `Executed { "default target changed to …" }` — nothing reaches the wire |
+| `wait_for_more` | `Executed` — the client is now Accumulating |
+| `close_socket` | `Disconnected`; the command loop ends and the handle is dropped |
+| anything else | `Rejected { error }` from the protocol's own executor |
+
+The handle is removed on every exit: an injected `close_socket`, the receive loop's error exit,
+and `remove_client`.

@@ -244,3 +244,32 @@ LLM Actions:
 - Use high-resolution timers for fraction field
 - Calculate round-trip delay and local clock offset
 - Implement NTP algorithms (clock filter, selection, clustering)
+
+## Command channel (injected actions)
+
+The client registers a `command_support` command channel, so `AppState::send_to_client` — the
+dashboard's `[ send ]` — can execute an action inside the running client. The channel is
+registered **before** the initial LLM call, which a `*` → manual routing rule can park for
+minutes.
+
+**This is also the client's multi-query path.** The connect-time task still marks the client
+`Disconnected` after its single query, but the UDP socket stays bound and the command channel
+stays registered, so an injected `query_time` runs another exchange. That is the closest thing
+this client has to the "multi-query support" listed under Future Enhancements.
+
+| Action | `ClientSendOutcome` |
+|---|---|
+| `query_time` | `Sent { bytes_sent: 48 }` — the count `send_to` returned for the request datagram |
+| `analyze_response` | `Executed` — interpretation only, nothing reaches the wire |
+| `disconnect` | `Disconnected`; the command loop ends and the handle is dropped |
+| anything else | `Rejected { error }` |
+
+Two details worth knowing:
+
+- The caller is answered **as soon as the request is on the wire**. The reply is then received
+  and handed to the model as `ntp_response_received` *after* the reply is sent, so a manual
+  rule parked on that event cannot hold `[ send ]` open for its whole timeout. The cost is that
+  the command loop is busy until the reply arrives or its 5-second timeout expires, so a
+  command injected immediately after a `query_time` queues behind it.
+- The connect-time query and an injected query share a `Mutex` held across the receive, so they
+  cannot steal each other's datagram.

@@ -394,3 +394,26 @@ See `tests/client/http3/CLAUDE.md` for E2E testing approach.
 - **quinn**: https://github.com/quinn-rs/quinn
 - **h3**: https://github.com/hyperium/h3
 - **Cloudflare HTTP/3**: https://blog.cloudflare.com/http-3-vs-http-2/
+
+## Command channel (the dashboard's `[ send ]`)
+
+`AppState::send_to_client` injects an action into a running HTTP/3 client. The handle is
+registered before `connect()` returns, and the old "poll `get_client()` every 5 s" task is
+gone — its removal check is one arm of the command loop's `select!`.
+
+**This is currently the only way anything reaches `Http3Client::make_request`.** The HTTP/3
+client raises no connected event: `HTTP3_CLIENT_CONNECTED_EVENT` is declared in `actions.rs`
+and never emitted, and nothing else called `make_request`, so before the command channel the
+client recorded its target and then did nothing. Wiring an `http3_connected` LLM call is the
+remaining gap — and note that `tests/client/http3/e2e_test.rs` mocks `http3_connected` with
+`expect_calls(1)`, so those tests cannot pass until it is.
+
+**Outcome semantics — `Executed`, never `Sent`.** h3/quinn own the datagrams and report no
+wire byte count for the request. The command loop **awaits** the QUIC exchange and reports
+`Executed { detail: "http3_request GET /path -> 200 (17 byte body)" }`; a failed request is
+an `Err`, an unknown action is `Rejected`, `disconnect` is `Disconnected`. The
+`http3_response_received` event fires from its own registered task, so a manual rule parking
+that LLM call cannot wedge the command loop.
+
+The QUIC connection is now closed *before* the LLM call rather than after it, so a slow model
+no longer holds an idle connection open.

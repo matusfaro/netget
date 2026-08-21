@@ -94,3 +94,28 @@ there is no useful "utf8" alternative to offer.
 ```
 connect to 192.168.1.1:69 via tftp. Read file pxelinux.0 in octet mode and report its size.
 ```
+
+## Command channel (injected actions)
+
+The client registers a `command_support` command channel, so `AppState::send_to_client` — the
+dashboard's `[ send ]` — can execute an action inside the running client. Registration happens
+**before** the `tftp_connected` LLM call, which matters more here than elsewhere: that call
+runs *inline* in `connect()`, so a `*` → manual routing rule parks client creation itself, and
+`[ send ]` has to work for the whole park.
+
+Every verb reaches the wire, so every successful outcome is a real byte count:
+
+| Action | `ClientSendOutcome` |
+|---|---|
+| `send_ack` / `send_data_block` | `Sent { bytes_sent }` — one `send_to` of the packet the protocol's own executor built |
+| `tftp_read_file` / `tftp_write_file` | `Sent { bytes_sent }` — the RRQ/WRQ send is **awaited** before the transfer loop is spawned, so this is a real count and not a dispatch |
+| `disconnect` | `Disconnected`; the command loop ends and the handle is dropped |
+| bad or unknown parameters | `Rejected { error }` |
+
+**The destination is the current transfer address, not the well-known port.** `transfer_addr`
+moved from a local in `run_transfer` to a shared `Arc<Mutex<SocketAddr>>` for exactly this
+reason: the receive loop rewrites it to the server's TID after the first reply (RFC 1350 §4),
+and an injected ACK sent to port 69 after that point would be ignored by a conforming server.
+
+This also relaxes the "one transfer per client" limitation for the injected path: an injected
+`tftp_read_file` resets `transfer_addr` and starts a fresh transfer on the same socket.

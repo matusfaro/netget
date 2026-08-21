@@ -370,3 +370,36 @@ See `tests/client/dns/CLAUDE.md` for detailed testing approach.
 - [RFC 1035: Domain Names - Implementation and Specification](https://datatracker.ietf.org/doc/html/rfc1035)
 - [hickory-dns Documentation](https://docs.rs/hickory-client/latest/hickory_client/)
 - [DNS Record Types (IANA)](https://www.iana.org/assignments/dns-parameters/dns-parameters.xhtml#dns-parameters-4)
+
+## Command channel (injected actions)
+
+The client registers a `command_support` command channel, so `AppState::send_to_client` — the
+dashboard's `[ send ]` — can execute an action inside the running client. The channel is
+registered **before** the `dns_connected` LLM call, which a `*` → manual routing rule can park
+for minutes.
+
+The hickory `AsyncClient` moved out of the conversation task into an `Arc<Mutex<_>>` created in
+`connect_with_llm_actions`, so the command loop queries through the **same** connected resolver
+the LLM path uses rather than opening one of its own.
+
+| Action | `ClientSendOutcome` |
+|---|---|
+| `send_dns_query` | `Executed { detail }` — see below |
+| `wait_for_more` | `Executed` |
+| `disconnect` | `Disconnected`; the command loop ends and the handle is dropped |
+| anything else | `Rejected { error }` |
+
+**Why a query reports `Executed` and not `Sent`.** hickory owns the wire encoding and the UDP
+socket and reports no byte count, so there is no truthful number to hand back and a `Sent{n}`
+here would be invented. The detail string carries what the caller actually wants instead —
+`dns_query example.com A -> NOERROR with 1 answer(s)`. A network fault during the query is an
+`Err`, distinct from `Rejected`, which is reserved for the model naming a verb this client does
+not have.
+
+`execute_dns_action` is now `apply_dns_action` (run the query, no LLM) plus
+`report_dns_response` (hand the answers to the model, collect follow-ups). The split lets the
+command loop answer its caller as soon as the resolver replies and report to the model
+afterwards, so a manual rule parked on `dns_response_received` cannot hold `[ send ]` open for
+its whole timeout. Follow-up actions from an injected query still go through
+`run_dns_actions`, so the iterative work queue — and the stack-overflow fix it exists for —
+covers the injected path too.

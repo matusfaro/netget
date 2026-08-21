@@ -13,11 +13,14 @@ use tracing::{error, info, trace};
 
 use crate::client::llm_budget::call_llm_for_client;
 use crate::client::torrent_dht::actions::DHT_RESPONSE_EVENT;
+use crate::llm::actions::client_trait::{Client, ClientActionResult};
+use crate::llm::actions::protocol_trait::Protocol;
 use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// DHT query/response types
 #[derive(Debug, Deserialize, Serialize)]
@@ -76,6 +79,12 @@ impl TorrentDhtClient {
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         let socket_arc = Arc::new(socket);
+
+        // Command channel for injected actions (the dashboard's [ send ]). Registered
+        // BEFORE the connected-event LLM call below, which a manual `*` routing rule can
+        // park for minutes - the operator must be able to reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
 
         // Spawn read loop for DHT responses
         let socket_clone = socket_arc.clone();
@@ -182,10 +191,38 @@ impl TorrentDhtClient {
                     }
                 }
             }
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead client, and a late send fails fast.
+            app_state_clone.remove_client_handle(client_id).await;
+            let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
         });
+        // Kept so an injected `disconnect` can actually stop the receive loop and release
+        // the UDP socket - a connectionless client has no wire close to send.
+        let read_abort = task_handle.abort_handle();
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
+
+        // `recv_from` is cancellation-safe, but the read loop awaits `call_llm_for_client`
+        // inline, so a `select!` arm there would stall for the whole LLM round-trip. Drain
+        // commands in their own registered task instead; both share the `Arc<UdpSocket>`.
+        let cmd_state = app_state.clone();
+        let cmd_status = status_tx.clone();
+        let cmd_socket = socket_arc.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx,
+                Arc::new(TorrentDhtClientProtocol::new()),
+                cmd_socket,
+                remote_sock_addr,
+                client_id,
+                cmd_state,
+                cmd_status,
+                read_abort,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -259,6 +296,82 @@ impl TorrentDhtClient {
         Ok(local_addr)
     }
 
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot serve this client:
+    /// its verbs produce `ClientActionResult::Custom` and the transport is a datagram socket,
+    /// not an `AsyncWrite`. The action still goes through [`Self::apply_action`] - the same
+    /// function the LLM path uses - so the bencode encoding exists exactly once.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<ClientCommand>,
+        protocol: Arc<TorrentDhtClientProtocol>,
+        socket: Arc<UdpSocket>,
+        remote_addr: SocketAddr,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+        read_abort: tokio::task::AbortHandle,
+    ) {
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(client_id, result, &socket, remote_addr)
+                    .await
+                    .map(|applied| match applied {
+                        Applied::Disconnect => ClientSendOutcome::Disconnected,
+                        Applied::Sent(0) => ClientSendOutcome::Executed {
+                            detail: "executed (no datagram sent)".to_string(),
+                        },
+                        Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                        Applied::Nothing(detail) => ClientSendOutcome::Executed { detail },
+                    }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("DHT client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // No wire close exists for UDP, so "disconnected" means: stop receiving,
+                // release the socket, drop the handle so [ send ] is greyed out again.
+                read_abort.abort();
+                app_state.remove_client_handle(client_id).await;
+                app_state
+                    .update_client_status(client_id, ClientStatus::Disconnected)
+                    .await;
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                break;
+            }
+        }
+    }
+
     /// Execute a DHT action
     async fn execute_dht_action(
         client_id: ClientId,
@@ -267,9 +380,20 @@ impl TorrentDhtClient {
         remote_addr: SocketAddr,
         protocol: &dyn crate::llm::actions::client_trait::Client,
     ) -> Result<()> {
-        use crate::llm::actions::client_trait::ClientActionResult;
+        let result = protocol.execute_action(action)?;
+        Self::apply_action(client_id, result, socket, remote_addr).await?;
+        Ok(())
+    }
 
-        match protocol.execute_action(action)? {
+    /// Put one executed action on the wire. Shared by the LLM path and injected commands
+    /// so the bencode query encoding exists exactly once.
+    async fn apply_action(
+        client_id: ClientId,
+        result: ClientActionResult,
+        socket: &UdpSocket,
+        remote_addr: SocketAddr,
+    ) -> Result<Applied> {
+        match result {
             ClientActionResult::Custom { name, data } if name == "dht_query" => {
                 let query_type = data
                     .get("query_type")
@@ -316,15 +440,32 @@ impl TorrentDhtClient {
                 let encoded = serde_bencode::to_bytes(&message)?;
 
                 // Send query
-                socket.send_to(&encoded, remote_addr).await?;
+                let sent = socket.send_to(&encoded, remote_addr).await?;
                 trace!("DHT client {} sent {} query", client_id, query_type);
+                Ok(Applied::Sent(sent))
             }
             ClientActionResult::Disconnect => {
                 info!("DHT client {} disconnecting", client_id);
+                Ok(Applied::Disconnect)
             }
-            _ => {}
+            ClientActionResult::WaitForMore => Ok(Applied::Nothing("wait_for_more".to_string())),
+            ClientActionResult::Custom { name, .. } => Ok(Applied::Nothing(format!(
+                "custom result '{name}' is not a DHT query; nothing sent"
+            ))),
+            other => Ok(Applied::Nothing(format!(
+                "action result {other:?} produced no datagram"
+            ))),
         }
-
-        Ok(())
     }
+}
+
+/// What [`TorrentDhtClient::apply_action`] did with one action.
+#[derive(Debug)]
+enum Applied {
+    /// Datagram bytes actually handed to `send_to` (0 when nothing was sent).
+    Sent(usize),
+    /// Ran, but produced no datagram; the string says why.
+    Nothing(String),
+    /// The session should end.
+    Disconnect,
 }

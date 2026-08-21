@@ -240,3 +240,31 @@ See `tests/client/rip/CLAUDE.md` for E2E testing approach.
 1. "Query RIP router at 192.168.1.1 for routing table"
 2. "Connect to RIP at 10.0.0.1:520 using RIPv2 and analyze routes with metric < 5"
 3. "Query RIP router and show all routes to 172.16.0.0/12 networks"
+
+## Injected commands (the dashboard's `[ send ]`)
+
+The client registers a command channel (`command_support::register_command_channel`) and spawns
+the task that drains it **before** the connected-event LLM call, which is awaited inline in
+`connect_with_llm_actions` and which a manual `*` routing rule parks — the operator has to be
+able to reach the client while it waits. Commands are drained by their own registered task
+rather than a `tokio::select!` arm: `recv_from` is cancellation-safe, but the receive loop
+awaits `call_llm_for_client` inline, so a `select!` arm there would stall for a whole LLM
+round-trip.
+
+Injected actions go through `RipClient::apply_action`, the same function the connected-event
+path and the receive loop use, so the RIP request encoding exists exactly once. Outcomes:
+
+| Injected action | `ClientSendOutcome` |
+|---|---|
+| `send_rip_request` | `Sent { bytes_sent }` — 24 for a Request (4-byte header + one 20-byte entry) |
+| `wait_for_more` | `Executed { detail: "wait_for_more" }` |
+| `disconnect` | `Disconnected` — aborts the receive loop, drops the handle, marks the client Disconnected. UDP has no wire close, so that is what "disconnected" can mean here |
+| unknown action / missing `version` | `Rejected { error }` |
+
+A `disconnect` that arrives while the connected-event call is still parked has already removed
+the command handle; `connect_with_llm_actions` re-checks `has_client_handle` before spawning the
+receive loop and skips it, so the window between "no receive loop yet" and "abort handle set" is
+closed rather than silently ignored.
+
+Covered by `tests/client/rip/command_channel_test.rs`, which asserts the datagram really
+arrives at a stand-in router and decodes as a RIPv2 Request.
