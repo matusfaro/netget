@@ -105,6 +105,23 @@ Each XMPP client gets:
 - Tracked bytes sent/received, packets sent/received
 - State: Active until client closes or LLM sends `close_stream`
 
+### Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+Every connection registers a peer handle (`server::peer_support`) right after it is tracked and
+*before* the first `xmpp_data_received` LLM call, so a manual `*` rule parking that call still
+leaves the operator able to reach the connection. `AppState::send_to_peer` runs the action
+through the same executor as the LLM path. Every XMPP wire verb returns `ActionResult::Output`
+(or `Multiple`/`CloseConnection` for `close_stream`) — there is **no `Custom` gap** — so the
+generic peer task covers the whole vocabulary. `[ disconnect this peer ]` injects
+`close_connection`, which is **not** in the model's vocabulary; `execute_action` carries an
+explicit `close_connection => ActionResult::CloseConnection` arm purely so that injected
+disconnect half-closes the socket instead of answering "Unknown action" (the model's own
+close verb remains `close_stream`, which also emits `</stream:stream>`). The handle is removed
+on every exit path (EOF, buffer overflow, `close_stream`, read error) through the single cleanup
+after the read loop, and again by the peer task itself on an injected close (idempotent). `update_connection_stats` is called on every read and every
+write, so the dashboard's `↓ ↑` counters and `last_activity` are live. Test:
+`tests/server/xmpp/peer_inject_test.rs` (zero LLM calls).
+
 ## LLM Integration
 
 ### Event Type

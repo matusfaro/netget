@@ -615,10 +615,6 @@ impl Server for MqttProtocol {
             "mqtt_publish_to_client" => self.execute_publish(action, "client_id", true),
             "list_mqtt_clients" => self.execute_list_clients(action),
             "close_this_connection" => Ok(ActionResult::CloseConnection),
-            // The dashboard's "disconnect this peer" injects {"type":"close_connection"}.
-            // Not offered to the model (close_this_connection is its verb); this arm exists
-            // so the generic peer command task half-closes the shared write half on it.
-            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown MQTT action: {}", action_type)),
         }
     }

@@ -107,35 +107,6 @@ The only cross-request state the broker keeps is a directory of **live socket se
 keyed by `(server id, client id)`, so that a named recipient can be written to. Nothing
 survives a disconnect; no message, subscription, topic or retained value is stored.
 
-## Dashboard peer injection
-
-Every connection registers a **peer handle** (`peer_support::register_peer_channel` /
-`spawn_peer_command_task`) right after it is accepted — before any CONNECT — so the
-dashboard's "message this peer" / "disconnect this peer" rows work while the connection is
-idle. Injected actions run through the same executor the model path uses, against the
-per-connection `MqttProtocol`, so an injected `mqtt_publish` / `mqtt_puback` / … is encoded
-by exactly the code the model's would be.
-
-Two things follow from MQTT's channel-based writer (`out_tx`, drained by one writer task
-that owns the shared `Arc<Mutex<WriteHalf>>`):
-
-- **Wire verbs return `ActionResult::Custom`, not `Output`.** They write to the connection's
-  own channel as a side effect and return Custom, so the generic peer task reports the
-  outcome as `Executed { detail }` rather than `Sent { bytes_sent }` — but the bytes *do*
-  reach the wire, and the byte counters move. This is why the peer-inject test reads the
-  socket and the counters, not the outcome's byte count.
-- **`close_connection` has an explicit `execute_action` arm** (returning
-  `ActionResult::CloseConnection`) because "disconnect this peer" injects
-  `{"type":"close_connection"}`, distinct from the model-facing `close_this_connection`
-  verb. On it the generic task `shutdown()`s the shared write half → the client reads EOF.
-
-The peer handle is removed on every exit path via `finish_connection`. It is removed
-*first* there, because the peer command task holds an `Arc<MqttProtocol>` carrying an
-`out_tx` clone; dropping the handle ends that task so the writer can finish draining.
-
-**Per-connection byte and packet counters** are updated on every read (in the read loop)
-and every write (in the writer task), so the rail shows live `↓/↑` counts.
-
 ## What the broker answers by itself
 
 Two cases, both pure transport bookkeeping with no semantics to decide:
@@ -189,6 +160,7 @@ connection is closed when it is exceeded. Every parse function is bounds-checked
   matching** in Rust (the model interprets `+` and `#` itself), **`$SYS` topics**,
   **clustering**, **bridging**, **authentication beyond passing the username to the
   model**.
+- **Per-connection byte and packet counters** are not updated after the initial insert.
 
 ## Testing
 

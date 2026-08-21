@@ -91,6 +91,29 @@ impl XmppServer {
                                 .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
 
+                            // Peer messaging: the dashboard's "message this peer" /
+                            // "disconnect this peer" inject actions into THIS connection through
+                            // the same executor the LLM path uses. Registered before the first
+                            // LLM call because a manual `*` rule can park it for minutes and the
+                            // operator must be able to reach the connection while it waits. Every
+                            // XMPP wire verb returns Output / Multiple / CloseConnection, so the
+                            // generic peer task covers the whole vocabulary (no Custom gap).
+                            let peer_rx = crate::server::peer_support::register_peer_channel(
+                                &state_clone,
+                                server_id,
+                                connection_id.as_u32(),
+                            )
+                            .await;
+                            crate::server::peer_support::spawn_peer_command_task(
+                                peer_rx,
+                                protocol_clone.clone(),
+                                state_clone.clone(),
+                                server_id,
+                                connection_id.as_u32(),
+                                write_half_arc.clone(),
+                                status_clone.clone(),
+                            );
+
                             // Create XML buffer for streaming parsing
                             let mut read_half = read_half;
                             let mut buffer = Vec::new();
@@ -107,6 +130,18 @@ impl XmppServer {
                                     }
                                     Ok(n) => {
                                         buffer.extend_from_slice(&temp_buf[..n]);
+
+                                        // Live ↓ counter + last_activity for the dashboard.
+                                        state_clone
+                                            .update_connection_stats(
+                                                server_id,
+                                                connection_id,
+                                                Some(n as u64),
+                                                None,
+                                                Some(1),
+                                                None,
+                                            )
+                                            .await;
 
                                         if buffer.len() > MAX_XMPP_BUFFER_BYTES {
                                             Log::new(Some(&status_clone)).error(format!(
@@ -185,6 +220,18 @@ impl XmppServer {
                                                             let _ = write.flush().await;
                                                             drop(write);
 
+                                                            // Live ↑ counter + last_activity.
+                                                            state_clone
+                                                                .update_connection_stats(
+                                                                    server_id,
+                                                                    connection_id,
+                                                                    None,
+                                                                    Some(data.len() as u64),
+                                                                    None,
+                                                                    Some(1),
+                                                                )
+                                                                .await;
+
                                                             // Byte-count summary and full XML FileOnly.
                                                             log.debug(format!("XMPP sent {} bytes on connection {}", data.len(), connection_id));
                                                             log.trace(format!(
@@ -234,6 +281,14 @@ impl XmppServer {
                                     }
                                 }
                             }
+
+                            // Every exit path - EOF, buffer overflow, close_stream, read error -
+                            // breaks out of the loop and lands here. Drop the peer handle so the
+                            // dashboard stops offering to message a dead connection; idempotent
+                            // with the peer task's own removal on an injected close.
+                            state_clone
+                                .remove_peer_handle(server_id, connection_id.as_u32())
+                                .await;
 
                             // Connection closed - mark as closed
                             state_clone

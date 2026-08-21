@@ -235,6 +235,11 @@ impl Server for XmppProtocol {
             "send_raw_xml" => self.execute_send_raw_xml(action),
             "wait_for_more" => Ok(ActionResult::WaitForMore),
             "close_stream" => self.execute_close_stream(action),
+            // The dashboard's `[ disconnect this peer ]` injects `close_connection`. It is not
+            // in the model's vocabulary (the model uses `close_stream`, which also emits the
+            // closing tag); this arm exists only so the injected disconnect half-closes the
+            // socket instead of answering "Unknown action".
+            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown XMPP action: {}", action_type)),
         }
     }
