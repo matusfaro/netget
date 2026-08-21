@@ -368,6 +368,10 @@ impl Server for ModbusProtocol {
                     }),
                 })
             }
+            // Not offered to the model (a Modbus server answers requests, it does not hang
+            // up on its own), but the dashboard's "disconnect this peer" injects it through
+            // the peer command task, which half-closes the write side on this result.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown Modbus action: {action_type}")),
         }
     }

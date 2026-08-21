@@ -120,6 +120,21 @@ A framing error (`protocol_id != 0`, or an MBAP length outside 2..=254) closes t
 Neither is answerable — we no longer know where the next frame starts — and the buffer is capped
 at eight ADUs' worth so a peer that never sends a parseable frame cannot grow it without bound.
 
+### 6. Dashboard injection (peer handle)
+
+Every connection registers a peer handle (`peer_support::register_peer_channel` +
+`spawn_peer_command_task`) right after it is tracked, and removes it on every exit path (EOF,
+read error, `close()`), so the rail offers `[ disconnect this peer ]`. Byte and packet counters
+are updated on every read and every write.
+
+What is injectable is narrow, and honestly so: the four wire verbs return
+`ActionResult::Custom` and are framed against the request being answered (transaction id,
+quantity), so an injected `send_modbus_*` is reported as "executed (nothing to write)" — a
+Modbus server never initiates, so there is nothing it *could* write unprompted. The one verb
+that reaches the wire from outside is `close_connection` (an explicit arm in
+`execute_action`, not offered to the model), which half-closes the socket so the peer reads
+EOF. No bespoke Custom path was added.
+
 ## LLM integration
 
 ### Events (all three are emitted)

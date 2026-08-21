@@ -129,6 +129,28 @@ impl ModbusServer {
                             },
                         );
 
+                        // Peer messaging: the dashboard's "disconnect this peer" injects
+                        // `close_connection` into THIS connection through the same executor
+                        // the LLM path uses. The four Modbus wire verbs are request-bound
+                        // (they return `ActionResult::Custom` and are framed against the
+                        // request's transaction id), so an injected one is reported as
+                        // executed without writing — a Modbus server never initiates.
+                        let peer_rx = crate::server::peer_support::register_peer_channel(
+                            &app_state,
+                            server_id,
+                            connection_id.as_u32(),
+                        )
+                        .await;
+                        crate::server::peer_support::spawn_peer_command_task(
+                            peer_rx,
+                            protocol.clone(),
+                            app_state.clone(),
+                            server_id,
+                            connection_id.as_u32(),
+                            write_half.clone(),
+                            status_tx.clone(),
+                        );
+
                         let llm_clone = llm_client.clone();
                         let state_clone = app_state.clone();
                         let status_clone = status_tx.clone();
@@ -142,6 +164,9 @@ impl ModbusServer {
                                 match read_half.read(&mut read_buf).await {
                                     Ok(0) => {
                                         conns_clone.lock().await.remove(&connection_id);
+                                        state_clone
+                                            .remove_peer_handle(server_id, connection_id.as_u32())
+                                            .await;
                                         state_clone
                                             .close_connection_on_server(server_id, connection_id)
                                             .await;
@@ -197,6 +222,9 @@ impl ModbusServer {
                                     Err(e) => {
                                         error!("Modbus read error on {}: {}", connection_id, e);
                                         conns_clone.lock().await.remove(&connection_id);
+                                        state_clone
+                                            .remove_peer_handle(server_id, connection_id.as_u32())
+                                            .await;
                                         state_clone
                                             .close_connection_on_server(server_id, connection_id)
                                             .await;
@@ -658,6 +686,9 @@ impl ModbusServer {
             let mut w = write_half.lock().await;
             let _ = w.shutdown().await;
         }
+        app_state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
         app_state
             .close_connection_on_server(server_id, connection_id)
             .await;

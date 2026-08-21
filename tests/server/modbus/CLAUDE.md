@@ -30,6 +30,13 @@ decoded PDU: register values, coil bits, function codes, exception codes, MBAP f
 | `test_modbus_reads_writes_and_exceptions_against_tokio_modbus` | 1 | 5 | **6** |
 | `test_modbus_spec_exceptions_and_mbap_framing` | 1 | 0 | **1** |
 | `test_codec_*` (three tests) | 0 | 0 | **0** |
+| `peer_inject_test::injected_close_connection_sends_eof_and_counters_move` | 0 | 0 | **0** |
+
+`peer_inject_test.rs` is the dashboard-injection test: a `*` static handler answers one FC 3
+read over a raw socket (asserting both byte/packet counters), then `send_to_peer` proves an
+injected `send_modbus_write_ack` is `Executed` without writing (request-bound Custom result)
+and an injected `close_connection` yields `Disconnected`, EOF on the socket, and the peer
+handle being released. It uses no mock LLM at all (`AppState` pointed at a dead port).
 
 **Total: 7**, under the ~10 target. The second test costs one call because starting a server
 costs one; the three exception exchanges it performs cost nothing, which is itself the assertion
