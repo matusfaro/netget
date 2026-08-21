@@ -215,6 +215,8 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
         info: StatementMetaWriter<'a, W>,
     ) -> io::Result<()> {
         Log::new(Some(&self.status_tx)).debug(format!("MySQL PREPARE: {}", query));
+        self.record_stats(Some(query.len() as u64), None, Some(1), None)
+            .await;
 
         // Store the prepared statement
         let mut next_id = self.next_stmt_id.lock().await;
@@ -240,6 +242,7 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
         drop(stmts);
 
         // Reply with the statement ID
+        self.record_stats(None, Some(0), None, Some(1)).await;
         info.reply(stmt_id, &[], &[]).await
     }
 
@@ -299,18 +302,53 @@ impl<W: tokio::io::AsyncWrite + Send + Unpin> AsyncMysqlShim<W> for MysqlHandler
         writer: InitWriter<'a, W>,
     ) -> io::Result<()> {
         Log::new(Some(&self.status_tx)).debug(format!("MySQL INIT DB: {}", _database));
+        self.record_stats(Some(_database.len() as u64), None, Some(1), Some(1))
+            .await;
 
         writer.ok().await
     }
 }
 
 impl MysqlHandler {
+    /// Refresh the dashboard's per-connection counters and `last_activity`.
+    ///
+    /// opensrv-mysql owns the socket inside `run_on` and never exposes the raw byte streams, so
+    /// these are the **application-visible** payload sizes seen at the shim boundary (the SQL text
+    /// received, the response cells/message produced), not the exact wire bytes — opensrv adds a
+    /// 4-byte packet header and text-protocol framing on top. Good enough for the rail's `↓/↑`
+    /// counters and, more importantly, for keeping `last_activity` current.
+    async fn record_stats(
+        &self,
+        bytes_in: Option<u64>,
+        bytes_out: Option<u64>,
+        packets_in: Option<u64>,
+        packets_out: Option<u64>,
+    ) {
+        if let Some(server_id) = self.server_id {
+            self.app_state
+                .update_connection_stats(
+                    server_id,
+                    self.connection_id,
+                    bytes_in,
+                    bytes_out,
+                    packets_in,
+                    packets_out,
+                )
+                .await;
+        }
+    }
+
     async fn handle_query<'a, W: tokio::io::AsyncWrite + Send + Unpin>(
         &'a mut self,
         query: &str,
         results: QueryResultWriter<'a, W>,
     ) -> io::Result<()> {
         trace!("Calling LLM for MySQL query: {}", query);
+
+        // The SQL text is the visible inbound payload for this command (COM_QUERY, or the replayed
+        // statement text for COM_STMT_EXECUTE).
+        self.record_stats(Some(query.len() as u64), None, Some(1), None)
+            .await;
 
         // Create query event
         let event = Event::new(
@@ -362,6 +400,23 @@ impl MysqlHandler {
                                         .cloned()
                                         .unwrap_or_default();
 
+                                    // Estimate the outbound payload from the cell text before the
+                                    // writers consume `columns`/`rows`.
+                                    let sent_bytes: u64 = columns
+                                        .iter()
+                                        .filter_map(|c| c.get("name"))
+                                        .filter_map(|v| v.as_str())
+                                        .map(|s| s.len() as u64)
+                                        .sum::<u64>()
+                                        + rows
+                                            .iter()
+                                            .filter_map(|r| r.as_array())
+                                            .flatten()
+                                            .map(|v| json_to_mysql_string(v).len() as u64)
+                                            .sum::<u64>();
+                                    self.record_stats(None, Some(sent_bytes), None, Some(1))
+                                        .await;
+
                                     // Send result set
                                     return finish_query(
                                         send_result_set(results, columns, rows).await,
@@ -390,6 +445,13 @@ impl MysqlHandler {
                                     // connection continues.
                                     Log::new(Some(&self.status_tx))
                                         .warn(format!("MySQL error {}: {}", error_code, message));
+                                    self.record_stats(
+                                        None,
+                                        Some(message.len() as u64),
+                                        None,
+                                        Some(1),
+                                    )
+                                    .await;
                                     return finish_query(
                                         results
                                             .error(mysql_error_kind(error_code), message.as_bytes())
@@ -408,7 +470,8 @@ impl MysqlHandler {
                                         .and_then(|v| v.as_u64())
                                         .unwrap_or(0);
 
-                                    // Send OK response
+                                    // Send OK response (a small fixed-size packet).
+                                    self.record_stats(None, Some(0), None, Some(1)).await;
                                     return finish_query(
                                         results
                                             .completed(OkResponse {
@@ -441,6 +504,7 @@ impl MysqlHandler {
                     "MySQL: no response action produced for query {:?}; replying with an empty OK",
                     query
                 );
+                self.record_stats(None, Some(0), None, Some(1)).await;
                 finish_query(
                     results
                         .completed(OkResponse {
@@ -476,6 +540,8 @@ impl MysqlHandler {
                 // connection continues.
                 Log::new(Some(&self.status_tx))
                     .warn(format!("MySQL replying with error: {}", message));
+                self.record_stats(None, Some(message.len() as u64), None, Some(1))
+                    .await;
                 results.error(kind, message.as_bytes()).await
             }
         }

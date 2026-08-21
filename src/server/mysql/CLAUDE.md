@@ -69,6 +69,39 @@ back. Verified: `mysql_error_response` with 1146 arrives as
   `ER_MAX_PREPARED_STMT_COUNT_REACHED`. The map is only pruned by
   `COM_STMT_CLOSE`, so without the cap a PREPARE loop would grow it unbounded.
 
+## Dashboard injection & connection counters
+
+**No peer handle — the dashboard cannot message or disconnect a MySQL peer.**
+`AsyncMysqlIntermediary::run_on(handler, reader, writer)` *moves* both stream
+halves into opensrv's internal `PacketReader`/`PacketWriter` and never exposes
+the write half, so there is no `Arc<Mutex<WriteHalf>>` to hand to
+`peer_support::spawn_peer_command_task`. Three things make this a hard limit,
+not a missing wire-up:
+
+1. opensrv owns the socket and the packet **sequence-id counter** for the whole
+   session; an unsolicited packet written from outside would desync it.
+2. MySQL is strictly request/response — the server must not emit a packet the
+   client did not ask for.
+3. All wire verbs (`mysql_query_response`, `mysql_ok_response`,
+   `mysql_error_response`) return `ActionResult::Custom` and are encoded by a
+   `QueryResultWriter<'a, W>` that only exists *inside* an `on_query`/`on_execute`
+   callback. The generic peer task can only execute `Output`/`CloseConnection`,
+   so even with a write half it could not encode a MySQL response.
+
+Consequently the dashboard shows the dim "cannot message or disconnect a peer
+from here yet" row for MySQL connections, and there is no `close_connection`
+arm in `execute_action` (nothing out-of-band can reach it).
+
+**Connection counters are still updated.** opensrv hides the raw byte streams,
+but the shim sees the application-visible payload at each command boundary, so
+`handle_query`, `on_prepare` and `on_init` call
+`AppState::update_connection_stats` with the SQL/DB text received and an estimate
+of the response payload produced (see `MysqlHandler::record_stats`). These are
+payload-size approximations, **not** exact wire bytes — opensrv adds a 4-byte
+packet header and text-protocol framing on top — but they keep the rail's `↓/↑`
+counters live and refresh `last_activity`. Proven with zero LLM calls by
+`tests/server/mysql/connection_stats_test.rs`.
+
 ## Architecture
 
 - `spawn_with_llm_actions` binds with `?` (so a bind failure surfaces as
