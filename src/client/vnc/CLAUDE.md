@@ -159,6 +159,24 @@ status_tx.send("[CLIENT] VNC client connected");                    // → TUI
 
 **Future Enhancement:** Full DES encryption for VNC authentication.
 
+## Dashboard injection (`[ send_key_event ]`, `[ send_pointer_event ]`, `[ disconnect ]`)
+
+`connect_with_llm_actions` splits the stream, then registers a command channel
+(`client::command_support::register_command_channel`) and spawns a draining `command_loop`
+task **before** the `vnc_connected` LLM call — which a manual `*` rule can park — so the operator
+can reach the client while it waits. Because the read loop uses `read_exact` (not
+cancellation-safe), commands are drained by that separate task, not a `select!` arm; both share
+the `Arc<Mutex<WriteHalf>>`.
+
+Every VNC client verb yields `ClientActionResult::Custom`, so the generic
+`handle_stream_client_command` cannot write them. `command_loop` routes each through
+`apply_injected_action`, which reuses `send_vnc_message_with_writer` — the exact encoder the LLM
+path uses — encoding into a buffer for an accurate byte count, then records an `injected_action`
+access-log entry and replies with `ClientSendOutcome`. An injected `disconnect` half-closes; the
+read loop sees EOF, marks the client `Disconnected`, and drops the command handle
+(`remove_client_handle` is called on every read-loop exit, so the rail stops offering `[ send ]`
+on a dead client). Test: `tests/client/vnc/command_channel_test.rs` (zero LLM calls).
+
 ## Limitations
 
 - **Simplified Authentication** - VNC auth uses placeholder, not full DES

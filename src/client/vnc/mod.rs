@@ -148,8 +148,40 @@ impl VncClient {
         let _ = status_tx.send(format!("[CLIENT] VNC client {} connected", client_id));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Fire connected event
         let protocol = Arc::new(VncClientProtocol::new());
+
+        // Split the stream now so the write half is a shared `Arc<Mutex<_>>`: the read loop, the
+        // connected-event actions, and the injected-command task all write through it.
+        let (mut read_half, write_half) = tokio::io::split(stream);
+        let write_half_arc = Arc::new(Mutex::new(write_half));
+
+        // Command channel for injected actions (the dashboard's [ send_key_event ] etc.).
+        // Registered - and drained - BEFORE the connected-event LLM call, which a manual `*` rule
+        // can park for minutes: the operator must be able to reach the client while it waits.
+        // The read loop uses `read_exact` (not cancellation-safe), so commands are drained by a
+        // separate task rather than a `select!` arm; both share the write half.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_protocol = protocol.clone();
+        let cmd_write = write_half_arc.clone();
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx,
+                cmd_protocol,
+                cmd_write,
+                client_id,
+                fb_width,
+                fb_height,
+                cmd_state,
+                cmd_tx,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
+        // Fire connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
                 &VNC_CLIENT_CONNECTED_EVENT,
@@ -178,10 +210,11 @@ impl VncClient {
                     actions,
                     memory_updates: _,
                 }) => {
-                    // Execute initial actions
+                    // Execute initial actions through the shared write half.
                     for action in actions {
-                        if let Err(e) = Self::execute_vnc_action(
-                            &mut stream,
+                        let mut guard = write_half_arc.lock().await;
+                        if let Err(e) = Self::execute_vnc_action_with_writer(
+                            &mut *guard,
                             &protocol,
                             action,
                             fb_width,
@@ -198,10 +231,6 @@ impl VncClient {
                 }
             }
         }
-
-        // Split stream
-        let (mut read_half, write_half) = tokio::io::split(stream);
-        let write_half_arc = Arc::new(Mutex::new(write_half));
 
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
@@ -288,6 +317,9 @@ impl VncClient {
                         app_state
                             .update_client_status(client_id, ClientStatus::Disconnected)
                             .await;
+                        // Drop the command handle so the rail stops offering [ send ] on a dead
+                        // client; the command task's channel then closes and it exits.
+                        app_state.remove_client_handle(client_id).await;
                         let _ = status_tx
                             .send(format!("[CLIENT] VNC client {} disconnected", client_id));
                         let _ = status_tx.send("__UPDATE_UI__".to_string());
@@ -687,27 +719,119 @@ impl VncClient {
         Ok(())
     }
 
-    /// Execute a VNC action (wrapper for TcpStream)
-    async fn execute_vnc_action(
-        stream: &mut TcpStream,
-        protocol: &Arc<VncClientProtocol>,
-        action: JsonValue,
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot run this client's
+    /// vocabulary because every wire verb yields `ClientActionResult::Custom`, so the action is
+    /// encoded by [`Self::apply_injected_action`] - which reuses `send_vnc_message_with_writer`,
+    /// the exact encoder the read loop uses for LLM actions - and the outcome is logged and
+    /// replied the way the generic arm does it.
+    #[allow(clippy::too_many_arguments)]
+    async fn command_loop<W>(
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        protocol: Arc<VncClientProtocol>,
+        write_half: Arc<Mutex<W>>,
+        client_id: ClientId,
         fb_width: u16,
         fb_height: u16,
-    ) -> Result<()> {
-        use crate::llm::actions::client_trait::Client;
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) where
+        W: AsyncWriteExt + Unpin + Send + 'static,
+    {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
 
-        match protocol.as_ref().execute_action(action)? {
-            ClientActionResult::Custom { name, data } => {
-                Self::send_vnc_message(stream, &name, &data, fb_width, fb_height).await?;
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = Self::apply_injected_action(
+                action.clone(),
+                &protocol,
+                &write_half,
+                fb_width,
+                fb_height,
+            )
+            .await;
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.as_ref().protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("VNC client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
             }
-            ClientActionResult::Disconnect => {
-                return Err(anyhow!("Disconnect requested"));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // Half-close so the server reads EOF and the read loop runs its normal
+                // disconnect path (status → Disconnected, handle removed).
+                let _ = write_half.lock().await.shutdown().await;
+                break;
             }
-            _ => {}
         }
+    }
 
-        Ok(())
+    /// Encode one injected action onto the wire, reusing the read loop's encoder.
+    ///
+    /// A rejected action (bad JSON) becomes `Rejected`; a `Disconnect` becomes `Disconnected`
+    /// (the caller half-closes); a `Custom` verb is encoded into a buffer with
+    /// `send_vnc_message_with_writer` so the byte count is exact and the write happens once.
+    async fn apply_injected_action<W>(
+        action: JsonValue,
+        protocol: &Arc<VncClientProtocol>,
+        write_half: &Arc<Mutex<W>>,
+        fb_width: u16,
+        fb_height: u16,
+    ) -> Result<crate::state::client_handles::ClientSendOutcome>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        use crate::llm::actions::client_trait::Client;
+        use crate::state::client_handles::ClientSendOutcome;
+
+        match protocol.as_ref().execute_action(action) {
+            Err(e) => Ok(ClientSendOutcome::Rejected {
+                error: e.to_string(),
+            }),
+            Ok(ClientActionResult::Custom { name, data }) => {
+                // Encode into a buffer (Vec<u8> is an AsyncWrite) with the same function the LLM
+                // path uses, so injected and model-produced messages are byte-identical.
+                let mut buf: Vec<u8> = Vec::new();
+                Self::send_vnc_message_with_writer(&mut buf, &name, &data, fb_width, fb_height)
+                    .await?;
+                let bytes_sent = buf.len();
+                {
+                    let mut guard = write_half.lock().await;
+                    guard.write_all(&buf).await?;
+                    guard.flush().await?;
+                }
+                Ok(ClientSendOutcome::Sent { bytes_sent })
+            }
+            Ok(ClientActionResult::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+            // WaitForMore / NoAction / (nested) Multiple: nothing to write.
+            Ok(_) => Ok(ClientSendOutcome::Executed {
+                detail: "executed (nothing to write)".to_string(),
+            }),
+        }
     }
 
     /// Execute a VNC action with a writer
@@ -732,99 +856,6 @@ impl VncClient {
                 return Err(anyhow!("Disconnect requested"));
             }
             _ => {}
-        }
-
-        Ok(())
-    }
-
-    /// Send a VNC protocol message
-    async fn send_vnc_message(
-        stream: &mut TcpStream,
-        action_name: &str,
-        data: &JsonValue,
-        fb_width: u16,
-        fb_height: u16,
-    ) -> Result<()> {
-        match action_name {
-            "request_framebuffer_update" => {
-                let incremental = data["incremental"].as_bool().unwrap_or(true);
-                let x = data["x"].as_u64().unwrap_or(0) as u16;
-                let y = data["y"].as_u64().unwrap_or(0) as u16;
-                let width = data["width"].as_u64().unwrap_or(fb_width as u64) as u16;
-                let height = data["height"].as_u64().unwrap_or(fb_height as u64) as u16;
-
-                let msg = [
-                    3u8, // FramebufferUpdateRequest
-                    if incremental { 1 } else { 0 },
-                    (x >> 8) as u8,
-                    (x & 0xff) as u8,
-                    (y >> 8) as u8,
-                    (y & 0xff) as u8,
-                    (width >> 8) as u8,
-                    (width & 0xff) as u8,
-                    (height >> 8) as u8,
-                    (height & 0xff) as u8,
-                ];
-                stream.write_all(&msg).await?;
-            }
-            "send_pointer_event" => {
-                let x = data["x"].as_u64().unwrap_or(0) as u16;
-                let y = data["y"].as_u64().unwrap_or(0) as u16;
-                let button_mask = data["button_mask"].as_u64().unwrap_or(0) as u8;
-
-                let msg = [
-                    5u8, // PointerEvent
-                    button_mask,
-                    (x >> 8) as u8,
-                    (x & 0xff) as u8,
-                    (y >> 8) as u8,
-                    (y & 0xff) as u8,
-                ];
-                stream.write_all(&msg).await?;
-            }
-            "send_key_event" => {
-                let Some(key) = resolve_keysym(&data["key"]) else {
-                    anyhow::bail!(
-                        "send_key_event: unrecognised 'key' {}. Use a keysym number, a single \
-                         character like \"a\", or a name like \"Enter\"/\"Escape\"/\"F1\"",
-                        data["key"]
-                    );
-                };
-                let down = data["down"].as_bool().unwrap_or(false);
-
-                let msg = [
-                    4u8, // KeyEvent
-                    if down { 1 } else { 0 },
-                    0,
-                    0, // padding
-                    (key >> 24) as u8,
-                    (key >> 16) as u8,
-                    (key >> 8) as u8,
-                    (key & 0xff) as u8,
-                ];
-                stream.write_all(&msg).await?;
-            }
-            "send_client_cut_text" => {
-                let text = data["text"].as_str().unwrap_or("");
-                let text_bytes = text.as_bytes();
-                let length = text_bytes.len() as u32;
-
-                let mut msg = vec![
-                    6u8, // ClientCutText
-                    0,
-                    0,
-                    0, // padding
-                    (length >> 24) as u8,
-                    (length >> 16) as u8,
-                    (length >> 8) as u8,
-                    (length & 0xff) as u8,
-                ];
-                msg.extend_from_slice(text_bytes);
-                stream.write_all(&msg).await?;
-            }
-            _ => {
-                warn!("Unknown VNC action: {}", action_name);
-            }
         }
 
         Ok(())

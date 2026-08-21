@@ -130,6 +130,30 @@ Everything a client or a model can send is bounds-checked before it is allocated
   `AppState::register_server_task()` so `stop_server` releases the socket.
 - A connection is removed from the server view on every exit path, including a failed handshake.
 
+## Dashboard injection (`[ disconnect this peer ]`, live counters)
+
+Every connection registers a peer handle (`server::peer_support`) right after it is tracked and
+before the handshake, and removes it on every exit path (EOF, read error, unknown message,
+injected disconnect) through the single cleanup in `handle_connection`. `AppState::send_to_peer`
+runs the injected action through the same executor the LLM path uses.
+
+- **`[ disconnect this peer ]`** injects `{"type":"close_connection"}`. `execute_action` maps
+  both `close_connection` and `vnc_disconnect_client` to `ActionResult::CloseConnection`, which
+  the generic peer task half-closes; the message loop then reads EOF and runs its teardown.
+- **The drawing verbs are a Custom-result gap.** `vnc_render_display` and `vnc_set_clipboard`
+  return `ActionResult::Custom`, and the generic peer task cannot execute them — rendering needs
+  this connection's framebuffer state (`last_frame`, `dirty`, `pending_request`), which is owned
+  by the message loop, so an out-of-loop render would race it. The peer task reports these as
+  "executed" without touching the wire. Only disconnect is wired; "message this peer" with a
+  draw is deliberately not.
+- **Live counters.** `update_connection_stats` is called on every client message read (in the
+  message loop) and every frame / ServerCutText write (`send_pending_frame`,
+  `send_server_cut_text`), so the rail's `↓ ↑` counters and `last_activity` move. Handshake and
+  ServerInit bytes, written before the loop by static helpers without the connection context,
+  are not counted.
+
+Test: `tests/server/vnc/peer_inject_test.rs` (zero LLM calls).
+
 ## Limitations
 
 - No VNC-Auth (type 2), no TLS, no VeNCrypt.

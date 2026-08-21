@@ -267,6 +267,34 @@ impl VncServer {
             .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Peer messaging: the dashboard's "message this peer" / "disconnect this peer" inject
+        // actions into THIS connection through the same executor the LLM path uses. Registered
+        // before the handshake so the connection is reachable the instant it appears in the rail.
+        //
+        // Only `vnc_disconnect_client` (which returns `ActionResult::CloseConnection`) is
+        // executed by the generic peer task: it half-closes the write side and the message loop
+        // reads EOF. The drawing verbs (`vnc_render_display`, `vnc_set_clipboard`) return
+        // `ActionResult::Custom` and are reported as "executed" without touching the wire,
+        // because rendering needs this connection's framebuffer state, which lives in the
+        // message loop. See `src/server/vnc/CLAUDE.md`.
+        let peer_protocol: Arc<dyn crate::llm::actions::protocol_trait::Server> =
+            Arc::new(VncProtocol::new());
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &app_state,
+            server_id,
+            connection_id.as_u32(),
+        )
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            peer_protocol,
+            app_state.clone(),
+            server_id,
+            connection_id.as_u32(),
+            write_half.clone(),
+            status_tx.clone(),
+        );
+
         let result = async {
             Self::perform_handshake(&mut read_half, &write_half, &status_tx).await?;
 
@@ -306,7 +334,13 @@ impl VncServer {
         .await;
 
         // Always drop the connection from the server view, whatever went wrong above; the
-        // TUI otherwise shows a connection that no longer exists.
+        // TUI otherwise shows a connection that no longer exists. Remove the peer handle on the
+        // same exit path (EOF, read error, unknown message, injected disconnect) so the rail
+        // stops offering "message this peer" for a connection that is gone; the peer task also
+        // removes it on an injected disconnect, and both calls are idempotent.
+        app_state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
         app_state
             .remove_connection_from_server(server_id, connection_id)
             .await;
@@ -436,12 +470,17 @@ impl VncConnection {
 
             trace!("Received message type: {}", message_type);
 
+            // Bytes consumed for this message, starting with the type byte already read. Fed to
+            // `update_connection_stats` so the rail's `↓` counter and `last_activity` are live.
+            let mut bytes_in: u64 = 1;
+
             let keep_going = match message_type {
                 0 => {
                     // SetPixelFormat. Read and discarded: the server always sends 32bpp BGRX,
                     // so a client that requests anything else will render garbage.
                     let mut buf = [0u8; 19]; // 3 padding + 16 pixel format
                     read_half.read_exact(&mut buf).await?;
+                    bytes_in += 19;
                     trace!("SetPixelFormat received (ignored, server always sends 32bpp BGRX)");
                     true
                 }
@@ -454,6 +493,7 @@ impl VncConnection {
                     for _ in 0..num_encodings {
                         let _ = read_half.read_i32().await?;
                     }
+                    bytes_in += 3 + 4 * num_encodings as u64;
                     trace!("SetEncodings received: {} encodings", num_encodings);
                     true
                 }
@@ -463,6 +503,7 @@ impl VncConnection {
                     let y = read_half.read_u16().await?;
                     let width = read_half.read_u16().await?;
                     let height = read_half.read_u16().await?;
+                    bytes_in += 9;
                     trace!(
                         "FramebufferUpdateRequest: incremental={}, x={}, y={}, w={}, h={}",
                         incremental,
@@ -477,18 +518,21 @@ impl VncConnection {
                     let down = read_half.read_u8().await? != 0;
                     let _padding = read_half.read_u16().await?;
                     let keysym = read_half.read_u32().await?;
+                    bytes_in += 7;
                     self.handle_key_event(down, keysym).await?
                 }
                 5 => {
                     let button_mask = read_half.read_u8().await?;
                     let x = read_half.read_u16().await?;
                     let y = read_half.read_u16().await?;
+                    bytes_in += 5;
                     self.handle_pointer_event(button_mask, x, y).await?
                 }
                 6 => {
                     let _padding = read_half.read_u8().await?;
                     let _padding = read_half.read_u16().await?;
                     let length = read_half.read_u32().await?;
+                    bytes_in += 7;
                     if length > MAX_CUT_TEXT_LEN {
                         // The buffer used to be allocated straight from this client-controlled
                         // u32, so a nine-byte message could ask for a 4 GiB allocation.
@@ -500,6 +544,7 @@ impl VncConnection {
                     } else {
                         let mut text = vec![0u8; length as usize];
                         read_half.read_exact(&mut text).await?;
+                        bytes_in += length as u64;
                         self.handle_cut_text(&text).await?
                     }
                 }
@@ -513,6 +558,17 @@ impl VncConnection {
                     false
                 }
             };
+
+            self.app_state
+                .update_connection_stats(
+                    self.server_id,
+                    self.connection_id,
+                    Some(bytes_in),
+                    None,
+                    Some(1),
+                    None,
+                )
+                .await;
 
             if !keep_going {
                 break;
@@ -838,11 +894,22 @@ impl VncConnection {
         let mut frame = framebuffer_update_header(self.width, self.height);
         frame.extend_from_slice(pixels);
 
+        let frame_len = frame.len();
         {
             let mut writer = self.write_half.lock().await;
             writer.write_all(&frame).await?;
             writer.flush().await?;
         }
+        self.app_state
+            .update_connection_stats(
+                self.server_id,
+                self.connection_id,
+                None,
+                Some(frame_len as u64),
+                None,
+                Some(1),
+            )
+            .await;
 
         self.pending_request = false;
         self.dirty = false;
@@ -872,9 +939,22 @@ impl VncConnection {
         message.extend_from_slice(&(latin1.len() as u32).to_be_bytes());
         message.extend_from_slice(&latin1);
 
-        let mut writer = self.write_half.lock().await;
-        writer.write_all(&message).await?;
-        writer.flush().await?;
+        let message_len = message.len();
+        {
+            let mut writer = self.write_half.lock().await;
+            writer.write_all(&message).await?;
+            writer.flush().await?;
+        }
+        self.app_state
+            .update_connection_stats(
+                self.server_id,
+                self.connection_id,
+                None,
+                Some(message_len as u64),
+                None,
+                Some(1),
+            )
+            .await;
         // Send summary FileOnly: the vnc_set_clipboard action template already reports
         // the send to the TUI.
         Log::new(Some(&self.status_tx)).debug(format!(

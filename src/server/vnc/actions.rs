@@ -990,6 +990,10 @@ impl Server for VncProtocol {
                 })
             }
             "vnc_disconnect_client" => Ok(ActionResult::CloseConnection),
+            // The dashboard's "[ disconnect this peer ]" row injects `close_connection`, the
+            // generic verb the peer task understands; map it to the same result as the VNC-named
+            // disconnect so the operator can drop a connection from the rail.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             other => Err(anyhow!(
                 "Unknown VNC action '{other}'. Valid actions: vnc_render_display, \
                  vnc_no_change, vnc_set_clipboard, vnc_disconnect_client"
