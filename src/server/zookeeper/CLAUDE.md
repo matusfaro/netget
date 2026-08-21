@@ -120,8 +120,28 @@ No znode tree, no session table, no data of any kind. Every reply comes from the
   `jute.maxbuffer` default) before being widened.
 - **Accept loop.** A persistent accept error (EMFILE) breaks the loop instead of spinning and
   flooding the unbounded status channel.
-- **Connection tracking.** Connections are registered with `add_connection_to_server` and
-  marked closed on exit.
+- **Connection tracking.** Connections are registered with `add_connection_to_server`,
+  byte/packet counters are updated on every frame read and written (`update_connection_stats`,
+  length prefix included), and the connection is marked closed on exit.
+
+## Dashboard injection (peer handle)
+
+Every connection registers a peer handle (`peer_support::register_peer_channel`) before its
+first frame is read and removes it on every exit path, so the rail offers
+`[ message this peer ]` / `[ disconnect this peer ]` even while a request is parked on a
+manual rule.
+
+The wire verbs all return `ActionResult::Custom { name: "zookeeper_response" }` — framing is
+done in `mod.rs`, not in the action — so the generic `spawn_peer_command_task` would report
+them as "executed" without writing. `ZookeeperServer::spawn_peer_command_task` is therefore a
+protocol-owned copy of that task whose only addition is a Custom arm that frames the result
+through `custom_reply_body`, the same function the LLM path uses, and writes it to the shared
+`Arc<Mutex<WriteHalf>>`. An injected reply that names no `xid` goes out with xid **-1** (the
+watch-notification xid, the only frame a real server originates) rather than claiming to answer
+a request the operator cannot see. `close_connection` has an explicit arm in `execute_action`
+(not offered to the model) so "disconnect this peer" half-closes the socket.
+
+`tests/server/zookeeper/peer_inject_test.rs` covers all of it with zero LLM calls.
 - **Invalid `data_hex`** is a hard error, not a silently body-less reply.
 
 The accept-loop `JoinHandle` is registered via `AppState::register_server_task()`, so

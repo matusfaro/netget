@@ -195,35 +195,228 @@ impl ZookeeperServer {
                 .await;
         }
 
+        let (read_half, write_half) = tokio::io::split(stream);
+        let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
+
+        // Peer messaging: the dashboard's "message this peer" / "disconnect this peer" inject
+        // an action into THIS connection. Registered before the first frame is read, so the
+        // operator can reach a connection that is parked on a manual rule. The wire verbs
+        // return `ActionResult::Custom`, so a protocol-owned task (not the generic
+        // `spawn_peer_command_task`) drains the channel and frames the reply exactly as the
+        // LLM path does.
+        if let Some(server_id) = server_id {
+            let peer_rx = crate::server::peer_support::register_peer_channel(
+                &app_state,
+                server_id,
+                connection_id.as_u32(),
+            )
+            .await;
+            Self::spawn_peer_command_task(
+                peer_rx,
+                app_state.clone(),
+                server_id,
+                connection_id,
+                write_half.clone(),
+                status_tx.clone(),
+            );
+        }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+
         let result = Self::run_connection(
-            stream,
+            read_half,
+            &write_half,
             server,
-            status_tx,
             connection_id,
             app_state.clone(),
             server_id,
         )
         .await;
 
+        // Every exit path - EOF, read error, bad first frame, closeSession, close_connection -
+        // lands here.
         if let Some(server_id) = server_id {
+            app_state
+                .remove_peer_handle(server_id, connection_id.as_u32())
+                .await;
             app_state
                 .close_connection_on_server(server_id, connection_id)
                 .await;
         }
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
 
         result
     }
 
-    async fn run_connection(
-        stream: TcpStream,
+    /// Drain injected actions for one connection.
+    ///
+    /// Mirrors `peer_support::handle_peer_command` (executor, access-log entry, outcome reply,
+    /// close bookkeeping) with one addition: a `zookeeper_response` Custom result is framed
+    /// through [`Self::custom_reply_body`] — the same function the LLM path uses — and written
+    /// to the shared write half. An injected reply that names no `xid` is sent with xid -1,
+    /// the only xid a real ZooKeeper server ever originates (watch notifications): nothing
+    /// else can be correlated to a request the operator cannot see.
+    fn spawn_peer_command_task<W>(
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        app_state: Arc<AppState>,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
+        write_half: Arc<tokio::sync::Mutex<W>>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) where
+        W: AsyncWriteExt + Unpin + Send + 'static,
+    {
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol: Arc<ZookeeperProtocol> = Arc::new(ZookeeperProtocol::new());
+        tokio::spawn(async move {
+            while let Some(command) = command_rx.recv().await {
+                let action = command.action.clone();
+                let outcome = Self::execute_injected_action(
+                    protocol.as_ref(),
+                    &app_state,
+                    server_id,
+                    connection_id,
+                    &write_half,
+                    &action,
+                )
+                .await;
+
+                let outcome_json = match &outcome {
+                    Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                    Err(e) => serde_json::json!({"error": e.to_string()}),
+                };
+                app_state
+                    .record_access_log(
+                        AccessLogOwner::Server(server_id.as_u32()),
+                        "zookeeper",
+                        Some(connection_id.as_u32()),
+                        "injected_action",
+                        action,
+                        vec![outcome_json],
+                    )
+                    .await;
+
+                match &outcome {
+                    Err(e) => warn!(
+                        "injected action on ZooKeeper server #{} connection {} failed: {}",
+                        server_id.as_u32(),
+                        connection_id,
+                        e
+                    ),
+                    Ok(ClientSendOutcome::Disconnected) => {
+                        app_state
+                            .remove_peer_handle(server_id, connection_id.as_u32())
+                            .await;
+                        app_state
+                            .close_connection_on_server(server_id, connection_id)
+                            .await;
+                    }
+                    Ok(_) => {}
+                }
+                let _ = status_tx.send("__UPDATE_UI__".to_string());
+                let _ = command.reply_tx.send(outcome);
+            }
+            debug!(
+                "peer command task for ZooKeeper server #{} connection {} ended",
+                server_id.as_u32(),
+                connection_id
+            );
+        });
+    }
+
+    async fn execute_injected_action<W>(
+        protocol: &ZookeeperProtocol,
+        app_state: &Arc<AppState>,
+        server_id: crate::state::ServerId,
+        connection_id: ConnectionId,
+        write_half: &Arc<tokio::sync::Mutex<W>>,
+        action: &serde_json::Value,
+    ) -> Result<crate::state::client_handles::ClientSendOutcome>
+    where
+        W: AsyncWriteExt + Unpin,
+    {
+        use crate::state::client_handles::ClientSendOutcome;
+
+        let result = crate::llm::actions::executor::execute_actions(
+            vec![action.clone()],
+            app_state,
+            Some(protocol as &dyn crate::llm::actions::protocol_trait::Server),
+            Some(server_id),
+            None,
+        )
+        .await?;
+
+        let mut bytes_sent = 0usize;
+        let mut closed = false;
+        let mut details: Vec<String> = Vec::new();
+        let mut stack: Vec<ActionResult> = result.protocol_results;
+        stack.reverse();
+        while let Some(item) = stack.pop() {
+            match item {
+                ActionResult::Custom { name, data } if name == "zookeeper_response" => {
+                    let body = Self::custom_reply_body(&data, INJECTED_DEFAULT_XID);
+                    bytes_sent += Self::write_frame(
+                        write_half,
+                        app_state,
+                        Some(server_id),
+                        connection_id,
+                        &body,
+                    )
+                    .await?;
+                }
+                ActionResult::Output(bytes) => {
+                    let mut write = write_half.lock().await;
+                    write.write_all(&bytes).await?;
+                    write.flush().await?;
+                    drop(write);
+                    Self::count_written(app_state, Some(server_id), connection_id, bytes.len())
+                        .await;
+                    bytes_sent += bytes.len();
+                }
+                ActionResult::Multiple(items) => {
+                    for inner in items.into_iter().rev() {
+                        stack.push(inner);
+                    }
+                }
+                // Half-close; the peer reads EOF and the reader's own exit path runs.
+                ActionResult::CloseConnection => {
+                    let mut write = write_half.lock().await;
+                    write.shutdown().await?;
+                    closed = true;
+                }
+                ActionResult::WaitForMore | ActionResult::NoAction => {}
+                other => details.push(format!("{other:?}")),
+            }
+        }
+
+        if closed {
+            Ok(ClientSendOutcome::Disconnected)
+        } else if bytes_sent > 0 {
+            Ok(ClientSendOutcome::Sent { bytes_sent })
+        } else if details.is_empty() {
+            Ok(ClientSendOutcome::Executed {
+                detail: "executed (nothing to write)".to_string(),
+            })
+        } else {
+            Ok(ClientSendOutcome::Executed {
+                detail: crate::utils::truncate_for_log(&details.join("; "), 160),
+            })
+        }
+    }
+
+    async fn run_connection<R, W>(
+        mut read_half: R,
+        write_half: &Arc<tokio::sync::Mutex<W>>,
         server: Arc<ZookeeperServer>,
-        _status_tx: mpsc::UnboundedSender<String>,
         connection_id: ConnectionId,
         app_state: Arc<AppState>,
         server_id: Option<crate::state::ServerId>,
-    ) -> Result<()> {
-        let (mut read_half, mut write_half) = tokio::io::split(stream);
-
+    ) -> Result<()>
+    where
+        R: AsyncReadExt + Unpin,
+        W: AsyncWriteExt + Unpin,
+    {
         debug!("ZooKeeper connection {} established", connection_id);
 
         // A session exists only after the ConnectRequest/ConnectResponse exchange. Until then
@@ -261,6 +454,18 @@ impl ZookeeperServer {
             // Read payload
             let mut payload = vec![0u8; len];
             read_half.read_exact(&mut payload).await?;
+            if let Some(server_id) = server_id {
+                app_state
+                    .update_connection_stats(
+                        server_id,
+                        connection_id,
+                        Some((4 + len) as u64),
+                        None,
+                        Some(1),
+                        None,
+                    )
+                    .await;
+            }
 
             trace!(
                 "ZooKeeper connection {} received {} bytes",
@@ -287,7 +492,14 @@ impl ZookeeperServer {
                 };
 
                 let established = ZookeeperSession::negotiate(&connect, connection_id);
-                Self::write_frame(&mut write_half, &established.connect_response()).await?;
+                Self::write_frame(
+                    write_half,
+                    &app_state,
+                    server_id,
+                    connection_id,
+                    &established.connect_response(),
+                )
+                .await?;
 
                 info!(
                     "ZooKeeper connection {} session established: id={:#018x} timeout={}ms \
@@ -310,8 +522,14 @@ impl ZookeeperServer {
             match request_info.op_code {
                 OP_PING => {
                     trace!("ZooKeeper connection {} ping", connection_id);
-                    Self::write_frame(&mut write_half, &Self::reply(request_info.xid, 0, 0, &[]))
-                        .await?;
+                    Self::write_frame(
+                        write_half,
+                        &app_state,
+                        server_id,
+                        connection_id,
+                        &Self::reply(request_info.xid, 0, 0, &[]),
+                    )
+                    .await?;
                     continue;
                 }
                 OP_CLOSE_SESSION => {
@@ -319,8 +537,14 @@ impl ZookeeperServer {
                         "ZooKeeper connection {} closed its session on request",
                         connection_id
                     );
-                    Self::write_frame(&mut write_half, &Self::reply(request_info.xid, 0, 0, &[]))
-                        .await?;
+                    Self::write_frame(
+                        write_half,
+                        &app_state,
+                        server_id,
+                        connection_id,
+                        &Self::reply(request_info.xid, 0, 0, &[]),
+                    )
+                    .await?;
                     return Ok(());
                 }
                 _ => {}
@@ -362,31 +586,20 @@ impl ZookeeperServer {
                                 // rather than 0: xid 0 is never a valid reply to a real
                                 // request (negative xids are reserved for pings and watch
                                 // notifications) and leaves the client waiting forever.
-                                let xid = data
-                                    .get("xid")
-                                    .and_then(|v| v.as_i64())
-                                    .map(|v| v as i32)
-                                    .unwrap_or(request_info.xid);
-                                let zxid = data.get("zxid").and_then(|v| v.as_i64()).unwrap_or(0);
-                                let error_code =
-                                    data.get("error_code").and_then(|v| v.as_i64()).unwrap_or(0)
-                                        as i32;
-                                let body = data
-                                    .get("body_hex")
-                                    .and_then(|v| v.as_str())
-                                    .map(hex::decode)
-                                    .transpose()
-                                    .unwrap_or_default()
-                                    .unwrap_or_default();
-
-                                let response = Self::reply(xid, zxid, error_code, &body);
-                                Self::write_frame(&mut write_half, &response).await?;
+                                let response = Self::custom_reply_body(&data, request_info.xid);
+                                let sent = Self::write_frame(
+                                    write_half,
+                                    &app_state,
+                                    Some(server_id),
+                                    connection_id,
+                                    &response,
+                                )
+                                .await?;
 
                                 trace!(
-                                    "ZooKeeper sent {} bytes to connection {} (xid={})",
-                                    response.len() + 4,
+                                    "ZooKeeper sent {} bytes to connection {}",
+                                    sent,
                                     connection_id,
-                                    xid
                                 );
                             }
                             ActionResult::CloseConnection => {
@@ -406,14 +619,65 @@ impl ZookeeperServer {
         Ok(())
     }
 
-    /// Write one length-prefixed ZooKeeper frame.
-    async fn write_frame<W: AsyncWriteExt + Unpin>(write_half: &mut W, body: &[u8]) -> Result<()> {
-        write_half
-            .write_all(&(body.len() as i32).to_be_bytes())
-            .await?;
-        write_half.write_all(body).await?;
-        write_half.flush().await?;
-        Ok(())
+    /// Turn a `zookeeper_response` Custom result (as produced by `ZookeeperProtocol::
+    /// execute_action`) into a reply body. `default_xid` is used when the action named none.
+    fn custom_reply_body(data: &serde_json::Value, default_xid: i32) -> Vec<u8> {
+        let xid = data
+            .get("xid")
+            .and_then(|v| v.as_i64())
+            .map(|v| v as i32)
+            .unwrap_or(default_xid);
+        let zxid = data.get("zxid").and_then(|v| v.as_i64()).unwrap_or(0);
+        let error_code = data.get("error_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+        let body = data
+            .get("body_hex")
+            .and_then(|v| v.as_str())
+            .map(hex::decode)
+            .transpose()
+            .unwrap_or_default()
+            .unwrap_or_default();
+        Self::reply(xid, zxid, error_code, &body)
+    }
+
+    /// Write one length-prefixed ZooKeeper frame through the shared write half and count it.
+    /// Returns the number of bytes put on the wire (prefix included). The guard is dropped
+    /// before the stats update so nothing awaits on the state while holding the socket.
+    async fn write_frame<W: AsyncWriteExt + Unpin>(
+        write_half: &Arc<tokio::sync::Mutex<W>>,
+        app_state: &Arc<AppState>,
+        server_id: Option<crate::state::ServerId>,
+        connection_id: ConnectionId,
+        body: &[u8],
+    ) -> Result<usize> {
+        {
+            let mut write = write_half.lock().await;
+            write.write_all(&(body.len() as i32).to_be_bytes()).await?;
+            write.write_all(body).await?;
+            write.flush().await?;
+        }
+        let sent = 4 + body.len();
+        Self::count_written(app_state, server_id, connection_id, sent).await;
+        Ok(sent)
+    }
+
+    async fn count_written(
+        app_state: &Arc<AppState>,
+        server_id: Option<crate::state::ServerId>,
+        connection_id: ConnectionId,
+        bytes: usize,
+    ) {
+        if let Some(server_id) = server_id {
+            app_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    None,
+                    Some(bytes as u64),
+                    None,
+                    Some(1),
+                )
+                .await;
+        }
     }
 
     /// Build a reply body: `xid (4) + zxid (8) + error code (4) + operation-specific body`.
@@ -578,6 +842,10 @@ impl ZookeeperServer {
 const MIN_REQUEST_BYTES: i32 = 8;
 /// Matches ZooKeeper's own `jute.maxbuffer` default of 1 MiB.
 const MAX_REQUEST_BYTES: i32 = 1024 * 1024;
+
+/// xid for an injected reply that names none. -1 is the watch-notification xid, the one frame a
+/// real server originates on its own; any other value would claim to answer a request.
+const INJECTED_DEFAULT_XID: i32 = -1;
 
 /// Opcodes the server answers itself rather than handing to a handler.
 const OP_PING: i32 = 11;

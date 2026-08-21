@@ -565,6 +565,10 @@ impl Server for ZookeeperProtocol {
         let is_error = error_code != 0;
 
         let body = match action_type {
+            // Not offered to the model (a ZooKeeper server answers requests, it does not hang
+            // up on its own), but the dashboard's "disconnect this peer" injects it through
+            // the peer command task, which half-closes the write side on this result.
+            "close_connection" => return Ok(ActionResult::CloseConnection),
             "zookeeper_data" => {
                 if is_error {
                     Vec::new()

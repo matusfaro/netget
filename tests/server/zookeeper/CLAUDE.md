@@ -25,6 +25,8 @@ that: any new test that skips the handshake is testing a code path no client can
 | `test_zookeeper_get_children` | a real client decodes `zookeeper_children`, in order | 2 |
 | `test_zookeeper_error_response` | `error_code: -101` reaches the client as `ZkError::NoNode` | 2 |
 
+| `peer_inject_test::injected_zookeeper_action_reaches_raw_socket_and_close_sends_eof` | `send_to_peer` of `zookeeper_data` is framed on the socket, a missing `xid` defaults to -1, byte/packet counters match, `close_connection` yields EOF and releases the handle | 0 |
+
 **LLM budget: 7 calls.**
 
 `test_zookeeper_connect_handshake` gets four independent assertions out of a single LLM call by
