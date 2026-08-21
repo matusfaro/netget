@@ -274,12 +274,21 @@ impl Modal {
             }
             Modal::Composer(composer) => {
                 let rows = match composer.chosen {
-                    // Parameter form: a row per field plus its help line.
-                    Some(_) => composer.fields.len() as u16 * 2 + 4,
+                    // Parameter form: a row per field, the help line under the
+                    // selected one (which can wrap to three), the heading (which
+                    // wraps too for long descriptions), or the raw JSON text.
+                    Some(_) => match &composer.raw_json {
+                        Some(raw) => raw.lines().count() as u16 + 5,
+                        None => composer.fields.len() as u16 + 9,
+                    },
                     // Action list: one row each, plus the heading.
                     None => composer.actions.len() as u16 + 3,
                 };
-                ModalSize::new(70, 75, 112, rows + CHROME)
+                // The validation line ("'code' is required") lives below the
+                // fields; without room for it the popup clipped it and a send
+                // with an empty required field looked like nothing happened.
+                let error = if composer.error.is_some() { 2 } else { 0 };
+                ModalSize::new(70, 75, 112, rows + error + CHROME)
             }
             Modal::Intercept(model) => {
                 let payload = model
