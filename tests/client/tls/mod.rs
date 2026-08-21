@@ -2,3 +2,5 @@
 
 #[cfg(all(test, feature = "tls"))]
 pub mod e2e_test;
+#[cfg(all(test, feature = "tls"))]
+mod command_channel_test;

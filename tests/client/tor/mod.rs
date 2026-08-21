@@ -5,3 +5,6 @@ pub mod e2e_test;
 
 #[cfg(all(test, feature = "tor"))]
 pub mod test;
+
+#[cfg(all(test, feature = "tor"))]
+mod command_channel_test;
