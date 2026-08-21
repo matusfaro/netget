@@ -183,7 +183,11 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
         5) Respond to DATA with '354 Start mail input' \
         6) After mail data ending with '.', respond with '250 Message accepted'";
 
-    // Start the server with mocks
+    // Start the server with mocks. Every step of the transaction is an `smtp_command`
+    // event and must be mocked: with only the startup call mocked (the previous state of
+    // this test), every event hit the mock unmatched (HTTP 500), the greeting failed
+    // closed with a 421 that closes the session (RFC 5321 §3.1), and the test's later
+    // writes died on a broken pipe before `verify_mocks` was ever reached.
     let config = helpers::NetGetConfig::new(prompt).with_mock(|mock| {
         mock.on_instruction_containing("listen on port")
             .and_instruction_containing("smtp")
@@ -195,6 +199,45 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
                     "base_stack": "SMTP",
                     "instruction": prompt
                 }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("smtp_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                {
+                    "type": "send_smtp_greeting",
+                    "hostname": "mail.test",
+                    "message": "ESMTP Service Ready"
+                }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("smtp_command")
+            .and_event_data_contains("command", "EHLO")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_smtp_ok", "message": "OK" }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("smtp_command")
+            .and_event_data_contains("command", "MAIL FROM")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_smtp_ok", "message": "Sender OK" }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("smtp_command")
+            .and_event_data_contains("command", "RCPT TO")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_smtp_ok", "message": "Recipient OK" }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("smtp_command")
+            .and_event_data_contains("command", "DATA")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_smtp_start_data" }
             ]))
             .expect_calls(1)
             .and()
@@ -210,18 +253,37 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
+    // One step of the transaction: read exactly one reply line and require the expected
+    // code. The former "print and shrug" arms let the whole transaction fail silently.
+    async fn expect_reply<R: tokio::io::AsyncBufRead + Unpin>(
+        reader: &mut R,
+        step: &str,
+        code: &str,
+    ) -> E2EResult<()> {
+        let mut line = String::new();
+        match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
+            Ok(Ok(n)) if n > 0 => {
+                println!("  Response: {}", line.trim());
+                assert!(
+                    line.starts_with(code),
+                    "{step}: expected reply code {code}, got: {line}"
+                );
+                Ok(())
+            }
+            Ok(Ok(_)) => panic!("{step}: connection closed without a reply"),
+            Ok(Err(e)) => panic!("{step}: read error: {e}"),
+            Err(_) => panic!("{step}: no reply within 10s"),
+        }
+    }
+
     // Read greeting
-    let mut line = String::new();
-    let _ = tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await;
-    println!("  Response: {}", line.trim());
+    expect_reply(&mut reader, "greeting", "220").await?;
 
     // Send EHLO
     println!("Sending: EHLO client.test");
     write_half.write_all(b"EHLO client.test\r\n").await?;
     write_half.flush().await?;
-    line.clear();
-    let _ = tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await;
-    println!("  Response: {}", line.trim());
+    expect_reply(&mut reader, "EHLO", "250").await?;
 
     // Send MAIL FROM
     println!("Sending: MAIL FROM:<sender@test.com>");
@@ -229,16 +291,8 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
         .write_all(b"MAIL FROM:<sender@test.com>\r\n")
         .await?;
     write_half.flush().await?;
-    line.clear();
-    match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
-        Ok(Ok(n)) if n > 0 => {
-            println!("  Response: {}", line.trim());
-            if line.contains("250") {
-                println!("  ✓ MAIL FROM accepted");
-            }
-        }
-        _ => {}
-    }
+    expect_reply(&mut reader, "MAIL FROM", "250").await?;
+    println!("  ✓ MAIL FROM accepted");
 
     // Send RCPT TO
     println!("Sending: RCPT TO:<recipient@test.com>");
@@ -246,31 +300,15 @@ async fn test_smtp_mail_transaction() -> E2EResult<()> {
         .write_all(b"RCPT TO:<recipient@test.com>\r\n")
         .await?;
     write_half.flush().await?;
-    line.clear();
-    match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
-        Ok(Ok(n)) if n > 0 => {
-            println!("  Response: {}", line.trim());
-            if line.contains("250") {
-                println!("  ✓ RCPT TO accepted");
-            }
-        }
-        _ => {}
-    }
+    expect_reply(&mut reader, "RCPT TO", "250").await?;
+    println!("  ✓ RCPT TO accepted");
 
     // Send DATA
     println!("Sending: DATA");
     write_half.write_all(b"DATA\r\n").await?;
     write_half.flush().await?;
-    line.clear();
-    match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
-        Ok(Ok(n)) if n > 0 => {
-            println!("  Response: {}", line.trim());
-            if line.contains("354") {
-                println!("  ✓ DATA command accepted");
-            }
-        }
-        _ => {}
-    }
+    expect_reply(&mut reader, "DATA", "354").await?;
+    println!("  ✓ DATA command accepted");
 
     println!("✓ SMTP transaction flow tested");
 

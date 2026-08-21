@@ -268,14 +268,14 @@ async fn test_tracker_error_response() -> E2EResult<()> {
 /// live connection state after the request completes.
 #[tokio::test]
 async fn tracker_connection_stats_are_recorded() {
-    use netget::cli::management::ServerForm;
-    use netget::state::app_state::AppState;
+    use ::netget::cli::management::ServerForm;
+    use ::netget::state::app_state::AppState;
     use tokio::sync::mpsc;
 
     // AppState whose LLM points nowhere; nothing here needs a model.
     let state = AppState::new_with_options(false, false, "http://127.0.0.1:1".to_string());
     state
-        .set_llm_client(netget::llm::OllamaClient::new(
+        .set_llm_client(::netget::llm::OllamaClient::new(
             "http://127.0.0.1:1".to_string(),
         ))
         .await;

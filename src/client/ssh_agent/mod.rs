@@ -325,6 +325,17 @@ impl SshAgentClient {
                                                                         ClientStatus::Disconnected,
                                                                     )
                                                                     .await;
+                                                                // This early return leaves the
+                                                                // read loop, so the after-loop
+                                                                // cleanup below never runs on this
+                                                                // path — drop the command handle
+                                                                // here too, or a dashboard [ send ]
+                                                                // keeps being offered on a dead
+                                                                // client (idempotent with the
+                                                                // after-loop removal).
+                                                                app_state
+                                                                    .remove_client_handle(client_id)
+                                                                    .await;
                                                                 return;
                                                             }
                                                             Ok(ClientActionResult::WaitForMore) => {

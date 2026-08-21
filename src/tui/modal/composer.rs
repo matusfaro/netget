@@ -41,11 +41,16 @@ impl ComposerTarget {
 }
 
 /// How a parameter is edited. Everything is text on the wire; this only
-/// decides the control — a boolean is a toggle, not a word you have to spell.
+/// decides the control — a boolean is a toggle, not a word you have to spell,
+/// and a closed value set is a selector, not a spelling test either.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {
     Text,
     Bool,
+    /// The parameter declares a closed set of valid values
+    /// (`Parameter::choices`, e.g. tcp's `encoding`: utf8 | hex).
+    /// Enter/Space/←/→ cycle through them; the pick submits as a plain string.
+    Choice,
 }
 
 impl FieldKind {
@@ -75,6 +80,8 @@ pub struct ComposerField {
     pub help: String,
     pub required: bool,
     pub kind: FieldKind,
+    /// The valid values of a [`FieldKind::Choice`] field; empty otherwise.
+    pub choices: Vec<String>,
 }
 
 impl ComposerField {
@@ -85,6 +92,40 @@ impl ComposerField {
             "false".to_string()
         } else {
             "true".to_string()
+        };
+    }
+
+    /// Step a choice field to the next (or previous) valid value.
+    ///
+    /// An optional field cycles through "unset" too, so the parameter can be
+    /// omitted again after picking; a required one only ever moves between the
+    /// valid values — there is nothing meaningful for it to go back to.
+    pub fn cycle_choice(&mut self, backward: bool) {
+        if self.choices.is_empty() {
+            return;
+        }
+        let len = self.choices.len();
+        let current = self.choices.iter().position(|c| c == self.value.trim());
+        self.value = match (current, backward) {
+            (None, false) => self.choices[0].clone(),
+            (None, true) => self.choices[len - 1].clone(),
+            (Some(i), false) if i + 1 < len => self.choices[i + 1].clone(),
+            (Some(i), true) if i > 0 => self.choices[i - 1].clone(),
+            // Off either end: a required field wraps, an optional one unsets.
+            (Some(_), false) => {
+                if self.required {
+                    self.choices[0].clone()
+                } else {
+                    String::new()
+                }
+            }
+            (Some(_), true) => {
+                if self.required {
+                    self.choices[len - 1].clone()
+                } else {
+                    String::new()
+                }
+            }
         };
     }
 }
@@ -246,6 +287,12 @@ impl ComposerModel {
                         other => other.to_string(),
                     })
                     .unwrap_or_default();
+                let choices = param.choices().unwrap_or_default();
+                let kind = if !choices.is_empty() {
+                    FieldKind::Choice
+                } else {
+                    FieldKind::from_type_hint(&param.type_hint)
+                };
                 ComposerField {
                     name: param.name.clone(),
                     value: String::new(),
@@ -256,7 +303,8 @@ impl ComposerModel {
                     },
                     help: format!("{} ({})", param.description, param.type_hint),
                     required: param.required,
-                    kind: FieldKind::from_type_hint(&param.type_hint),
+                    kind,
+                    choices,
                 }
             })
             .collect();
@@ -290,13 +338,14 @@ impl ComposerModel {
         self.fields.get(self.selected)
     }
 
-    /// Start editing the selected field — or, for a boolean, just flip it.
+    /// Start editing the selected field — or, for a boolean, just flip it,
+    /// and for a choice field, step to the next valid value.
     pub fn begin_edit(&mut self) {
         if let Some(field) = self.fields.get_mut(self.selected) {
-            if field.kind == FieldKind::Bool {
-                field.toggle();
-            } else {
-                self.editing = Some(field.value.clone());
+            match field.kind {
+                FieldKind::Bool => field.toggle(),
+                FieldKind::Choice => field.cycle_choice(false),
+                FieldKind::Text => self.editing = Some(field.value.clone()),
             }
         }
     }
@@ -351,9 +400,14 @@ impl ComposerModel {
                 }
                 continue;
             }
-            // Keep JSON types where the text parses as JSON; otherwise string.
-            let value = serde_json::from_str::<serde_json::Value>(raw)
-                .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()));
+            // A picked choice always submits as the plain string it displays;
+            // everything else keeps JSON types where the text parses as JSON.
+            let value = if field.kind == FieldKind::Choice {
+                serde_json::Value::String(raw.to_string())
+            } else {
+                serde_json::from_str::<serde_json::Value>(raw)
+                    .unwrap_or_else(|_| serde_json::Value::String(raw.to_string()))
+            };
             map.insert(field.name.clone(), value);
         }
         Ok(serde_json::Value::Object(map))

@@ -8,7 +8,7 @@ use crate::logging::emit::Log;
 use crate::protocol::Event;
 use crate::server::connection::ConnectionId;
 use crate::state::app_state::AppState;
-use actions::{RedisProtocol, REDIS_COMMAND_EVENT};
+use actions::{encode_error, RedisProtocol, REDIS_COMMAND_EVENT};
 use anyhow::Result;
 use redis_protocol::resp2::decode::decode;
 use redis_protocol::resp2::types::OwnedFrame as Frame;
@@ -196,8 +196,10 @@ impl RedisHandler {
         // Peer messaging: "message this peer" / "disconnect this peer" inject actions into
         // THIS connection through the same executor the LLM path uses. Registered before the
         // first read, so a manual `*` rule parking the first command still leaves the
-        // operator able to reach the connection. Note the Custom-result gap documented in
-        // CLAUDE.md: only `close_this_connection` produces wire effect through this path.
+        // operator able to reach the connection. Every reply verb returns
+        // `ActionResult::Output` with the RESP bytes pre-encoded (see actions.rs), so the
+        // generic peer task writes injected replies to the wire; `close_connection`
+        // half-closes.
         if let Some(server_id) = self.server_id {
             let peer_rx = crate::server::peer_support::register_peer_channel(
                 &self.app_state,
@@ -312,84 +314,39 @@ impl RedisHandler {
 
                         // Collect the RESP bytes the actions produced, then write once so
                         // connection stats stay accurate and a close request still flushes
-                        // whatever the LLM asked us to say first.
+                        // whatever the LLM asked us to say first. The actions arrive already
+                        // RESP-encoded as `ActionResult::Output` — the encoding lives once,
+                        // in `actions.rs::execute_action`, shared with peer injection.
                         let mut response = Vec::new();
                         let mut close_after_write = false;
 
                         match llm_result {
                             Ok(execution_result) => {
-                                for result in execution_result.protocol_results {
+                                let mut stack: Vec<ActionResult> =
+                                    execution_result.protocol_results;
+                                stack.reverse();
+                                while let Some(result) = stack.pop() {
                                     match result {
-                                        ActionResult::Custom { name, data } => {
-                                            match name.as_str() {
-                                                "redis_simple_string" => {
-                                                    let value = data
-                                                        .get("value")
-                                                        .and_then(|v| v.as_str())
-                                                        .unwrap_or("");
-                                                    response.extend_from_slice(
-                                                        &encode_simple_string(value),
-                                                    );
-                                                }
-                                                "redis_bulk_string" => {
-                                                    let value = data.get("value");
-                                                    let resp = if let Some(v) = value {
-                                                        if v.is_null() {
-                                                            encode_null()
-                                                        } else if let Some(s) = v.as_str() {
-                                                            encode_bulk_string(s.as_bytes())
-                                                        } else {
-                                                            encode_bulk_string(
-                                                                v.to_string().as_bytes(),
-                                                            )
-                                                        }
-                                                    } else {
-                                                        encode_null()
-                                                    };
-                                                    response.extend_from_slice(&resp);
-                                                }
-                                                "redis_array" => {
-                                                    let values = data
-                                                        .get("values")
-                                                        .and_then(|v| v.as_array())
-                                                        .cloned()
-                                                        .unwrap_or_default();
-                                                    response
-                                                        .extend_from_slice(&encode_array(&values));
-                                                }
-                                                "redis_integer" => {
-                                                    let value = data
-                                                        .get("value")
-                                                        .and_then(|v| v.as_i64())
-                                                        .unwrap_or(0);
-                                                    response
-                                                        .extend_from_slice(&encode_integer(value));
-                                                }
-                                                "redis_error" => {
-                                                    let message = data
-                                                        .get("message")
-                                                        .and_then(|v| v.as_str())
-                                                        .unwrap_or("Unknown error");
-                                                    response
-                                                        .extend_from_slice(&encode_error(message));
-                                                }
-                                                "redis_null" => {
-                                                    response.extend_from_slice(&encode_null());
-                                                }
-                                                other => {
-                                                    // A Redis action that produced a result name
-                                                    // this loop does not encode would leave the
-                                                    // client hanging - make that loud.
-                                                    warn!(
-                                                        "Redis: no RESP encoding for action result '{}', client will receive nothing",
-                                                        other
-                                                    );
-                                                }
+                                        ActionResult::Output(bytes) => {
+                                            response.extend_from_slice(&bytes);
+                                        }
+                                        ActionResult::Multiple(items) => {
+                                            for inner in items.into_iter().rev() {
+                                                stack.push(inner);
                                             }
                                         }
                                         ActionResult::CloseConnection => {
                                             debug!("Redis closing connection");
                                             close_after_write = true;
+                                        }
+                                        ActionResult::Custom { name, .. } => {
+                                            // No Redis action returns Custom any more; one
+                                            // reappearing would silently write nothing, so
+                                            // make that loud.
+                                            warn!(
+                                                "Redis: action result '{}' is Custom, not Output; client will receive nothing for it",
+                                                name
+                                            );
                                         }
                                         _ => {
                                             // Other action results are informational
@@ -495,34 +452,6 @@ fn frame_to_command_string(frame: &Frame) -> String {
     }
 }
 
-/// Encode a simple string response ("+OK\r\n")
-fn encode_simple_string(s: &str) -> Vec<u8> {
-    format!("+{}\r\n", s).into_bytes()
-}
-
-/// Encode a bulk string response ("$5\r\nhello\r\n")
-fn encode_bulk_string(bytes: &[u8]) -> Vec<u8> {
-    let mut result = format!("${}\r\n", bytes.len()).into_bytes();
-    result.extend_from_slice(bytes);
-    result.extend_from_slice(b"\r\n");
-    result
-}
-
-/// Encode a null bulk string ("$-1\r\n")
-fn encode_null() -> Vec<u8> {
-    b"$-1\r\n".to_vec()
-}
-
-/// Encode an integer response (":42\r\n")
-fn encode_integer(i: i64) -> Vec<u8> {
-    format!(":{}\r\n", i).into_bytes()
-}
-
-/// Encode an error response ("-ERR message\r\n")
-fn encode_error(msg: &str) -> Vec<u8> {
-    format!("-{}\r\n", msg).into_bytes()
-}
-
 /// The RESP simple-error payload to send when the LLM backend fails.
 ///
 /// The text is a category, never the error itself (`crate::utils::wire_failure`). That also
@@ -537,45 +466,4 @@ fn redis_error_message(err: &anyhow::Error, overloaded: bool) -> String {
     } else {
         format!("ERR {text}")
     }
-}
-
-/// Encode an array response.
-///
-/// The element mapping is part of the `redis_array` action contract documented to the LLM:
-/// strings become bulk strings, integers become RESP integers, booleans become the bulk
-/// strings `"1"`/`"0"`, null becomes a nil bulk string, and nested arrays/objects are
-/// serialized to JSON and sent as a bulk string (RESP2 has no JSON type).
-fn encode_array(values: &[serde_json::Value]) -> Vec<u8> {
-    let mut result = format!("*{}\r\n", values.len()).into_bytes();
-
-    for value in values {
-        match value {
-            serde_json::Value::String(s) => {
-                result.extend_from_slice(&encode_bulk_string(s.as_bytes()));
-            }
-            serde_json::Value::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    result.extend_from_slice(&encode_integer(i));
-                } else {
-                    // Encode as bulk string
-                    let s = n.to_string();
-                    result.extend_from_slice(&encode_bulk_string(s.as_bytes()));
-                }
-            }
-            serde_json::Value::Bool(b) => {
-                let s = if *b { "1" } else { "0" };
-                result.extend_from_slice(&encode_bulk_string(s.as_bytes()));
-            }
-            serde_json::Value::Null => {
-                result.extend_from_slice(&encode_null());
-            }
-            serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-                // Nested arrays/objects - encode as bulk string JSON
-                let s = value.to_string();
-                result.extend_from_slice(&encode_bulk_string(s.as_bytes()));
-            }
-        }
-    }
-
-    result
 }

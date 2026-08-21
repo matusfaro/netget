@@ -263,7 +263,12 @@ async actions (user-triggered) and sync actions (network-event-triggered), in
    through the same path as an LLM failure. The dashboard shows parked events as
    "⚠ waiting for YOUR answer" rows. Instances created interactively through the dashboard
    default to a `*` → manual rule — the human is there, driving; instances the model creates
-   through its own tools get no such default.
+   through its own tools get no such default. **Dashboard-created clients refine this**: the
+   `*` → manual rule is preceded by one zero-action static rule per connect event (each
+   `<proto>_connected` id the client's registry entry declares), so establishing a connection is
+   "answered with nothing" and does not park — several clients handle their connect event inline
+   in `connect()`, so parking it would stall creation itself. Everything after the connect
+   handshake still falls through to `*` → manual. Servers keep the single `*` → manual rule.
 4. **LLM** — one model round-trip per event (the fallback when no rule matches)
 
 Scripts and static handlers are the right default for deterministic behavior (echo, canned

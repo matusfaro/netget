@@ -434,7 +434,7 @@ impl HttpProxyClient {
             // Now read data through the tunnel
             let mut buffer = vec![0u8; 8192];
 
-            loop {
+            'tunnel: loop {
                 match reader.read(&mut buffer).await {
                     Ok(0) => {
                         info!("HTTP proxy client {} disconnected", client_id);
@@ -517,8 +517,19 @@ impl HttpProxyClient {
                                                             }
                                                         }
                                                         ClientActionResult::Disconnect => {
+                                                            // Labeled: a bare `break` here only
+                                                            // exits the actions for-loop and the
+                                                            // tunnel keeps running.
                                                             info!("HTTP proxy client {} disconnecting", client_id);
-                                                            break;
+                                                            app_state_clone
+                                                                .update_client_status(client_id, ClientStatus::Disconnected)
+                                                                .await;
+                                                            let _ = status_tx_clone.send(format!(
+                                                                "[CLIENT] HTTP proxy client {} disconnected",
+                                                                client_id
+                                                            ));
+                                                            let _ = status_tx_clone.send("__UPDATE_UI__".to_string());
+                                                            break 'tunnel;
                                                         }
                                                         _ => {}
                                                     }

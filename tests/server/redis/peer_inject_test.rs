@@ -3,12 +3,13 @@
 //! calls - the server answers through a `*` static handler.
 //!
 //! Two things are pinned here:
+//! - Redis's reply verbs (`redis_simple_string` etc.) return `ActionResult::Output` with the
+//!   RESP bytes pre-encoded, so an injected reply verb reports `Sent` and the bytes arrive at
+//!   the client socket byte-identically to the read-loop path (single shared encoder in
+//!   `src/server/redis/actions.rs`).
 //! - `close_connection` (what "disconnect this peer" injects) half-closes the socket from
 //!   outside the connection task, the handle is removed, and the connection's counters were
 //!   live.
-//! - Redis's reply verbs (`redis_simple_string` etc.) return `ActionResult::Custom`, which the
-//!   generic peer task reports as `Executed` WITHOUT writing anything. That gap is deliberate
-//!   (see `src/server/redis/CLAUDE.md`); if it is ever closed, flip the assertion to `Sent`.
 //!
 //! Run with:
 //!   ./cargo-isolated.sh test --no-default-features --features redis --test server -- redis::peer_inject --test-threads=100
@@ -66,7 +67,7 @@ async fn wait_for_peer_handle(state: &AppState, id: ServerId) -> u32 {
 }
 
 #[tokio::test]
-async fn injected_redis_close_sends_eof_and_reply_verbs_report_the_custom_gap() {
+async fn injected_redis_reply_verbs_reach_the_socket_and_close_sends_eof() {
     let state = new_state().await;
     let (tx, _rx) = mpsc::unbounded_channel();
 
@@ -117,8 +118,9 @@ async fn injected_redis_close_sends_eof_and_reply_verbs_report_the_custom_gap() 
     assert_eq!(conn_state.packets_received, 1);
     assert_eq!(conn_state.packets_sent, 1);
 
-    // The Custom-result gap: the reply verb is accepted and executed, but the generic peer
-    // task has no bytes to write, so nothing reaches the socket.
+    // An injected reply verb: the executor returns the RESP bytes as
+    // `ActionResult::Output`, the generic peer task writes them, and the client reads
+    // exactly what the read-loop path would have produced ("+injected\r\n").
     let outcome = state
         .send_to_peer(
             server_id,
@@ -129,9 +131,27 @@ async fn injected_redis_close_sends_eof_and_reply_verbs_report_the_custom_gap() 
         .await
         .expect("send_to_peer reply verb");
     assert!(
-        matches!(outcome, ClientSendOutcome::Executed { .. }),
-        "redis reply verbs return ActionResult::Custom; expected Executed, got {outcome:?}"
+        matches!(outcome, ClientSendOutcome::Sent { bytes_sent: 11 }),
+        "expected Sent with 11 bytes (+injected\\r\\n), got {outcome:?}"
     );
+    let n = tokio::time::timeout(Duration::from_secs(5), stream.read(&mut buf))
+        .await
+        .expect("injected reply within 5s")
+        .expect("read injected reply");
+    assert_eq!(&buf[..n], b"+injected\r\n");
+
+    // Injected bytes count in the connection's write counters like any other write.
+    let server = state.get_server(server_id).await.expect("server");
+    let conn_state = server
+        .connections
+        .values()
+        .find(|c| c.id.as_u32() == conn)
+        .expect("connection tracked");
+    assert_eq!(
+        conn_state.bytes_sent, 18,
+        "PONG (7) + injected reply (11) counted as writes"
+    );
+    assert_eq!(conn_state.packets_sent, 2);
 
     // "disconnect this peer" injects the generic `close_connection` (not the model-facing
     // `close_this_connection`): half-close from outside, the socket reads EOF.

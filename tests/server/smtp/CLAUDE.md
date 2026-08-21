@@ -15,7 +15,10 @@ Tests SMTP server with raw TCP clients validating RFC 5321 command/response sequ
 
 - `test_smtp_greeting()`: 1 startup call (greeting on connect)
 - `test_smtp_ehlo()`: 1 startup call + 1 EHLO command
-- `test_smtp_mail_transaction()`: 1 startup call + 5 commands (EHLO, MAIL FROM, RCPT TO, DATA, mail body)
+- `test_smtp_mail_transaction()`: 1 startup call + 5 mocked `smtp_command` events (greeting on
+  connect, EHLO, MAIL FROM, RCPT TO, DATA). Every step **must** have an event mock: an
+  unmatched event returns HTTP 500 from the mock, the greeting then fails closed with a 421
+  that closes the session, and every later write dies on a broken pipe.
 - `test_smtp_quit()`: 1 startup call + 1 QUIT command
 - `test_smtp_error_handling()`: 1 startup call + 1 invalid command
 - **Total: 15 LLM calls** (5 startups + 10 command calls)
@@ -59,8 +62,10 @@ Tests SMTP server with raw TCP clients validating RFC 5321 command/response sequ
 
 ## Known Issues
 
-- **Lenient assertions** - Tests check for response codes anywhere in output (not just at start)
-- Some tests may pass even if responses are malformed
+- **Lenient assertions** - Some tests still check for response codes anywhere in output;
+  `test_smtp_greeting` and `test_smtp_mail_transaction` now assert `starts_with` on each
+  reply code and fail on a missing/timed-out reply instead of printing a note
+- Some of the remaining tolerant tests may pass even if responses are malformed
 - LLM occasionally forgets to send greeting on connection
 - Timeouts set to 10 seconds to accommodate slow LLM responses
 

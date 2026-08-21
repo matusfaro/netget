@@ -54,6 +54,17 @@ ensures complete protocol correctness.
 
 **Total for Redis test suite: 13 LLM calls** (slightly over 10, could be optimized by consolidating)
 
+### Test: `peer_inject_test::injected_redis_reply_verbs_reach_the_socket_and_close_sends_eof`
+
+- **0 LLM calls** — the server answers through a `*` static handler and the mock backend URL
+  is unreachable, so any accidental model call fails the test.
+- Covers dashboard injection (`AppState::send_to_peer`): a real PING/PONG round-trip proves
+  counters move; an injected `redis_simple_string` reports `Sent { bytes_sent: 11 }` and the
+  literal `+injected\r\n` arrives at the connected socket (the RESP encoding lives once in
+  `src/server/redis/actions.rs::execute_action`, shared with the read loop); injected bytes
+  are counted in `bytes_sent`/`packets_sent`; `close_connection` half-closes (client reads
+  EOF) and the peer handle is released.
+
 ## Scripting Usage
 
 **Scripting Disabled**: All tests use `ServerConfig::new()` which disables scripting by default. Redis tests rely on

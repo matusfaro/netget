@@ -113,6 +113,57 @@ fn create_form_offers_each_field_once() {
     );
 }
 
+/// The interactive defaults, pinned. A server parks everything for the human
+/// (`*` → manual). A client parks everything *except* its connect event: that
+/// one is answered with nothing by a preceding zero-action static rule,
+/// because several clients (TCP among them) handle it inline in `connect()` —
+/// parking it stalled creation itself on a question with no useful answer.
+/// Order matters: `EventHandlerConfig::find_handler` is first-match-wins, so
+/// the connect rule must precede the wildcard.
+#[test]
+fn create_defaults_route_the_connect_event_past_the_human() {
+    let read_handlers = |form: &FormModel| -> serde_json::Value {
+        let raw = form
+            .fields
+            .iter()
+            .find(|f| f.target == FieldTarget::EventHandlersJson)
+            .expect("create form carries the event_handlers field")
+            .value
+            .clone();
+        serde_json::from_str(&raw).expect("default event_handlers is valid JSON")
+    };
+
+    // Server: exactly the one manual wildcard, unchanged.
+    let server_form = FormModel::for_create(Section::Servers, "TCP", None);
+    let handlers = read_handlers(&server_form);
+    let handlers = handlers.as_array().expect("array");
+    assert_eq!(handlers.len(), 1, "server default is a single rule");
+    assert_eq!(handlers[0]["event_pattern"], "*");
+    assert_eq!(handlers[0]["handler"]["type"], "manual");
+
+    // Client: connect first (static, zero actions), then the manual wildcard.
+    let client_form = FormModel::for_create(Section::Clients, "TCP", None);
+    let handlers = read_handlers(&client_form);
+    let handlers = handlers.as_array().expect("array");
+    assert_eq!(
+        handlers.len(),
+        2,
+        "client default is connect-rule + manual wildcard: {handlers:?}"
+    );
+    assert_eq!(
+        handlers[0]["event_pattern"], "tcp_connected",
+        "the connect rule must come first so first-match-wins picks it"
+    );
+    assert_eq!(handlers[0]["handler"]["type"], "static");
+    assert_eq!(
+        handlers[0]["handler"]["actions"],
+        serde_json::json!([]),
+        "the connect answer is deliberately empty — acknowledge, say nothing"
+    );
+    assert_eq!(handlers[1]["event_pattern"], "*");
+    assert_eq!(handlers[1]["handler"]["type"], "manual");
+}
+
 /// The one case that legitimately cannot be defaulted: a client has nowhere to
 /// connect until it is told. It must say so rather than fail silently.
 #[test]
@@ -167,41 +218,24 @@ async fn create_server_then_client_then_send_without_an_llm() {
         "TCP has a client counterpart, so [+ client] must be offered"
     );
 
-    // 3. Create the client aimed at our own server. Spawned, exactly as the
-    //    dashboard spawns it (see `crate::tui::uimsg`): the client was created
-    //    interactively, so it defaults to MANUAL routing, and its
-    //    tcp_connected event parks for the human — `create` does not return
-    //    until that question is answered.
+    // 3. Create the client aimed at our own server. The client was created
+    //    interactively, so it defaults to MANUAL routing — but its connect
+    //    event is covered by a preceding zero-action static rule ("answer
+    //    with nothing"), so establishing the connection never parks. It used
+    //    to: the `*` → manual rule matched `tcp_connected`, which the TCP
+    //    client handles inline in `connect()`, so `apply` sat waiting for a
+    //    human to acknowledge a question nobody needed answered.
     let mut client_form = FormModel::for_create(Section::Clients, "TCP", None);
     client_form.set_field_value(&FieldTarget::RemoteAddr, format!("127.0.0.1:{port}"));
-    let apply = {
-        let state = state.clone();
-        let tx = tx.clone();
-        tokio::spawn(async move { client_form.apply(&state, llm(), &tx).await })
-    };
-
-    // The parked connect event appears as a pending intercept; answer it with
-    // nothing ("acknowledge, say nothing") — the exact flow the dashboard's
-    // ⚠ row + [ Send response ] performs.
-    let mut answered = false;
-    for _ in 0..200 {
-        if let Some(view) = state.list_intercepts().await.first() {
-            state
-                .resolve_intercept(view.id, Vec::new())
-                .await
-                .expect("answer the parked connect event");
-            answered = true;
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(30)).await;
-    }
-    assert!(
-        answered,
-        "an interactively created client should park its connect event for the human"
-    );
-
-    let summary = apply.await.expect("task").expect("create client");
+    let summary = client_form
+        .apply(&state, llm(), &tx)
+        .await
+        .expect("create client");
     assert!(summary.contains("Connected client"), "{summary}");
+    assert!(
+        state.list_intercepts().await.is_empty(),
+        "the connect event must not park under the default client routing"
+    );
 
     let client_id = state.get_all_client_ids().await[0];
     for _ in 0..100 {
@@ -212,7 +246,7 @@ async fn create_server_then_client_then_send_without_an_llm() {
     }
     assert!(
         state.has_client_handle(client_id).await,
-        "the command channel must register even while the connect event is parked"
+        "the command channel must register as part of connect()"
     );
 
     // 4. Compose a send from the protocol's own vocabulary and deliver it.
@@ -346,6 +380,81 @@ async fn create_server_then_client_then_send_without_an_llm() {
             .iter()
             .any(|e| e.event_type == "injected_action" && e.connection_id == Some(conn.id)),
         "the server's request log should record the peer message"
+    );
+}
+
+/// A parameter that declares a closed value set (`Parameter::with_choices`)
+/// is a selector in the composer, not a free-text field: Enter/Space cycle
+/// the valid values, the pick submits as a plain string, and an optional
+/// field can cycle back to unset. The worked example is tcp's `encoding`
+/// (utf8 | hex) — the field a model once had to spell correctly from prose.
+#[test]
+fn a_choice_parameter_cycles_instead_of_editing_text() {
+    use netget::llm::actions::protocol_trait::Protocol;
+    use netget::tui::modal::composer::FieldKind;
+
+    let tcp = netget::protocol::server_registry::registry()
+        .get("TCP")
+        .expect("TCP server registered in a tcp-featured build");
+    let actions = tcp.get_sync_actions();
+
+    // The declaration reaches the native tool schemas as an enum.
+    let send = actions
+        .iter()
+        .find(|a| a.name == "send_tcp_data")
+        .expect("tcp declares send_tcp_data");
+    let schema = send.to_tool_schema();
+    assert_eq!(
+        schema["function"]["parameters"]["properties"]["encoding"]["enum"],
+        serde_json::json!(["utf8", "hex"]),
+        "a choice set must be advertised as a JSON-Schema enum"
+    );
+
+    // …and reaches the composer as a cycling selector.
+    let mut composer = ComposerModel::for_peer(ServerId::new(1), 1, "TCP", actions);
+    composer.selected = composer
+        .actions
+        .iter()
+        .position(|a| a.name == "send_tcp_data")
+        .unwrap();
+    composer.choose();
+
+    let encoding = composer
+        .fields
+        .iter()
+        .position(|f| f.name == "encoding")
+        .expect("send_tcp_data has an encoding field");
+    assert_eq!(composer.fields[encoding].kind, FieldKind::Choice);
+    assert_eq!(composer.fields[encoding].choices, vec!["utf8", "hex"]);
+
+    composer.selected = encoding;
+    composer.begin_edit();
+    assert!(
+        composer.editing.is_none(),
+        "a choice field cycles in place; it never opens the text editor"
+    );
+    assert_eq!(composer.fields[encoding].value, "utf8");
+    composer.begin_edit();
+    assert_eq!(composer.fields[encoding].value, "hex");
+
+    // The pick submits as a plain string next to the other fields.
+    let data = composer
+        .fields
+        .iter()
+        .position(|f| f.name == "data")
+        .expect("send_tcp_data has a data field");
+    composer.fields[data].value = "48656c6c6f".to_string();
+    let action = composer.build_action().expect("build action");
+    assert_eq!(action["encoding"], "hex");
+
+    // Optional field: one more step wraps back to unset, and the parameter
+    // is then omitted rather than sent empty.
+    composer.begin_edit();
+    assert_eq!(composer.fields[encoding].value, "");
+    let action = composer.build_action().expect("build action");
+    assert!(
+        action.get("encoding").is_none(),
+        "an unset optional choice must be omitted: {action}"
     );
 }
 

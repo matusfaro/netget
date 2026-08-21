@@ -546,7 +546,7 @@ assert_eq!(rows[0].get::<usize, String>(1)?, "Steven");
 5. **Day 5:** Bug fixes + documentation
    - Fix edge cases discovered in testing
    - Complete CLAUDE.md
-   - Update ORACLE_PROTOCOL_PLAN.md if needed
+   - Update docs/archive/ORACLE_PROTOCOL_PLAN.md if needed
 
 ---
 
@@ -657,4 +657,4 @@ However, NetGet's **LLM-controlled response pattern** makes a simplified impleme
 
 **Last Updated:** 2025-11-20
 **Status:** Planning Complete, Implementation Not Started
-**See Also:** `/home/user/netget/ORACLE_PROTOCOL_PLAN.md` (comprehensive plan)
+**See Also:** `docs/archive/ORACLE_PROTOCOL_PLAN.md` (comprehensive plan)

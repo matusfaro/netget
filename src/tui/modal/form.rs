@@ -171,17 +171,26 @@ impl FormModel {
         );
         // An instance created interactively defaults to MANUAL routing: every
         // event parks at the dashboard for YOU to answer. That is the whole
-        // point of creating one by hand — you are here, driving. The rule is
-        // an ordinary `*` handler, so the routing editor can retarget it to
-        // static/script/LLM or delete it outright; instances the model creates
-        // through its own tools get no such default and keep LLM behavior.
+        // point of creating one by hand — you are here, driving. The rules are
+        // ordinary handlers, so the routing editor can retarget them to
+        // static/script/LLM or delete them outright; instances the model
+        // creates through its own tools get no such default and keep LLM
+        // behavior.
+        //
+        // Clients get one extra rule ahead of the wildcard: their connect
+        // event(s) are answered with a zero-action static handler ("answer
+        // with nothing"). Without it, `<proto>_connected` parked like any
+        // other event — and several clients handle that event inline in
+        // `connect()` before returning, so creating a client through the
+        // dashboard stalled on a question ("you connected — say anything?")
+        // that nobody needed answered before the loop could even start.
+        // Matching is first-match-wins on exact event ids (`EventPattern`
+        // knows only literal ids plus the `*`/`all` wildcard — there is no
+        // globbing), so the ids are enumerated from the protocol's own event
+        // declarations rather than written as a `*_connected` pattern.
         model.set_field_value(
             &FieldTarget::EventHandlersJson,
-            serde_json::json!([{
-                "event_pattern": "*",
-                "handler": {"type": "manual"}
-            }])
-            .to_string(),
+            default_event_handlers(section, protocol).to_string(),
         );
         model
     }
@@ -548,6 +557,48 @@ impl FormModel {
             }
         }
     }
+}
+
+/// The default routing an interactively created instance starts with.
+///
+/// Servers: one `*` → manual rule — every event waits for the human driving
+/// the dashboard.
+///
+/// Clients: the same `*` → manual rule, preceded by one zero-action static
+/// rule per connect event (`<proto>_connected`), so establishing the
+/// connection itself never parks. The connect event is bookkeeping — the
+/// interesting questions (data arrived, what do we send?) still park for the
+/// human. `EventHandlerConfig::find_handler` is first-match-wins over exact
+/// event ids ('*'/'all' are the only wildcards), which is why the ids come
+/// from the client protocol's own `get_event_types()` instead of a
+/// `*_connected` glob that nothing would ever match. A client whose connect
+/// event does not follow the `_connected` naming keeps the plain manual
+/// default.
+fn default_event_handlers(section: Section, protocol: &str) -> serde_json::Value {
+    let manual_fallback = serde_json::json!({
+        "event_pattern": "*",
+        "handler": {"type": "manual"}
+    });
+    let mut rules = Vec::new();
+    if section == Section::Clients {
+        // `resolve` rather than `get`: case-insensitive, same lookup the
+        // management paths use for a protocol the user named.
+        if let Ok(client) = crate::protocol::CLIENT_REGISTRY.resolve(protocol) {
+            for event_type in client.get_event_types() {
+                if event_type.id.ends_with("_connected") {
+                    rules.push(serde_json::json!({
+                        "event_pattern": event_type.id,
+                        // Zero actions: acknowledge the connect, say nothing —
+                        // the same answer as the intercept modal's
+                        // [ Answer with nothing ], made ahead of time.
+                        "handler": {"type": "static", "actions": []}
+                    }));
+                }
+            }
+        }
+    }
+    rules.push(manual_fallback);
+    serde_json::Value::Array(rules)
 }
 
 fn declared_params(section: Section, protocol: &str) -> Vec<ParameterDefinition> {

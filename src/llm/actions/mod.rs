@@ -409,6 +409,16 @@ impl ActionDefinition {
                 "type".to_string(),
                 serde_json::Value::String(json_type.to_string()),
             );
+            // A closed value set becomes a JSON-Schema enum, so native
+            // tool-calling backends constrain the model to the valid values.
+            if let Some(choices) = param.choices() {
+                prop.insert(
+                    "enum".to_string(),
+                    serde_json::Value::Array(
+                        choices.into_iter().map(serde_json::Value::String).collect(),
+                    ),
+                );
+            }
             prop.insert(
                 "description".to_string(),
                 serde_json::Value::String(param.description.clone()),
@@ -464,6 +474,15 @@ impl ActionDefinition {
                 "type".to_string(),
                 serde_json::Value::String(json_type.to_string()),
             );
+            // Same as `to_tool_schema`: a closed value set is advertised as an enum.
+            if let Some(choices) = param.choices() {
+                prop.insert(
+                    "enum".to_string(),
+                    serde_json::Value::Array(
+                        choices.into_iter().map(serde_json::Value::String).collect(),
+                    ),
+                );
+            }
             prop.insert(
                 "description".to_string(),
                 serde_json::Value::String(param.description.clone()),
@@ -492,7 +511,15 @@ pub struct Parameter {
     /// Parameter name (e.g., "output", "connection_id")
     pub name: String,
 
-    /// Type hint for the LLM (e.g., "string", "number", "boolean")
+    /// Type hint for the LLM (e.g., "string", "number", "boolean").
+    ///
+    /// A parameter whose value comes from a **closed set** declares it here as a
+    /// quoted alternation — `"utf8" | "hex"` — normally written via
+    /// [`Parameter::with_choices`]. [`Parameter::choices`] parses it back out.
+    /// The spelling is deliberate: it reads as a TypeScript-style literal union
+    /// in the LLM prompt, maps to `"enum"` in the native tool-calling schemas,
+    /// and cannot collide with the *type* unions some protocols already use
+    /// (`"number | string"`, `"array | object"`), whose segments are unquoted.
     pub type_hint: String,
 
     /// Description of what this parameter does
@@ -500,6 +527,59 @@ pub struct Parameter {
 
     /// Whether this parameter is required
     pub required: bool,
+}
+
+impl Parameter {
+    /// Declare the closed set of values this parameter accepts.
+    ///
+    /// Encodes the choices into `type_hint` as a quoted alternation
+    /// (`"utf8" | "hex"`), which is what [`Parameter::choices`] recognises.
+    /// The TUI composer renders such a parameter as a cycling selector instead
+    /// of a free-text field, and the native tool schemas advertise the set as a
+    /// JSON-Schema `enum`. The chosen value is always submitted as a plain
+    /// string.
+    ///
+    /// ```rust,ignore
+    /// Parameter { name: "encoding".into(), type_hint: "string".into(), … }
+    ///     .with_choices(["utf8", "hex"])
+    /// ```
+    pub fn with_choices<I, S>(mut self, choices: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        let rendered: Vec<String> = choices
+            .into_iter()
+            .map(|c| format!("\"{}\"", c.into()))
+            .collect();
+        if !rendered.is_empty() {
+            self.type_hint = rendered.join(" | ");
+        }
+        self
+    }
+
+    /// The closed set of values this parameter accepts, if it declares one.
+    ///
+    /// Recognises a `type_hint` that is a quoted alternation of two or more
+    /// literals (`"utf8" | "hex"`, as written by [`Parameter::with_choices`]).
+    /// Unquoted alternations — the *type* unions like `"number | string"` used
+    /// by jsonrpc and torrent_tracker — are deliberately not choices: they name
+    /// kinds of values, not the values themselves.
+    pub fn choices(&self) -> Option<Vec<String>> {
+        let segments: Vec<&str> = self.type_hint.split('|').map(str::trim).collect();
+        if segments.len() < 2 {
+            return None;
+        }
+        let mut values = Vec::with_capacity(segments.len());
+        for segment in segments {
+            let inner = segment.strip_prefix('"')?.strip_suffix('"')?;
+            if inner.is_empty() {
+                return None;
+            }
+            values.push(inner.to_string());
+        }
+        Some(values)
+    }
 }
 
 /// Normalize an LLM-emitted action/tool-call object into the canonical flat

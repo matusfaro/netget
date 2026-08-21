@@ -170,7 +170,7 @@ impl TcpClient {
             info!("TCP client {} read loop started", client_id);
             let mut buffer = vec![0u8; 8192];
 
-            loop {
+            'read_loop: loop {
                 let read_result = tokio::select! {
                     read = read_half.read(&mut buffer) => read,
                     Some(cmd) = command_rx.recv() => {
@@ -281,7 +281,15 @@ impl TcpClient {
                                                     }
                                                     Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
                                                         info!("TCP client {} disconnecting", client_id);
-                                                        break;
+                                                        app_state
+                                                            .update_client_status(client_id, ClientStatus::Disconnected)
+                                                            .await;
+                                                        let _ = status_tx.send(format!(
+                                                            "[CLIENT] TCP client {} disconnected",
+                                                            client_id
+                                                        ));
+                                                        let _ = status_tx.send("__UPDATE_UI__".to_string());
+                                                        break 'read_loop;
                                                     }
                                                     _ => {}
                                                 }

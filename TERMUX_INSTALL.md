@@ -624,7 +624,7 @@ Using Termux:Boot:
 | **Distribution** | Manual transfer | Play Store |
 | **Users** | Developers, power users | End users |
 
-**Current Status**: Termux binary (this guide) is ready to use. Native Android app is planned (see `ANDROID_NATIVE_PLAN.md`).
+**Current Status**: Termux binary (this guide) is ready to use. Native Android app is planned (see `docs/archive/ANDROID_NATIVE_PLAN.md`).
 
 ---
 
