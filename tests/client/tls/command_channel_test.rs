@@ -80,7 +80,9 @@ async fn injected_tls_data_reaches_the_server() {
     let state = new_state().await;
     let (tx, _rx) = mpsc::unbounded_channel();
 
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind tls listener");
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind tls listener");
     let addr = listener.local_addr().expect("listener addr");
     let acceptor = TlsAcceptor::from(server_config());
 

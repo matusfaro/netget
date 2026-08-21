@@ -411,8 +411,7 @@ fn a_choice_parameter_cycles_instead_of_editing_text() {
     );
 
     // …and reaches the composer as a cycling selector.
-    let mut composer =
-        ComposerModel::for_peer(ServerId::new(1), 1, "TCP", actions);
+    let mut composer = ComposerModel::for_peer(ServerId::new(1), 1, "TCP", actions);
     composer.selected = composer
         .actions
         .iter()

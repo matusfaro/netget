@@ -42,7 +42,8 @@ async fn send_to_client_without_a_handle_is_refused() {
         .await
         .expect_err("a client with no command handle must be refused");
     assert!(
-        err.to_string().contains("does not accept injected commands"),
+        err.to_string()
+            .contains("does not accept injected commands"),
         "unexpected error: {err}"
     );
 }

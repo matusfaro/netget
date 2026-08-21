@@ -581,7 +581,9 @@ fn default_event_handlers(section: Section, protocol: &str) -> serde_json::Value
     });
     let mut rules = Vec::new();
     if section == Section::Clients {
-        if let Some(client) = crate::protocol::CLIENT_REGISTRY.get(protocol) {
+        // `resolve` rather than `get`: case-insensitive, same lookup the
+        // management paths use for a protocol the user named.
+        if let Ok(client) = crate::protocol::CLIENT_REGISTRY.resolve(protocol) {
             for event_type in client.get_event_types() {
                 if event_type.id.ends_with("_connected") {
                     rules.push(serde_json::json!({
