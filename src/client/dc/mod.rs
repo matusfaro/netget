@@ -415,7 +415,7 @@ async fn run_dc_client_loop<R>(
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,
 {
-    // Wrap in BufReader for line-based reading
+    // Wrap in BufReader for pipe-delimited reading
     let mut reader = BufReader::new(read_half);
     // Initialize client state
     let client_state = Arc::new(Mutex::new(DcClientState {
@@ -435,7 +435,7 @@ where
     let command_rx =
         crate::client::command_support::register_command_channel(&app_state, client_id).await;
 
-    // `read_line` is not cancellation-safe, so commands are drained by their own task rather
+    // `read_until` is not cancellation-safe, so commands are drained by their own task rather
     // than a `select!` arm in the read loop. Both tasks share the write half; the channel
     // closes when the read loop removes the handle, which ends this task.
     let cmd_task = tokio::spawn(command_loop(
@@ -455,10 +455,14 @@ where
     let task_handle = tokio::spawn(async move {
         info!("DC client {} read loop started", client_id);
 
-        // Read pipe-delimited messages
+        // Read pipe-delimited messages. NMDC frames on '|', not newline — a real hub's
+        // $Lock greeting carries no '\n', so `read_line` would sit on it until the
+        // connection closed. `read_until(b'|', ..)` returns one complete message per call
+        // and BufReader keeps any bytes after the delimiter buffered for the next call,
+        // so partial messages are carried across reads correctly.
         loop {
-            let mut line = String::new();
-            match reader.read_line(&mut line).await {
+            let mut buf = Vec::new();
+            match reader.read_until(b'|', &mut buf).await {
                 Ok(0) => {
                     info!("DC client {} disconnected from hub", client_id);
                     app_state
@@ -470,35 +474,30 @@ where
                     break;
                 }
                 Ok(_) => {
-                    // DC messages can span multiple lines but are pipe-delimited
-                    // For simplicity, we'll process each pipe-delimited segment
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
+                    // Strip the trailing '|' delimiter (absent only on EOF with a partial
+                    // trailing message, which we still process). Trim whitespace so hubs
+                    // that send "|\r\n" between messages don't produce phantom segments.
+                    let message = String::from_utf8_lossy(&buf);
+                    let segment = message.trim_end_matches('|').trim();
+                    if segment.is_empty() {
                         continue;
                     }
 
-                    // Split by pipe delimiter
-                    for segment in trimmed.split('|') {
-                        if segment.is_empty() {
-                            continue;
-                        }
+                    trace!("DC client {} received: {}", client_id, segment);
 
-                        trace!("DC client {} received: {}", client_id, segment);
-
-                        // Process DC message
-                        if let Err(e) = process_dc_message(
-                            segment,
-                            &client_state,
-                            &write_half_arc,
-                            &llm_client,
-                            &app_state,
-                            &status_tx,
-                            client_id,
-                        )
-                        .await
-                        {
-                            error!("Error processing DC message: {}", e);
-                        }
+                    // Process DC message
+                    if let Err(e) = process_dc_message(
+                        segment,
+                        &client_state,
+                        &write_half_arc,
+                        &llm_client,
+                        &app_state,
+                        &status_tx,
+                        client_id,
+                    )
+                    .await
+                    {
+                        error!("Error processing DC message: {}", e);
                     }
                 }
                 Err(e) => {

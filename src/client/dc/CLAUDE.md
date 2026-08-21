@@ -82,21 +82,24 @@ Escape special characters: 0, 5, 36 ($), 96 (`), 124 (|), 126 (~)
 
 ### 5. Message Parsing
 
-DC messages are pipe-delimited and processed line-by-line:
+DC messages are framed on `|` (pipe), **not** newline — a real hub's `$Lock` greeting carries
+no `\n`, so line-based reading would stall until the connection closed. The read loop uses
+`read_until(b'|', ..)`, yielding one complete message per read; `BufReader` keeps any bytes
+after the delimiter buffered, so partial messages carry across reads:
 
 ```rust
-// Split by pipe delimiter
-for segment in line.split('|') {
-    if segment.is_empty() { continue; }
+// One pipe-terminated message per read
+reader.read_until(b'|', &mut buf).await?;
+let segment = String::from_utf8_lossy(&buf).trim_end_matches('|').trim();
+if segment.is_empty() { continue; }
 
-    if segment.starts_with("$Lock ") {
-        handle_lock_message(...);
-    } else if segment.starts_with("$Hello ") {
-        handle_hello_message(...);
-    } else if segment.starts_with("<") {
-        handle_chat_message(...);
-    } // ... etc
-}
+if segment.starts_with("$Lock ") {
+    handle_lock_message(...);
+} else if segment.starts_with("$Hello ") {
+    handle_hello_message(...);
+} else if segment.starts_with("<") {
+    handle_chat_message(...);
+} // ... etc
 ```
 
 ### 6. LLM Integration
@@ -162,7 +165,7 @@ Example:
 
 The loop registers a command channel (`command_support::register_command_channel`) before the
 read loop starts - i.e. before the `$Lock`-triggered connected-event LLM call, which a manual
-rule can park. `read_line` is not cancellation-safe, so commands are drained by a separate
+rule can park. `read_until` is not cancellation-safe, so commands are drained by a separate
 `command_loop` task (registered with `register_client_task`) sharing the `Arc<Mutex<DcWriteHalf>>`.
 Every `send_dc_*` verb yields `ClientActionResult::Custom`, so the generic arm cannot run them;
 `command_loop` routes the result through `apply_dc_action` - the same function the LLM path
