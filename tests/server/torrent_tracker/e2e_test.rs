@@ -5,6 +5,7 @@
 use crate::helpers::*;
 use serde_json::json;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Test tracker announce and scrape requests with mocks
 ///
@@ -254,4 +255,128 @@ async fn test_tracker_error_response() -> E2EResult<()> {
     server.stop().await?;
 
     Ok(())
+}
+
+/// Connection stats are recorded on a one-shot tracker request, with **zero LLM
+/// calls** (a `*` static handler answers). The tracker is HTTP-style
+/// request/response — one read, one write, then close — so it registers no peer
+/// handle (the dashboard's "message this peer" would have no live window). What
+/// it must still do is refresh `update_connection_stats`, so the dashboard rail
+/// shows real `↓ ↑` byte counts and a fresh `last_activity` rather than `↓0 ↑0`.
+///
+/// In-process (uses `netget::` APIs directly), so it can inspect the server's
+/// live connection state after the request completes.
+#[tokio::test]
+async fn tracker_connection_stats_are_recorded() {
+    use netget::cli::management::ServerForm;
+    use netget::state::app_state::AppState;
+    use tokio::sync::mpsc;
+
+    // AppState whose LLM points nowhere; nothing here needs a model.
+    let state = AppState::new_with_options(false, false, "http://127.0.0.1:1".to_string());
+    state
+        .set_llm_client(netget::llm::OllamaClient::new(
+            "http://127.0.0.1:1".to_string(),
+        ))
+        .await;
+    let (tx, _rx) = mpsc::unbounded_channel::<String>();
+
+    // Tracker that statically answers every announce, so no LLM call fires.
+    let server_form = ServerForm {
+        protocol: "torrent-tracker".to_string(),
+        port: Some(0),
+        event_handlers: Some(vec![json!({
+            "event_pattern": "*",
+            "handler": {
+                "type": "static",
+                "actions": [{
+                    "type": "send_announce_response",
+                    "interval": 1800,
+                    "complete": 1,
+                    "incomplete": 0,
+                    "compact": "{{event.compact}}",
+                    "peers": [{"ip": "127.0.0.1", "port": 51413}]
+                }]
+            }
+        })]),
+        ..Default::default()
+    };
+    let server_id = server_form
+        .create(&state, tx.clone())
+        .await
+        .expect("create torrent-tracker server");
+
+    // Wait for the listener to bind.
+    let mut port = 0u16;
+    for _ in 0..100 {
+        if let Some(s) = state.get_server(server_id).await {
+            if let Some(addr) = s.local_addr {
+                port = addr.port();
+                break;
+            }
+            if s.port != 0 {
+                port = s.port;
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert_ne!(port, 0, "server never bound a port");
+
+    // Raw HTTP announce over a plain tokio socket.
+    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("connect");
+    let request = format!(
+        "GET /announce?info_hash=%01%23%45%67%89%AB%CD%EF%01%23%45%67%89%AB%CD%EF%01%23%45%67&peer_id=TESTPEER12345678901&port=6881&uploaded=0&downloaded=0&left=1000000&event=started&compact=1 HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .await
+        .expect("write request");
+
+    // Read the whole response (server half-closes / returns after writing).
+    let mut response = Vec::new();
+    let _ = tokio::time::timeout(Duration::from_secs(5), stream.read_to_end(&mut response)).await;
+    assert!(!response.is_empty(), "server sent no response");
+    assert!(
+        response.starts_with(b"HTTP/1.1 200"),
+        "expected HTTP 200, got: {}",
+        String::from_utf8_lossy(&response[..response.len().min(40)])
+    );
+
+    // The connection's stats must reflect the one read and one write.
+    let mut got_stats = false;
+    for _ in 0..100 {
+        if let Some(s) = state.get_server(server_id).await {
+            if let Some(conn) = s.connections.values().next() {
+                if conn.bytes_received > 0 && conn.bytes_sent > 0 {
+                    assert!(
+                        conn.bytes_received as usize >= request.len(),
+                        "bytes_received ({}) < request len ({})",
+                        conn.bytes_received,
+                        request.len()
+                    );
+                    assert!(conn.packets_received >= 1 && conn.packets_sent >= 1);
+                    got_stats = true;
+                    break;
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(30)).await;
+    }
+    assert!(
+        got_stats,
+        "connection stats never showed both bytes_received and bytes_sent > 0"
+    );
+
+    // No peer handle: this protocol deliberately does not adopt it (one-shot HTTP).
+    if let Some(s) = state.get_server(server_id).await {
+        if let Some((conn_id, _)) = s.connections.iter().next() {
+            assert!(
+                !state.has_peer_handle(server_id, conn_id.as_u32()).await,
+                "torrent-tracker should register no peer handle for one-shot HTTP"
+            );
+        }
+    }
 }

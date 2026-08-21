@@ -140,6 +140,20 @@ impl TorrentTrackerServer {
 
         let request_data = buffer[..n].to_vec();
 
+        // Refresh connection stats (bytes/packets in) so the rail shows real
+        // traffic and last_activity rather than ↓0 ↑0. This is a one-shot HTTP
+        // request/response connection, so there is exactly one read and one write.
+        app_state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                Some(n as u64),
+                None,
+                Some(1),
+                None,
+            )
+            .await;
+
         // DEBUG: Log summary
         Log::new(Some(&status_tx)).debug(format!(
             "BitTorrent Tracker received {} bytes from {}",
@@ -160,9 +174,19 @@ impl TorrentTrackerServer {
             Ok(parsed) => parsed,
             Err(e) => {
                 Log::new(Some(&status_tx)).warn(format!("BitTorrent Tracker bad request: {}", e));
-                write_half
-                    .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-                    .await?;
+                let body =
+                    b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+                write_half.write_all(body).await?;
+                app_state
+                    .update_connection_stats(
+                        server_id,
+                        connection_id,
+                        None,
+                        Some(body.len() as u64),
+                        None,
+                        Some(1),
+                    )
+                    .await;
                 return Ok(());
             }
         };
@@ -220,6 +244,16 @@ impl TorrentTrackerServer {
                 for protocol_result in execution_result.protocol_results {
                     if let Some(output_data) = protocol_result.get_all_output().first() {
                         write_half.write_all(output_data).await?;
+                        app_state
+                            .update_connection_stats(
+                                server_id,
+                                connection_id,
+                                None,
+                                Some(output_data.len() as u64),
+                                None,
+                                Some(1),
+                            )
+                            .await;
 
                         Log::new(Some(&status_tx)).debug(format!(
                             "BitTorrent Tracker sent {} bytes to {}",
@@ -241,6 +275,16 @@ impl TorrentTrackerServer {
                 // Send error response
                 let error_response = b"HTTP/1.1 500 Internal Server Error\r\n\r\n";
                 write_half.write_all(error_response).await?;
+                app_state
+                    .update_connection_stats(
+                        server_id,
+                        connection_id,
+                        None,
+                        Some(error_response.len() as u64),
+                        None,
+                        Some(1),
+                    )
+                    .await;
             }
         }
 
