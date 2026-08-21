@@ -142,6 +142,21 @@ Proxy-Authorization: Basic base64(username:password)
 
 This is not yet implemented but can be added as a startup parameter.
 
+## Dashboard command channel
+
+The client registers `command_support::register_command_channel` **before** the
+`http_proxy_connected` LLM call (a manual handler can park that call), so
+`AppState::send_to_client` / the dashboard's `[ send_http_request ]`, `[ send_data ]`,
+`[ establish_tunnel ]` and `[ disconnect ]` rows work for the connection's whole life. The read
+loop mixes `read_line` (CONNECT headers, not cancellation-safe) and `read`, so the channel is
+drained by a separate task registered via `register_client_task`, writing through the shared
+`Arc<Mutex<WriteHalf>>`. `send_http_request` / `send_data` / `disconnect` go through the generic
+`handle_stream_client_command`; `establish_tunnel` returns `ClientActionResult::Custom`, so a
+small bespoke arm in `mod.rs` (`handle_injected_command`) encodes it with the same
+`connect_request()` the tunnel task uses. An injected CONNECT's reply is not parsed as a status
+line — it reaches the model as ordinary tunnel bytes (`http_proxy_response_received`) because the
+loop has already left the header-reading phase. The handle is removed on every loop exit.
+
 ## Limitations
 
 1. **HTTP CONNECT only**: Only supports CONNECT method, not GET/POST proxying

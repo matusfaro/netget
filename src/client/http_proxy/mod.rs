@@ -21,7 +21,8 @@ use crate::llm::ollama_client::OllamaClient;
 use crate::llm::ClientLlmResult;
 use crate::protocol::Event;
 use crate::state::app_state::AppState;
-use crate::state::{ClientId, ClientStatus};
+use crate::state::client_handles::{ClientCommand, ClientSendOutcome};
+use crate::state::{AccessLogOwner, ClientId, ClientStatus};
 
 /// Connection state for LLM processing
 #[derive(Debug, Clone, PartialEq)]
@@ -74,6 +75,36 @@ impl HttpProxyClient {
             client_id, remote_sock_addr
         ));
         let _ = status_tx.send("__UPDATE_UI__".to_string());
+
+        // Split stream. Done before the connected-event LLM call so the write half can be
+        // shared with the command task below while that call is (possibly) parked.
+        let (read_half, write_half) = tokio::io::split(stream);
+        let write_half_arc = Arc::new(Mutex::new(write_half));
+
+        // Command channel for the dashboard's [ send_http_request ] / [ send_data ] /
+        // [ establish_tunnel ] / [ disconnect ] rows. Registered BEFORE the connected call: a
+        // manual handler can park that call for minutes, and an injected send must work for
+        // the whole park. The read loop mixes `read_line` (CONNECT headers, not
+        // cancellation-safe) and `read` (tunnel bytes), so the channel is drained by its own
+        // task sharing the write half rather than by a `select!` arm.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_write = write_half_arc.clone();
+        let cmd_task = tokio::spawn(async move {
+            while let Some(cmd) = command_rx.recv().await {
+                let disconnect =
+                    handle_injected_command(&cmd_write, cmd, client_id, &cmd_state, &cmd_tx).await;
+                if disconnect {
+                    // Half-close: the proxy reads EOF and closes; the read loop then sees 0
+                    // and runs its normal disconnect path (which drops the handle).
+                    let _ = cmd_write.lock().await.shutdown().await;
+                    break;
+                }
+            }
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
 
         // Call LLM with connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
@@ -148,10 +179,6 @@ impl HttpProxyClient {
             }
         }
 
-        // Split stream
-        let (read_half, write_half) = tokio::io::split(stream);
-        let write_half_arc = Arc::new(Mutex::new(write_half));
-
         // Initialize client data
         let client_data = Arc::new(Mutex::new(ClientData {
             state: ConnectionState::Idle,
@@ -187,10 +214,7 @@ impl HttpProxyClient {
                     let target_port = parts[1];
 
                     // Send CONNECT request
-                    let connect_request = format!(
-                        "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\n\r\n",
-                        target_host, target_port, target_host, target_port
-                    );
+                    let connect_request = connect_request(target_host, target_port);
 
                     debug!(
                         "HTTP proxy client {} sending CONNECT request: {}",
@@ -225,6 +249,10 @@ impl HttpProxyClient {
         // dropping a JoinHandle only detaches it in Tokio.
         let task_registrar = app_state.clone();
         let task_handle = tokio::spawn(async move {
+            let handle_state = app_state_clone.clone();
+            // The loop body is an inner block so its `return`s all land on the handle removal
+            // below: once the socket is dead the dashboard must stop offering [ send ].
+            async move {
             let mut reader = BufReader::new(read_half);
 
             // First, check if we need to read CONNECT response
@@ -534,6 +562,9 @@ impl HttpProxyClient {
                     }
                 }
             }
+            }
+            .await;
+            handle_state.remove_client_handle(client_id).await;
         });
         task_registrar
             .register_client_task(client_id, task_handle)
@@ -541,4 +572,106 @@ impl HttpProxyClient {
 
         Ok(local_addr)
     }
+}
+
+/// The CONNECT request the client puts on the wire — the one encoder for both the LLM's
+/// `establish_tunnel` (via the tunnel task) and a dashboard-injected one.
+fn connect_request(target_host: &str, target_port: &str) -> String {
+    format!(
+        "CONNECT {}:{} HTTP/1.1\r\nHost: {}:{}\r\n\r\n",
+        target_host, target_port, target_host, target_port
+    )
+}
+
+/// Command-task arm. `send_http_request` / `send_data` / `disconnect` / `wait_for_more` are
+/// `SendData`-shaped and go through the generic helper. `establish_tunnel` returns
+/// `ClientActionResult::Custom`, which the generic arm cannot execute, so it is mapped here
+/// through the same CONNECT encoder the tunnel task uses; the proxy's reply then reaches the
+/// read loop as ordinary tunnel bytes (an `http_proxy_response_received` event).
+async fn handle_injected_command<W>(
+    write_half: &Arc<Mutex<W>>,
+    command: ClientCommand,
+    client_id: ClientId,
+    state: &AppState,
+    status_tx: &mpsc::UnboundedSender<String>,
+) -> bool
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let protocol = HttpProxyClientProtocol::new();
+    if command.action.get("type").and_then(|v| v.as_str()) != Some("establish_tunnel") {
+        return crate::client::command_support::handle_stream_client_command(
+            &protocol, write_half, command, client_id, state, status_tx,
+        )
+        .await;
+    }
+
+    let action = command.action.clone();
+    let outcome: anyhow::Result<ClientSendOutcome> = match protocol.execute_action(action.clone()) {
+        Ok(ClientActionResult::Custom { data, .. }) => {
+            let host = data
+                .get("target_host")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let port = data
+                .get("target_port")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                .to_string();
+            let bytes = connect_request(&host, &port).into_bytes();
+            let mut guard = write_half.lock().await;
+            match guard.write_all(&bytes).await {
+                Ok(()) => match guard.flush().await {
+                    Ok(()) => Ok(ClientSendOutcome::Sent {
+                        bytes_sent: bytes.len(),
+                    }),
+                    Err(e) => Err(anyhow::anyhow!("flush failed: {e}")),
+                },
+                Err(e) => Err(anyhow::anyhow!("write failed: {e}")),
+            }
+        }
+        Ok(_) => Ok(ClientSendOutcome::Executed {
+            detail: "executed".to_string(),
+        }),
+        Err(e) => Ok(ClientSendOutcome::Rejected {
+            error: e.to_string(),
+        }),
+    };
+
+    // Same access-log shape as the generic arm, so the injection shows in the request pane.
+    let outcome_json = match &outcome {
+        Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+        Err(e) => serde_json::json!({"error": e.to_string()}),
+    };
+    state
+        .record_access_log(
+            AccessLogOwner::Client(client_id.as_u32()),
+            crate::llm::actions::protocol_trait::Protocol::protocol_name(&protocol),
+            None,
+            "injected_action",
+            action,
+            vec![outcome_json],
+        )
+        .await;
+    match &outcome {
+        Ok(ClientSendOutcome::Sent { bytes_sent }) => info!(
+            "HTTP proxy client {} sent injected CONNECT ({} bytes)",
+            client_id, bytes_sent
+        ),
+        Ok(_) => {}
+        Err(e) => {
+            error!(
+                "HTTP proxy client {} injected establish_tunnel failed: {}",
+                client_id, e
+            );
+            let _ = status_tx.send(format!(
+                "[WARN] Client {} injected action failed: {}",
+                client_id, e
+            ));
+        }
+    }
+    let _ = status_tx.send("__UPDATE_UI__".to_string());
+    crate::client::command_support::reply(command, outcome);
+    false
 }

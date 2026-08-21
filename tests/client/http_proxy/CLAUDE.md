@@ -24,6 +24,11 @@ behavior. Tests validate HTTP CONNECT tunneling and data transmission through pr
     - 1 call: Start TCP server
     - 1 call: Start proxy client with data send instruction
 
+4. **command_channel_test::injected_http_proxy_actions_reach_the_proxy_socket**: 0 LLM calls
+    - raw tokio listener as the proxy; `send_to_client` injects `send_http_request`,
+      `send_data` and the Custom-result `establish_tunnel`; bad action rejected; `disconnect`
+      half-closes and drops the handle
+
 **Total: 7 LLM calls** (within budget)
 
 ## Runtime Expectations
