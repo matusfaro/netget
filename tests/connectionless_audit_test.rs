@@ -1,0 +1,252 @@
+//! Every UDP-serving protocol must declare `.connectionless()` in its metadata.
+//!
+//! `AppState::cleanup_old_connections` — the 10-second idle sweep ticked by the TUI
+//! and the MCP loop — only reaps connection entries for servers whose
+//! `ProtocolMetadataV2::connectionless` is set. That is deliberate: UDP/raw servers
+//! track one bookkeeping entry per remote address and nothing ever closes them, so
+//! the sweep is the only thing standing between an idle UDP server and an
+//! ever-growing connection map. (The old behaviour — sweeping *every* server — was
+//! the dangerous direction: it evicted live TCP-style connections mid-conversation.
+//! See the root CLAUDE.md, "The 10-second idle sweep".)
+//!
+//! A new UDP protocol that forgets the flag therefore leaks idle entries until its
+//! server stops, and nothing at runtime says so. This audit closes that gap the
+//! same way `event_action_declarations_test` closes its own: walk the registry and
+//! check every registered protocol at build time.
+//!
+//! The UDP-ness of a protocol is read from its **source on disk**: if any `.rs`
+//! file under `src/server/<dir>/` mentions `UdpSocket` (the `tokio::net` one and
+//! the `std::net` one both mean datagram handling; `create_reusable_udp_socket`
+//! from `socket_helpers` is matched too, in case a protocol adopts the helper
+//! without naming the type), the protocol serves datagrams and must declare
+//! `.connectionless()`. Declaring it *without* using `UdpSocket` is fine — `isis`
+//! does, legitimately: raw link-level frames have per-remote entries with exactly
+//! the same nothing-ever-closes-them shape.
+//!
+//! Like every registry-walking audit, this covers only the protocols compiled into
+//! the current feature set; the `registry-audit` CI job runs the audits at
+//! `--all-features` for that reason.
+
+use std::path::{Path, PathBuf};
+
+use netget::llm::actions::protocol_trait::Protocol;
+use netget::protocol::server_registry::registry;
+
+/// Protocols that legitimately use a `UdpSocket` while being connection-oriented
+/// (e.g. a UDP *side channel* on an otherwise stream-based server), as registry
+/// names. Empty, and meant to stay that way: when this audit flags a protocol,
+/// the fix is `.connectionless()` on its metadata builder, and an entry lands
+/// here only with a comment justifying why the sweep must NOT reap its entries.
+const CONNECTIONLESS_EXCEPTIONS: &[&str] = &[];
+
+/// Registry names whose source directory does not follow any of the mechanical
+/// name→dir conventions below. Only protocols that would otherwise go
+/// unmapped; keep it short and let the mechanical candidates do the work.
+fn dir_alias(protocol_name: &str) -> Option<&'static str> {
+    match protocol_name {
+        "USB-MassStorage" => Some("usb/msc"),
+        "DynamoDB" => Some("dynamo"),
+        "SamlIdp" => Some("saml_idp"),
+        "SamlSp" => Some("saml_sp"),
+        _ => None,
+    }
+}
+
+/// Candidate `src/server/<dir>` names for a registry protocol name.
+///
+/// Registry names are display-ish ("Torrent-DHT", "IPSec/IKEv2", "SSH Agent",
+/// "usb-fido2"); directories are lowercase snake_case, with the USB family
+/// nested ("usb/fido2"). Try, in order:
+/// 1. an explicit alias (`dir_alias`)
+/// 2. lowercase with `-`/` ` mapped to `_`   (Torrent-DHT → torrent_dht)
+/// 3. the same with `_` mapped to `/`        (usb_fido2 → usb/fido2)
+/// 4. lowercase with separators removed      (XML-RPC → xmlrpc)
+/// 5. the first `-`/` `-separated token      (Bitcoin P2P → bitcoin)
+/// Anything after a `/` in the name is dropped first (IPSec/IKEv2 → ipsec).
+fn dir_candidates(protocol_name: &str) -> Vec<String> {
+    let mut candidates = Vec::new();
+    if let Some(alias) = dir_alias(protocol_name) {
+        candidates.push(alias.to_string());
+    }
+
+    let lower = protocol_name.to_lowercase();
+    let lower = lower.split('/').next().unwrap_or(&lower).to_string();
+
+    let underscored: String = lower
+        .chars()
+        .map(|c| if c == '-' || c == ' ' { '_' } else { c })
+        .collect();
+    candidates.push(underscored.clone());
+    candidates.push(underscored.replace('_', "/"));
+    candidates.push(
+        lower
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect(),
+    );
+    if let Some(first) = lower.split(['-', ' ']).next() {
+        candidates.push(first.to_string());
+    }
+
+    candidates.dedup();
+    candidates
+}
+
+/// The protocol's source directory on disk, if any candidate exists.
+fn source_dir(server_root: &Path, protocol_name: &str) -> Option<PathBuf> {
+    dir_candidates(protocol_name)
+        .into_iter()
+        .map(|candidate| server_root.join(candidate))
+        .find(|path| path.is_dir())
+}
+
+/// Whether any `.rs` file in `dir` (recursively — `radius` and `syslog` touch
+/// their socket from `actions.rs`, the USB family nests submodules) mentions a
+/// UDP socket.
+fn mentions_udp_socket(dir: &Path) -> bool {
+    const MARKERS: [&str; 2] = ["UdpSocket", "create_reusable_udp_socket"];
+
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return false,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if mentions_udp_socket(&path) {
+                return true;
+            }
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        if let Ok(source) = std::fs::read_to_string(&path) {
+            if MARKERS.iter().any(|marker| source.contains(marker)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// The audit: every registered protocol whose source serves UDP datagrams must
+/// declare `.connectionless()`, or the idle sweep never reaps its per-remote
+/// entries and an idle server leaks them until it stops.
+#[test]
+fn every_udp_serving_protocol_declares_connectionless() {
+    // Tests run with CWD = the crate root, but don't depend on it.
+    let server_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/server");
+    assert!(
+        server_root.is_dir(),
+        "src/server not found at {} — the audit cannot read protocol sources",
+        server_root.display()
+    );
+
+    let mut findings: Vec<String> = Vec::new();
+    let mut unmapped: Vec<String> = Vec::new();
+    let mut udp_checked = 0usize;
+    let mut excepted_seen = 0usize;
+
+    let all = registry().all_protocols();
+    for (name, protocol) in &all {
+        let Some(dir) = source_dir(&server_root, name) else {
+            // No candidate directory: report it rather than silently skipping,
+            // so a rename that breaks the mapping is visible in the output.
+            unmapped.push(name.clone());
+            continue;
+        };
+        if !mentions_udp_socket(&dir) {
+            continue;
+        }
+        udp_checked += 1;
+
+        if protocol.metadata().connectionless {
+            continue;
+        }
+        if CONNECTIONLESS_EXCEPTIONS.contains(&name.as_str()) {
+            excepted_seen += 1;
+            continue;
+        }
+        findings.push(format!(
+            "[{}] {} uses a UdpSocket but its metadata() does not declare \
+             .connectionless() — the 10s idle sweep will never reap its per-remote \
+             connection entries, so an idle server leaks them until it stops. Add \
+             .connectionless() to the ProtocolMetadataV2 builder in its actions.rs \
+             (or, if the socket is genuinely a side channel of a connection-oriented \
+             server, add the protocol to CONNECTIONLESS_EXCEPTIONS with a comment \
+             saying why).",
+            name,
+            dir.strip_prefix(env!("CARGO_MANIFEST_DIR"))
+                .unwrap_or(&dir)
+                .display(),
+        ));
+    }
+
+    if !unmapped.is_empty() {
+        eprintln!(
+            "note: {} registered protocol(s) map to no src/server directory and were \
+             not source-checked: {}",
+            unmapped.len(),
+            unmapped.join(", ")
+        );
+    }
+    if excepted_seen > 0 {
+        eprintln!(
+            "note: {} UDP-using protocol(s) are quarantined in CONNECTIONLESS_EXCEPTIONS",
+            excepted_seen
+        );
+    }
+    eprintln!(
+        "connectionless audit coverage: {} registered protocol(s) in this build, {} of \
+         them UDP-serving and checked. Protocols behind uncompiled features are \
+         invisible here — the registry-audit CI job runs this at --all-features.",
+        all.len(),
+        udp_checked
+    );
+
+    assert!(
+        findings.is_empty(),
+        "{} UDP-serving protocol(s) do not declare .connectionless():\n\n{}",
+        findings.len(),
+        findings.join("\n\n")
+    );
+}
+
+/// The audit proves nothing if the mapping or the source scan silently breaks:
+/// in a build that compiles the `udp` feature, the plain UDP server must be
+/// found, must read as UDP-serving, and must already carry the flag. If this
+/// fails, fix the audit, not the protocol.
+#[test]
+#[cfg(feature = "udp")]
+fn the_audit_recognises_the_reference_udp_protocol() {
+    let server_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/server");
+
+    let (name, protocol) = registry()
+        .all_protocols()
+        .into_iter()
+        .find(|(name, _)| name == "UDP")
+        .expect("the udp feature registers the UDP protocol");
+
+    let dir = source_dir(&server_root, &name)
+        .expect("the UDP protocol must map to a src/server directory");
+    assert!(
+        mentions_udp_socket(&dir),
+        "src/server/udp must read as UDP-serving — if the socket type moved, update \
+         the audit's markers"
+    );
+    assert!(
+        protocol.metadata().connectionless,
+        "the reference UDP protocol declares .connectionless()"
+    );
+}
+
+/// The registry sweep is only as wide as the compiled feature set; make an
+/// empty registry a failure rather than a vacuous pass, like the other audits.
+#[test]
+fn the_audit_has_something_to_inspect() {
+    assert!(
+        !registry().all_protocols().is_empty(),
+        "no protocol is registered in this build; the audit above inspected nothing"
+    );
+}
