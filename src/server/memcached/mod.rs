@@ -161,10 +161,74 @@ impl MemcachedServer {
         state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
     ) -> Result<()> {
-        // Split, never clone — the project rule for TcpStream.
-        let (mut reader, mut writer) = tokio::io::split(stream);
-        let handler = actions::MemcachedProtocol::new();
-        let log = Log::new(Some(&status_tx));
+        // Split, never clone — the project rule for TcpStream. The write half is shared
+        // under one mutex between this reader task and the dashboard's peer-injection task,
+        // so their writes cannot interleave.
+        let (reader, write_half) = tokio::io::split(stream);
+        let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
+        let handler = Arc::new(actions::MemcachedProtocol::new());
+
+        // Peer messaging: the dashboard's "message this peer" / "disconnect this peer"
+        // injects actions into THIS connection through the same executor the LLM path uses.
+        // Every memcached wire verb returns `ActionResult::Output` and
+        // `close_memcached_connection` returns `CloseConnection`, so the generic peer task
+        // covers the whole vocabulary — there is no `Custom` gap.
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &state,
+            server_id,
+            connection_id.as_u32(),
+        )
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            handler.clone(),
+            state.clone(),
+            server_id,
+            connection_id.as_u32(),
+            write_half.clone(),
+            status_tx.clone(),
+        );
+
+        let result = Self::run_connection(
+            reader,
+            &write_half,
+            &handler,
+            peer_addr,
+            connection_id,
+            server_id,
+            &llm_client,
+            &state,
+            &status_tx,
+        )
+        .await;
+
+        // Every exit path — EOF, read/write error, client quit, model-requested close,
+        // oversize buffer — lands here, so the handle never outlives the connection.
+        state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
+        result
+    }
+
+    /// The read/parse/answer/write loop, generic over the split halves so the peer task can
+    /// hold a clone of the write half. Setup and peer-handle teardown live in the caller.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_connection<R, W>(
+        mut reader: R,
+        write_half: &Arc<tokio::sync::Mutex<W>>,
+        handler: &Arc<actions::MemcachedProtocol>,
+        peer_addr: SocketAddr,
+        connection_id: ConnectionId,
+        server_id: ServerId,
+        llm_client: &OllamaClient,
+        state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<()>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        let log = Log::new(Some(status_tx));
 
         let mut buffer: Vec<u8> = Vec::with_capacity(4096);
         let mut chunk = vec![0u8; 8192];
@@ -181,13 +245,16 @@ impl MemcachedServer {
                             peer_addr, message
                         );
                         let line = format!("CLIENT_ERROR {}\r\n", message);
-                        writer.write_all(line.as_bytes()).await?;
-                        writer.flush().await?;
-                        Self::count_sent(&state, server_id, connection_id, line.len()).await;
+                        {
+                            let mut writer = write_half.lock().await;
+                            writer.write_all(line.as_bytes()).await?;
+                            writer.flush().await?;
+                        }
+                        Self::count_sent(state, server_id, connection_id, line.len()).await;
                     }
                     Parsed::Complete { command, consumed } => {
                         buffer.drain(..consumed);
-                        Self::count_received(&state, server_id, connection_id, consumed).await;
+                        Self::count_received(state, server_id, connection_id, consumed).await;
 
                         if matches!(command, Command::Quit) {
                             debug!("Memcached {} sent quit", peer_addr);
@@ -198,12 +265,12 @@ impl MemcachedServer {
                         let event = Self::event_for(&command);
 
                         let outcome = call_llm(
-                            &llm_client,
-                            &state,
+                            llm_client,
+                            state,
                             server_id,
                             Some(connection_id),
                             &event,
-                            &handler,
+                            handler.as_ref(),
                         )
                         .await;
 
@@ -269,9 +336,12 @@ impl MemcachedServer {
                                 peer_addr,
                                 String::from_utf8_lossy(&reply)
                             ));
-                            writer.write_all(&reply).await?;
-                            writer.flush().await?;
-                            Self::count_sent(&state, server_id, connection_id, reply.len()).await;
+                            {
+                                let mut writer = write_half.lock().await;
+                                writer.write_all(&reply).await?;
+                                writer.flush().await?;
+                            }
+                            Self::count_sent(state, server_id, connection_id, reply.len()).await;
                         }
 
                         if close {
@@ -288,7 +358,9 @@ impl MemcachedServer {
                     peer_addr,
                     buffer.len()
                 );
-                let _ = writer
+                let _ = write_half
+                    .lock()
+                    .await
                     .write_all(b"SERVER_ERROR command too large\r\n")
                     .await;
                 return Ok(());

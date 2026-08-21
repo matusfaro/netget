@@ -97,6 +97,22 @@ protocols hand-roll: that machine exists to prevent two concurrent LLM calls on 
 connection, and a single sequential task achieves the same thing by construction. Data
 arriving mid-call waits in the socket buffer.
 
+## Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+Every connection registers a peer handle (`server::peer_support`) the moment it is accepted —
+memcached has no greeting, so nothing needs to arrive first. `AppState::send_to_peer` runs the
+action through the same executor as the LLM path, and the reader task and the peer task share
+one `Arc<Mutex<WriteHalf>>`, so their writes never interleave. Every wire verb returns
+`ActionResult::Output` (or `CloseConnection` for `close_memcached_connection`), so the generic
+peer task covers the whole vocabulary with **no `Custom` gap**. The dashboard's disconnect
+injects the generic `{"type":"close_connection"}`; `execute_action` has an explicit arm for it
+(not advertised to the model) that returns `CloseConnection` so the write side half-closes and
+the client reads EOF. The handle is removed on every exit path (EOF, read/write error, client
+`quit`, model-requested close, oversize buffer) through the single cleanup in
+`handle_connection`. Injected writes go through the generic peer task, which does **not** touch
+`update_connection_stats` — the `↓ ↑` counters are driven only by the server's own read/write
+path. Test: `tests/server/memcached/peer_inject_test.rs` (zero LLM calls).
+
 ## Ports and privilege
 
 11211 is above 1023, so `privilege_requirement` is `None`. Declaring `PrivilegedPort(11211)`

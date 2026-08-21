@@ -5,3 +5,6 @@ mod llm_failure_test;
 
 #[cfg(all(test, feature = "memcached"))]
 mod real_client_test;
+
+#[cfg(all(test, feature = "memcached"))]
+mod peer_inject_test;

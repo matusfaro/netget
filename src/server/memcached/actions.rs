@@ -672,6 +672,10 @@ impl Server for MemcachedProtocol {
 
             "close_memcached_connection" => Ok(ActionResult::CloseConnection),
 
+            // Not offered to the model, but the dashboard's "disconnect this peer" injects it
+            // through the peer command task, which half-closes the write side on this result.
+            "close_connection" => Ok(ActionResult::CloseConnection),
+
             _ => Err(anyhow::anyhow!("Unknown Memcached action: {}", action_type)),
         }
     }
