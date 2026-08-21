@@ -224,6 +224,10 @@ impl Server for RdpProtocol {
                 })?;
                 Ok(ActionResult::Output(build_negotiation_failure(code)))
             }
+            // Not offered to the model (the negotiation slice always answers with a CC and then
+            // half-closes on its own), but the dashboard's "disconnect this peer" injects this
+            // through the peer command task, which half-closes the write side on this result.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             other => Err(anyhow::anyhow!("Unknown RDP action: {other}")),
         }
     }

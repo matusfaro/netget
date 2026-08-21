@@ -77,6 +77,27 @@ literal frame; a name it does not recognise is a clean error, not a wrong frame 
 
 There are no async actions.
 
+## Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+Every connection registers a peer handle (`server::peer_support`) right after it is tracked and
+*before* the blocking Connection-Request read, so a client that connects but has not yet sent its
+CR — or an event parked by a manual `*` rule — is still reachable by the operator.
+`AppState::send_to_peer` runs the injected action through the same executor as the LLM path, so an
+injected `send_rdp_negotiation_response` / `reject_rdp_connection` is encoded by exactly the model's
+code and both return `ActionResult::Output` — **there is no `Custom`-result gap**. `close_connection`
+gained an explicit arm in `execute_action` (not offered to the model — the slice always answers with
+a CC and half-closes on its own) so `[ disconnect this peer ]` half-closes the write side and the
+client reads EOF. The handle is removed on every exit path through the single cleanup in
+`handle_connection`.
+
+Connection counters are live: `negotiate` calls `update_connection_stats` for the CR read
+(`bytes_received`) and the CC write (`bytes_sent`), so the rail shows real `↓ ↑` rather than `↓0 ↑0`
+and `last_activity` advances. (Injected peer writes go through `peer_support`, which does not itself
+update counters — only the protocol's own reads/writes are counted.)
+
+Test: `tests/server/rdp/peer_inject_test.rs` — zero LLM calls (parked-read injection + a `*` static
+handler for the counter path).
+
 ## Fail-closed behaviour
 
 The most dangerous default here would be to accept standard RDP when the model says nothing —

@@ -156,6 +156,29 @@ impl RdpServer {
             .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
+        // Peer messaging: the dashboard's "message this peer" / "disconnect this peer" inject
+        // actions into THIS connection through the same executor the LLM path uses. Registered
+        // before the negotiation LLM call, because a manual `*` rule can park that call for
+        // minutes and the operator must be able to reach the connection while it waits. Every
+        // RDP wire verb returns ActionResult::Output (or CloseConnection), so the generic peer
+        // task covers the whole vocabulary — there is no Custom-result gap.
+        let protocol: Arc<RdpProtocol> = Arc::new(RdpProtocol::new());
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &app_state,
+            server_id,
+            connection_id.as_u32(),
+        )
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            protocol.clone(),
+            app_state.clone(),
+            server_id,
+            connection_id.as_u32(),
+            write_half.clone(),
+            status_tx.clone(),
+        );
+
         let result = Self::negotiate(
             &mut read_half,
             &write_half,
@@ -164,9 +187,14 @@ impl RdpServer {
             &app_state,
             &status_tx,
             &llm_client,
+            &protocol,
         )
         .await;
 
+        // Every exit path lands here: malformed framing, LLM error/fail-closed, or a clean CC.
+        app_state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
         app_state
             .remove_connection_from_server(server_id, connection_id)
             .await;
@@ -185,8 +213,9 @@ impl RdpServer {
         app_state: &Arc<AppState>,
         status_tx: &mpsc::UnboundedSender<String>,
         llm_client: &OllamaClient,
+        protocol: &Arc<RdpProtocol>,
     ) -> Result<()> {
-        let request = match read_connection_request(read_half).await {
+        let (request, bytes_in) = match read_connection_request(read_half).await {
             Ok(req) => req,
             Err(e) => {
                 // Malformed framing: the stream cannot be resynchronised, so close.
@@ -194,6 +223,16 @@ impl RdpServer {
                 return Ok(());
             }
         };
+        app_state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                Some(bytes_in as u64),
+                None,
+                Some(1),
+                None,
+            )
+            .await;
 
         let protocol_names = protocol_value_to_names(request.requested_protocols);
         console_debug!(
@@ -213,14 +252,13 @@ impl RdpServer {
             }),
         );
 
-        let protocol = RdpProtocol::new();
         let response_bytes = match call_llm(
             llm_client,
             app_state,
             server_id,
             Some(connection_id),
             &event,
-            &protocol,
+            protocol.as_ref(),
         )
         .await
         {
@@ -269,6 +307,16 @@ impl RdpServer {
             writer.write_all(&response_bytes).await?;
             writer.flush().await?;
         }
+        app_state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                None,
+                Some(response_bytes.len() as u64),
+                None,
+                Some(1),
+            )
+            .await;
         console_debug!(
             status_tx,
             "RDP sent {}-byte Connection Confirm to {}",
@@ -292,7 +340,7 @@ impl RdpServer {
 /// Every length is bounded before allocation: the TPKT length field is client-controlled.
 async fn read_connection_request(
     read_half: &mut tokio::io::ReadHalf<TcpStream>,
-) -> Result<ConnectionRequest> {
+) -> Result<(ConnectionRequest, usize)> {
     // TPKT header: version(1)=0x03, reserved(1), length(2, big-endian, total incl. this header).
     let mut tpkt = [0u8; 4];
     read_half.read_exact(&mut tpkt).await?;
@@ -327,11 +375,16 @@ async fn read_connection_request(
     let (cookie_username, after_cookie) = parse_routing_cookie(variable);
     let (requested_protocols, flags) = parse_rdp_neg_req(after_cookie);
 
-    Ok(ConnectionRequest {
-        cookie_username,
-        requested_protocols,
-        flags,
-    })
+    // Total wire bytes consumed: the 4-byte TPKT header plus the X.224 body.
+    let bytes_in = 4 + x224.len();
+    Ok((
+        ConnectionRequest {
+            cookie_username,
+            requested_protocols,
+            flags,
+        },
+        bytes_in,
+    ))
 }
 
 /// Parse an optional `Cookie: mstshash=<user>\r\n` (or `Cookie: msts=<token>\r\n`) routing token.
