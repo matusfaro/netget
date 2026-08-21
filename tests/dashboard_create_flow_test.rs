@@ -500,3 +500,28 @@ async fn editing_a_server_hot_applies_without_a_restart() {
     let updated = state.get_server(server_id).await.unwrap();
     assert_eq!(updated.instruction, "answer politely");
 }
+
+/// `[ + connect a … client ]` on a server pre-fills the remote address, but a
+/// client protocol can still declare a required startup parameter nothing
+/// can default (openai's `api_key`). The form must surface that and land the
+/// cursor on the missing field rather than fail the connect in the chat.
+#[cfg(feature = "openai")]
+#[test]
+fn a_client_with_a_required_startup_param_is_asked_for_it_not_started_blind() {
+    let mut form = FormModel::for_create(Section::Clients, "openai", None);
+    form.set_field_value(&FieldTarget::RemoteAddr, "127.0.0.1:9".to_string());
+    assert_eq!(form.missing_required().as_deref(), Some("api_key"));
+
+    form.focus_first_missing_required();
+    assert_eq!(
+        form.selected_field().map(|f| f.label.as_str()),
+        Some("api_key")
+    );
+    assert!(form.focused_button.is_none());
+
+    form.set_field_value(
+        &FieldTarget::StartupParam("api_key".to_string()),
+        "sk-test".to_string(),
+    );
+    assert!(form.missing_required().is_none());
+}

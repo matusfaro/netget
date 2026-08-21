@@ -383,6 +383,19 @@ impl FormModel {
             .map(|f| f.label.clone())
     }
 
+    /// Put the cursor on the first required field with no value, so a form
+    /// opened because something is missing starts where the user must type.
+    pub fn focus_first_missing_required(&mut self) {
+        if let Some(i) = self
+            .fields
+            .iter()
+            .position(|f| f.required && f.value.trim().is_empty())
+        {
+            self.selected = i;
+            self.focused_button = None;
+        }
+    }
+
     pub fn move_selection(&mut self, delta: isize) {
         if self.fields.is_empty() {
             return;

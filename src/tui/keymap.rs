@@ -742,8 +742,19 @@ async fn open_client_for_server(
         ),
     );
 
-    // Everything this client needs is known, so connect it rather than showing
-    // a form with nothing left to fill in.
+    // When everything this client needs is known, connect it rather than
+    // showing a form with nothing left to fill in. A client whose protocol
+    // declares a required startup parameter (openai's api_key, say) cannot be
+    // defaulted: show the form pre-filled with the remote and instruction, the
+    // cursor already on the missing field, instead of failing in the chat.
+    if let Some(missing) = model.missing_required() {
+        model.focus_first_missing_required();
+        model.error = Some(format!(
+            "{client_protocol} needs {missing} before it can connect — fill it in and press [ Apply ]"
+        ));
+        app.modals.push(Modal::Form(Box::new(model)));
+        return;
+    }
     app.push_system(format!(
         "Connecting a {client_protocol} client to {remote}…"
     ));
@@ -1018,6 +1029,7 @@ async fn handle_picker_key(app: &mut DashboardApp, key: KeyEvent, state: &AppSta
             // The form only appears when something genuinely cannot be
             // defaulted, such as a client's remote address.
             if let Some(missing) = missing {
+                model.focus_first_missing_required();
                 model.error = Some(format!(
                     "{protocol} needs {missing} before it can start — fill it in and press [ Apply ]"
                 ));

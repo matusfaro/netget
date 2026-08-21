@@ -431,21 +431,6 @@ pub fn server_rows(row: &ServerRow, state: &TreeState) -> Vec<TreeRow> {
             ));
         }
     }
-    config_items.push(TreeRow::leaf(
-        NodeId::ConfigItem(key, "instruction".into()),
-        2,
-        format!(
-            "instruction: {}",
-            crate::utils::truncate_for_log(&row.instruction, 80)
-        ),
-        RowStyle::Dim,
-    ));
-    config_items.push(TreeRow::leaf(
-        NodeId::ConfigItem(key, "memory".into()),
-        2,
-        format!("memory: {} bytes", row.memory_len),
-        RowStyle::Dim,
-    ));
     if row.task_count > 0 {
         config_items.push(TreeRow::leaf(
             NodeId::ConfigItem(key, "tasks".into()),
@@ -878,21 +863,6 @@ pub fn client_rows(row: &ClientRow, state: &TreeState) -> Vec<TreeRow> {
             ));
         }
     }
-    config_items.push(TreeRow::leaf(
-        NodeId::ConfigItem(key, "instruction".into()),
-        2,
-        format!(
-            "instruction: {}",
-            crate::utils::truncate_for_log(&row.instruction, 80)
-        ),
-        RowStyle::Dim,
-    ));
-    config_items.push(TreeRow::leaf(
-        NodeId::ConfigItem(key, "memory".into()),
-        2,
-        format!("memory: {} bytes", row.memory_len),
-        RowStyle::Dim,
-    ));
     rows.push(TreeRow::group(
         config.clone(),
         1,
