@@ -184,19 +184,43 @@ async fn handle_mqtt_connection(
 ) -> Result<()> {
     let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
 
-    let (mut read_half, mut write_half) = tokio::io::split(socket);
+    let (mut read_half, write_half) = tokio::io::split(socket);
+
+    // The write half is shared between the channel-draining writer task and the peer
+    // command task. The writer task owns all outbound framing (below); the peer task
+    // only ever `shutdown()`s it, which is how the dashboard's "disconnect this peer"
+    // half-closes a connection from outside the read loop.
+    let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
 
     // All writes for this connection funnel through one channel so that packets
     // produced by the read loop and packets produced by an action (possibly for a
     // different connection) can never interleave mid-packet.
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let writer_status_tx = status_tx.clone();
+    let writer_write_half = write_half.clone();
+    let writer_state = app_state.clone();
     let writer_handle = tokio::spawn(async move {
         while let Some(bytes) = out_rx.recv().await {
-            if let Err(e) = write_half.write_all(&bytes).await {
+            let n = bytes.len();
+            let mut guard = writer_write_half.lock().await;
+            if let Err(e) = guard.write_all(&bytes).await {
                 Log::new(Some(&writer_status_tx)).debug(format!("MQTT write failed: {}", e));
                 break;
             }
+            let _ = guard.flush().await;
+            drop(guard);
+            // Live byte/packet counters for the dashboard rail. Every outbound MQTT
+            // packet crosses this channel, so this is the one place all writes are seen.
+            writer_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    None,
+                    Some(n as u64),
+                    None,
+                    Some(1),
+                )
+                .await;
         }
     });
 
@@ -228,6 +252,28 @@ async fn handle_mqtt_connection(
         status_tx.clone(),
     ));
 
+    // Peer injection: the dashboard's "message this peer" / "disconnect this peer" run an
+    // action against THIS connection through the same executor the model path uses. A
+    // messaging verb (e.g. mqtt_publish) writes through the connection's own out channel and
+    // reports Executed; a close ({"type":"close_connection"}) half-closes the shared write
+    // half. Registered before the first read so the operator can reach the connection while
+    // it is idle - the read loop blocks in read() without a select.
+    let peer_rx = crate::server::peer_support::register_peer_channel(
+        &app_state,
+        server_id,
+        connection_id.as_u32(),
+    )
+    .await;
+    crate::server::peer_support::spawn_peer_command_task(
+        peer_rx,
+        protocol.clone(),
+        app_state.clone(),
+        server_id,
+        connection_id.as_u32(),
+        write_half.clone(),
+        status_tx.clone(),
+    );
+
     let mut client_id: Option<String> = None;
     let mut buffer: Vec<u8> = Vec::with_capacity(1024);
     let mut chunk = vec![0u8; 4096];
@@ -235,7 +281,19 @@ async fn handle_mqtt_connection(
     let close_reason = loop {
         let n = match read_half.read(&mut chunk).await {
             Ok(0) => break "peer closed the connection",
-            Ok(n) => n,
+            Ok(n) => {
+                app_state
+                    .update_connection_stats(
+                        server_id,
+                        connection_id,
+                        Some(n as u64),
+                        None,
+                        Some(1),
+                        None,
+                    )
+                    .await;
+                n
+            }
             Err(e) => {
                 debug!("MQTT read error from {}: {}", peer_addr, e);
                 break "read error";
@@ -353,6 +411,12 @@ async fn finish_connection(
     client_id: &Option<String>,
     status_tx: &mpsc::UnboundedSender<String>,
 ) {
+    // Drop the peer handle first: the peer command task holds an Arc<MqttProtocol>, which
+    // owns an out_tx clone, so the writer task below cannot finish until that task ends.
+    // Removing the handle closes its command channel and lets it wind down.
+    app_state
+        .remove_peer_handle(server_id, connection_id.as_u32())
+        .await;
     cleanup(app_state, server_id, connection_id, client_id, status_tx).await;
     drop(protocol);
     drop(out_tx);
