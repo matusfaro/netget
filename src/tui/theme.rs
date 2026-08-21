@@ -42,7 +42,9 @@ impl Styles {
             debug: Style::default().fg(c(palette.debug)),
             trace: Style::default().fg(c(palette.trace)),
             reasoning: Style::default().fg(c(palette.reasoning)),
-            user: Style::default().fg(c(palette.user)).add_modifier(Modifier::BOLD),
+            user: Style::default()
+                .fg(c(palette.user))
+                .add_modifier(Modifier::BOLD),
             server: Style::default().fg(c(palette.server)),
             client: Style::default().fg(c(palette.client)),
             connection: Style::default().fg(c(palette.connection)),

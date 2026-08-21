@@ -37,6 +37,17 @@ SUCCESS, because the mock accepts), `ACCRDB→ACCRDBRM` (INFO once authenticated
 then `EXCSQLIMM` with an embedded `SQLSTT` → `SQLCARD` whose body is the single
 `0xFF` null-SQLCA success indicator.
 
+## `peer_inject_test.rs` — dashboard peer injection (zero LLM calls)
+
+`injected_close_connection_sends_eof_and_counters_move` starts a Db2 server with
+no handlers, connects a raw `TcpStream`, waits for `has_peer_handle`, then:
+`EXCSAT→EXCSATRD` (no LLM) and asserts the connection counters moved on both
+directions; `send_to_peer` of `db2_accept_connection` → `Executed` (the wire verbs
+are correlator-bound `Custom` results, so nothing is written); `send_to_peer` of
+`close_connection` → `Disconnected`, the socket reads EOF, and the peer handle is
+removed. It does **not** assert that an unknown action name errors: the shared
+executor reports unknown names as executed, which is outside this protocol.
+
 ## LLM call budget (mocked)
 
 `test_db2_handshake_and_statement`: startup + `db2_connect` (accept) + `db2_query`

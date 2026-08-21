@@ -49,7 +49,10 @@ fn removed_connection_is_summarized() {
     assert_eq!(summary.bytes_received, 20);
     // Opened through add_connection, so the open time must be known and sane.
     let opened = summary.opened_unix_ms.expect("opened_unix_ms recorded");
-    assert!(opened <= summary.closed_unix_ms + 1000, "open must not postdate close");
+    assert!(
+        opened <= summary.closed_unix_ms + 1000,
+        "open must not postdate close"
+    );
     // A wall-clock timestamp from this decade, not 0 or a duration-since-start.
     assert!(summary.closed_unix_ms > 1_500_000_000_000);
 }
@@ -63,7 +66,10 @@ fn history_is_newest_first_and_capped() {
     }
     assert_eq!(server.recent_connections.len(), RECENT_CONNECTION_CAPACITY);
     // Newest first: the last-closed connection is at the front.
-    assert_eq!(server.recent_connections[0].id, RECENT_CONNECTION_CAPACITY as u32 + 9);
+    assert_eq!(
+        server.recent_connections[0].id,
+        RECENT_CONNECTION_CAPACITY as u32 + 9
+    );
     // The oldest entries fell off the back.
     assert!(server.recent_connections.iter().all(|s| s.id >= 10));
 }
@@ -98,7 +104,10 @@ async fn app_state_reaper_records_and_accessor_returns() {
     assert_eq!(recent[0].id, 1);
 
     // Unknown server: empty, not a panic.
-    assert!(state.get_recent_connections(ServerId::new(999)).await.is_empty());
+    assert!(state
+        .get_recent_connections(ServerId::new(999))
+        .await
+        .is_empty());
 }
 
 #[test]
@@ -144,9 +153,15 @@ async fn update_client_status_records_history() {
     );
     let client_id = state.add_client(client).await;
 
-    state.update_client_status(client_id, ClientStatus::Connecting).await;
-    state.update_client_status(client_id, ClientStatus::Connected).await;
-    state.update_client_status(client_id, ClientStatus::Disconnected).await;
+    state
+        .update_client_status(client_id, ClientStatus::Connecting)
+        .await;
+    state
+        .update_client_status(client_id, ClientStatus::Connected)
+        .await;
+    state
+        .update_client_status(client_id, ClientStatus::Disconnected)
+        .await;
 
     let clients: HashMap<_, _> = state
         .get_all_clients()

@@ -185,6 +185,10 @@ impl Server for TorrentPeerProtocol {
             "send_bitfield" => self.execute_send_bitfield(action),
             "send_piece" => self.execute_send_piece(action),
             "send_keepalive" => Ok(ActionResult::Output(vec![0, 0, 0, 0])),
+            // Not offered to the model (a peer answers messages, it does not hang up on its
+            // own), but the dashboard's "disconnect this peer" injects it through the peer
+            // command task, which half-closes the write side on this result.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown Peer action: {}", action_type)),
         }
     }

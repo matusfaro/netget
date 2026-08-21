@@ -64,6 +64,25 @@ Bytes are split with `tokio::io::split()`; the write half is an `Arc<Mutex<Write
 accept-loop `JoinHandle` is registered with `AppState::register_server_task()` so `stop_server`
 releases the socket. A connection is removed from the server view on every exit path.
 
+## Dashboard injection (peer handle + counters)
+
+Each live connection registers a **peer handle** (`peer_support::register_peer_channel` +
+`spawn_peer_command_task`) right after it is added, sharing the same `Arc<Mutex<WriteHalf>>` the
+reader writes through, so the dashboard's `[ message this peer ]` / `[ disconnect this peer ]`
+rows work. Every wire verb returns `Output`/`CloseConnection` (no `ActionResult::Custom`), so the
+generic peer task encodes an injected `send_shell_output` / `send_shell_prompt` /
+`end_shell_session` exactly as the model's would be — **no bespoke arm is needed**. The handle is
+removed on every exit path via the single cleanup in `handle_connection` (EOF, read error,
+oversize line, `end_shell_session`, and the fail-closed no-answer path all funnel through it).
+
+`[ disconnect this peer ]` injects `{"type":"close_connection"}`, which is **not** an LLM-facing
+verb but has an explicit `execute_action` arm mapping it to `ActionResult::CloseConnection` (FIN);
+without that arm the generic peer task would answer "Unknown action".
+
+`update_connection_stats` is called on every read (bytes/packets in) and every reader write
+(bytes/packets out), so the rail's `↓ ↑` move and `last_activity` refreshes. Injected writes go
+through the peer task and do not touch the counters (matches the tcp/ftp reference).
+
 ## Events — both fire
 
 | Event | Raised when | Actions offered |

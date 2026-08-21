@@ -21,7 +21,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 use tracing::{debug, error, warn};
 
 use crate::llm::action_helper::call_llm;
@@ -139,8 +139,51 @@ struct Db2Handler {
 
 impl Db2Handler {
     async fn run(&mut self, stream: tokio::net::TcpStream) -> Result<()> {
-        // Split read/write as the codebase requires (never clone the stream).
-        let (mut reader, mut writer) = tokio::io::split(stream);
+        // Split read/write as the codebase requires (never clone the stream). The
+        // write half is shared through an `Arc<Mutex<..>>` so the dashboard's
+        // peer-command task can inject writes / a disconnect alongside the
+        // reader's own replies without racing on the socket.
+        let (reader, write_half) = tokio::io::split(stream);
+        let write_half = Arc::new(Mutex::new(write_half));
+
+        // Peer messaging: register a command channel for THIS connection so the
+        // dashboard's "[ message this peer ]" / "[ disconnect this peer ]" rows
+        // work. Injected actions go through the same central executor the LLM
+        // path uses. Db2's own wire verbs are correlator-bound `Custom` results,
+        // so only `close_connection` reaches the wire here (see CLAUDE.md).
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &self.app_state,
+            self.server_id,
+            self.connection_id.as_u32(),
+        )
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            self.protocol.clone(),
+            self.app_state.clone(),
+            self.server_id,
+            self.connection_id.as_u32(),
+            write_half.clone(),
+            self.status_tx.clone(),
+        );
+
+        let result = self.run_loop(reader, &write_half).await;
+
+        // Every exit path — clean EOF, a read/parse error, or an injected
+        // disconnect — releases the peer handle so the rail stops offering a
+        // dead connection. Idempotent with the peer task's own close path.
+        self.app_state
+            .remove_peer_handle(self.server_id, self.connection_id.as_u32())
+            .await;
+        result
+    }
+
+    /// The read/dispatch/reply loop. Writes go through the shared `write_half`.
+    async fn run_loop(
+        &mut self,
+        mut reader: tokio::io::ReadHalf<tokio::net::TcpStream>,
+        write_half: &Arc<Mutex<tokio::io::WriteHalf<tokio::net::TcpStream>>>,
+    ) -> Result<()> {
         let mut buf: Vec<u8> = Vec::new();
         let mut tmp = [0u8; 8192];
 
@@ -194,6 +237,7 @@ impl Db2Handler {
                         Some(1),
                     )
                     .await;
+                let mut writer = write_half.lock().await;
                 writer.write_all(&bytes).await?;
                 writer.flush().await?;
             }

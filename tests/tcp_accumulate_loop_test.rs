@@ -166,7 +166,10 @@ async fn a_failed_event_is_still_recorded() {
         let entries = state
             .list_access_logs_for(Some(AccessLogOwner::Server(server_id.as_u32())), None)
             .await;
-        if let Some(entry) = entries.into_iter().find(|e| e.event_type == "tcp_data_received") {
+        if let Some(entry) = entries
+            .into_iter()
+            .find(|e| e.event_type == "tcp_data_received")
+        {
             recorded = Some(entry);
             break;
         }

@@ -12,16 +12,45 @@ use netget::protocol::dual::{
 #[test]
 fn alias_table_is_consistent() {
     let problems = alias_table_problems();
-    assert!(problems.is_empty(), "alias table problems:\n{}", problems.join("\n"));
+    assert!(
+        problems.is_empty(),
+        "alias table problems:\n{}",
+        problems.join("\n")
+    );
 }
 
 /// Golden set: protocols that unambiguously exist on both sides must map.
 #[test]
 fn golden_duals_map() {
     for server in [
-        "TCP", "UDP", "Telnet", "HTTP", "DNS", "Redis", "IRC", "FTP", "SMTP", "IMAP", "POP3",
-        "MQTT", "SSH", "WebSocket", "PostgreSQL", "MySQL", "LDAP", "NNTP", "SNMP", "Syslog",
-        "TLS", "VNC", "XMPP", "WHOIS", "NTP", "DHCP", "BOOTP", "STUN",
+        "TCP",
+        "UDP",
+        "Telnet",
+        "HTTP",
+        "DNS",
+        "Redis",
+        "IRC",
+        "FTP",
+        "SMTP",
+        "IMAP",
+        "POP3",
+        "MQTT",
+        "SSH",
+        "WebSocket",
+        "PostgreSQL",
+        "MySQL",
+        "LDAP",
+        "NNTP",
+        "SNMP",
+        "Syslog",
+        "TLS",
+        "VNC",
+        "XMPP",
+        "WHOIS",
+        "NTP",
+        "DHCP",
+        "BOOTP",
+        "STUN",
     ] {
         assert!(
             client_protocol_for_server(server).is_some(),
@@ -40,9 +69,18 @@ fn aliased_duals_map() {
     assert_eq!(client_protocol_for_server("SamlIdp"), Some("SAML"));
     assert_eq!(client_protocol_for_server("SamlSp"), Some("SAML"));
     assert_eq!(client_protocol_for_server("OpenID"), Some("OpenIDConnect"));
-    assert_eq!(client_protocol_for_server("Torrent-Tracker"), Some("BitTorrent Tracker"));
-    assert_eq!(client_protocol_for_server("Torrent-DHT"), Some("BitTorrent DHT"));
-    assert_eq!(client_protocol_for_server("Torrent-Peer"), Some("BitTorrent Peer Wire"));
+    assert_eq!(
+        client_protocol_for_server("Torrent-Tracker"),
+        Some("BitTorrent Tracker")
+    );
+    assert_eq!(
+        client_protocol_for_server("Torrent-DHT"),
+        Some("BitTorrent DHT")
+    );
+    assert_eq!(
+        client_protocol_for_server("Torrent-Peer"),
+        Some("BitTorrent Peer Wire")
+    );
 }
 
 /// Case/punctuation-only differences resolve through normalization, without
@@ -54,9 +92,15 @@ fn normalized_duals_map() {
     assert_eq!(client_protocol_for_server("KAFKA"), Some("Kafka"));
     assert_eq!(client_protocol_for_server("WireGuard"), Some("wireguard"));
     assert_eq!(client_protocol_for_server("OSPF"), Some("ospf"));
-    assert_eq!(client_protocol_for_server("SOCKET_FILE"), Some("SocketFile"));
+    assert_eq!(
+        client_protocol_for_server("SOCKET_FILE"),
+        Some("SocketFile")
+    );
     assert_eq!(client_protocol_for_server("SSH Agent"), Some("SSH Agent"));
-    assert_eq!(client_protocol_for_server("BLUETOOTH_BLE"), Some("Bluetooth (BLE)"));
+    assert_eq!(
+        client_protocol_for_server("BLUETOOTH_BLE"),
+        Some("Bluetooth (BLE)")
+    );
 }
 
 /// Server-only protocols must return None — a false positive here would make
@@ -64,10 +108,23 @@ fn normalized_duals_map() {
 #[test]
 fn server_only_protocols_have_no_dual() {
     for server in [
-        "RADIUS", "RDP", "TFTP", "SVN", "Modbus", "CoAP", "Memcached", "QUIC", "Mercurial",
-        "Reverse Shell", "OpenVPN", "RTSP", "HLS", "RTP",
+        "RADIUS",
+        "RDP",
+        "TFTP",
+        "SVN",
+        "Modbus",
+        "CoAP",
+        "Memcached",
+        "QUIC",
+        "Mercurial",
+        "Reverse Shell",
+        "OpenVPN",
+        "RTSP",
+        "HLS",
+        "RTP",
         // Profile servers deliberately not paired with the generic base clients:
-        "USB-Keyboard", "BLUETOOTH_BLE_KEYBOARD",
+        "USB-Keyboard",
+        "BLUETOOTH_BLE_KEYBOARD",
     ] {
         assert_eq!(
             client_protocol_for_server(server),
@@ -90,10 +147,16 @@ fn mapping_is_deterministic() {
 fn compiled_mapping_is_subset_of_codebase_mapping() {
     for (server, client) in all_dual_protocols() {
         if let Some(compiled) = compiled_client_protocol_for_server(server) {
-            assert_eq!(compiled, client, "compiled mapping disagrees for {server:?}");
+            assert_eq!(
+                compiled, client,
+                "compiled mapping disagrees for {server:?}"
+            );
         }
     }
     // TCP is in every default/test build; the demo pair must be live.
     #[cfg(feature = "tcp")]
-    assert_eq!(compiled_client_protocol_for_server("TCP").as_deref(), Some("TCP"));
+    assert_eq!(
+        compiled_client_protocol_for_server("TCP").as_deref(),
+        Some("TCP")
+    );
 }

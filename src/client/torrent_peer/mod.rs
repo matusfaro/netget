@@ -74,6 +74,30 @@ impl TorrentPeerClient {
         let (mut read_half, write_half) = tokio::io::split(stream);
         let write_half_arc = Arc::new(Mutex::new(write_half));
 
+        // Command channel for the dashboard's [ send_* ] / [ disconnect ] rows. Registered
+        // BEFORE the connected-event LLM call (which a manual `*` rule can park for minutes),
+        // so an injected send works for the whole park. The read loop uses `read_exact`,
+        // which is NOT cancellation-safe, so the channel is drained by its own task sharing
+        // the write half rather than by a `select!` arm.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_write = write_half_arc.clone();
+        let cmd_protocol = Arc::new(TorrentPeerClientProtocol::new());
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx,
+                cmd_protocol,
+                cmd_write,
+                client_id,
+                cmd_state,
+                cmd_tx,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn read loop for peer messages
         let app_state_clone = app_state.clone();
         let status_tx_clone = status_tx.clone();
@@ -274,6 +298,10 @@ impl TorrentPeerClient {
                 }
             }
 
+            // Every read-loop exit (handshake error, message/length read error, EOF, an
+            // injected or LLM disconnect) lands here: drop the command handle so the rail
+            // stops offering [ send ] on a dead client and a late send fails fast.
+            app_state_clone.remove_client_handle(client_id).await;
             app_state_clone
                 .update_client_status(client_id, ClientStatus::Disconnected)
                 .await;
@@ -355,13 +383,14 @@ impl TorrentPeerClient {
         Ok(local_addr)
     }
 
-    /// Execute a peer action
+    /// Execute a peer action, putting its bytes on the wire. This is the single encoder for
+    /// the peer-wire Custom results, shared by the LLM path and the injected command loop.
     async fn execute_peer_action(
         client_id: ClientId,
         action: serde_json::Value,
         write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
         protocol: &dyn crate::llm::actions::client_trait::Client,
-    ) -> Result<()> {
+    ) -> Result<PeerApplied> {
         use crate::llm::actions::client_trait::ClientActionResult;
 
         match protocol.execute_action(action)? {
@@ -388,6 +417,7 @@ impl TorrentPeerClient {
 
                 write_half.lock().await.write_all(&handshake).await?;
                 trace!("Peer client {} sent handshake", client_id);
+                Ok(PeerApplied::Sent(handshake.len()))
             }
             ClientActionResult::Custom { name, data } if name == "peer_message" => {
                 let msg_type = data
@@ -410,13 +440,99 @@ impl TorrentPeerClient {
 
                 write_half.lock().await.write_all(&message).await?;
                 trace!("Peer client {} sent message type {}", client_id, msg_type);
+                Ok(PeerApplied::Sent(message.len()))
             }
             ClientActionResult::Disconnect => {
                 info!("Peer client {} disconnecting", client_id);
+                Ok(PeerApplied::Disconnect)
             }
-            _ => {}
+            _ => Ok(PeerApplied::Nothing),
         }
-
-        Ok(())
     }
+
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot run this client's
+    /// vocabulary because the wire verbs yield `ClientActionResult::Custom`, so each action
+    /// goes through [`Self::execute_peer_action`] - the same encoder the LLM path uses - and
+    /// the outcome is recorded and replied exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: tokio::sync::mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        protocol: Arc<TorrentPeerClientProtocol>,
+        write_half: Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome: anyhow::Result<ClientSendOutcome> = match Self::execute_peer_action(
+                client_id,
+                action.clone(),
+                &write_half,
+                protocol.as_ref(),
+            )
+            .await
+            {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(PeerApplied::Disconnect) => Ok(ClientSendOutcome::Disconnected),
+                Ok(PeerApplied::Sent(0)) | Ok(PeerApplied::Nothing) => {
+                    Ok(ClientSendOutcome::Executed {
+                        detail: "executed (nothing to write)".to_string(),
+                    })
+                }
+                Ok(PeerApplied::Sent(bytes_sent)) => Ok(ClientSendOutcome::Sent { bytes_sent }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(o) => serde_json::to_value(o).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("Peer client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // BitTorrent has no graceful-close message; half-close so the peer reads EOF
+                // and the read loop runs its normal disconnect path (which drops the handle).
+                let _ = write_half.lock().await.shutdown().await;
+                break;
+            }
+        }
+    }
+}
+
+/// Result of putting one executed peer action on the wire.
+enum PeerApplied {
+    /// `n` bytes written to the peer.
+    Sent(usize),
+    /// The action requested disconnect (nothing written; the caller half-closes).
+    Disconnect,
+    /// Nothing to do (an action variant this client does not turn into wire bytes).
+    Nothing,
 }

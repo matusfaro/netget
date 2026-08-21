@@ -26,17 +26,20 @@ pub fn detail_lines(entry: &AccessLogEntry) -> Vec<String> {
     lines.push(String::new());
 
     lines.push("── request ──".to_string());
-    let request = serde_json::to_string_pretty(&entry.request)
-        .unwrap_or_else(|_| entry.request.to_string());
+    let request =
+        serde_json::to_string_pretty(&entry.request).unwrap_or_else(|_| entry.request.to_string());
     lines.extend(request.lines().map(|l| l.to_string()));
     lines.push(String::new());
 
-    lines.push(format!("── response ({} action(s)) ──", entry.response.len()));
+    lines.push(format!(
+        "── response ({} action(s)) ──",
+        entry.response.len()
+    ));
     if entry.response.is_empty() {
         lines.push("(no actions)".to_string());
     } else {
-        let response = serde_json::to_string_pretty(&entry.response)
-            .unwrap_or_else(|_| "[]".to_string());
+        let response =
+            serde_json::to_string_pretty(&entry.response).unwrap_or_else(|_| "[]".to_string());
         lines.extend(response.lines().map(|l| l.to_string()));
     }
     lines

@@ -202,6 +202,10 @@ impl Server for Db2Protocol {
             "db2_reject_connection" => self.execute_reject(action),
             "db2_query_ok" => self.execute_query_ok(action),
             "db2_query_error" => self.execute_query_error(action),
+            // The dashboard's "[ disconnect this peer ]" injects this. The generic
+            // peer-command task half-closes the write side on CloseConnection; the
+            // reader's `read() == 0` path then runs the normal teardown.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown Db2 action: {}", action_type)),
         }
     }

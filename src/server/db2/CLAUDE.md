@@ -83,10 +83,35 @@ All action params are structured — no raw bytes/base64.
 - `spawn_with_llm_actions` binds with `?` (bind failure → `ServerStatus::Error`)
   and registers the accept-loop `JoinHandle` via `register_server_task()`.
 - One task per connection over `tokio::io::split()` (never clone the stream). The
-  read loop buffers until a full DSS is present (`dss_declared_len`), parses one
-  DSS, dispatches, and writes the reply. No lock is held across an `.await`.
+  write half is an `Arc<Mutex<WriteHalf>>` shared by the reader loop and the peer
+  command task; the read loop buffers until a full DSS is present
+  (`dss_declared_len`), parses one DSS, dispatches, and writes the reply. No lock
+  is held across an `.await`.
 - Per-connection `authenticated` flag, set by an accepted SECCHK; ACCRDB and any
   statement require it.
+
+## Dashboard peer injection
+
+Each connection registers a peer handle (`peer_support::register_peer_channel` +
+`spawn_peer_command_task`) after it is added to the server, and drops it
+(`remove_peer_handle`) on every exit of the read loop. So the dashboard shows
+`[ message this peer ]` / `[ disconnect this peer ]` on a live Db2 connection.
+
+- **`[ disconnect this peer ]`** works: it injects `close_connection`, which
+  `execute_action` maps to `ActionResult::CloseConnection`. The generic peer task
+  half-closes the write side; the reader's `read() == 0` path runs the normal
+  teardown and the peer reads EOF.
+- **Custom-result gap:** Db2's four wire verbs (`db2_accept_connection`,
+  `db2_reject_connection`, `db2_query_ok`, `db2_query_error`) return
+  `ActionResult::Custom` because their DRDA replies (SECCHKRM / SQLCARD) are
+  **correlator-bound** — the correlator comes from the client's pending request
+  DSS, which an out-of-band injection does not have. The generic peer task
+  therefore reports an injected wire verb as `Executed` and writes nothing, and no
+  bespoke path is provided because encoding a correlator-less reply would be
+  incorrect. Wire replies remain driven by the read loop's dispatch, where the
+  correlator is known.
+- Connection counters (`update_connection_stats`) are updated on every DSS read
+  and every reply write, so the rail's `↓/↑` byte and packet counts move.
 
 ## NOT implemented (be honest)
 

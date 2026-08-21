@@ -394,15 +394,8 @@ pub async fn call_llm(
     event: &Event,
     protocol: &dyn Server,
 ) -> Result<ExecutionResult> {
-    let outcome = call_llm_inner(
-        llm_client,
-        state,
-        server_id,
-        connection_id,
-        event,
-        protocol,
-    )
-    .await;
+    let outcome =
+        call_llm_inner(llm_client, state, server_id, connection_id, event, protocol).await;
     if let Err(e) = &outcome {
         record_failed_event_access_log(state, server_id, connection_id, protocol, event, e).await;
     }

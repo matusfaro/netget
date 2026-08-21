@@ -39,7 +39,10 @@ pub async fn execute(
         }
         UserCommand::ShowEnvironment => environment_report(state).await,
         UserCommand::ShowWebSearch => {
-            vec![format!("Web search: {:?}", state.get_web_search_mode().await)]
+            vec![format!(
+                "Web search: {:?}",
+                state.get_web_search_mode().await
+            )]
         }
         UserCommand::SetWebSearch { mode } => {
             state.set_web_search_mode(mode).await;
@@ -63,9 +66,7 @@ pub async fn execute(
                 ],
                 Err(e) => vec![format!("{e}")],
             },
-            None => vec![
-                "Usage: /docs <protocol> — or press d on a band in the rail".to_string(),
-            ],
+            None => vec!["Usage: /docs <protocol> — or press d on a band in the rail".to_string()],
         },
         UserCommand::ShowBackend => {
             vec![format!("Backend URL: {}", state.get_ollama_url().await)]
@@ -139,8 +140,14 @@ async fn environment_report(state: &AppState) -> Vec<String> {
     lines.push(String::new());
     lines.push("Privileges:".to_string());
     lines.push(format!("  root:            {}", caps.is_root));
-    lines.push(format!("  privileged port: {}", caps.can_bind_privileged_ports));
+    lines.push(format!(
+        "  privileged port: {}",
+        caps.can_bind_privileged_ports
+    ));
     lines.push(format!("  raw sockets:     {}", caps.has_raw_socket_access));
-    lines.push(format!("  packet capture:  {}", caps.has_packet_capture_access));
+    lines.push(format!(
+        "  packet capture:  {}",
+        caps.has_packet_capture_access
+    ));
     lines
 }

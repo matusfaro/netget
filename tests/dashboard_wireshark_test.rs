@@ -33,7 +33,10 @@ fn http_server_on_loopback_gets_loopback_interface_port_filters_and_decode_as() 
         plan.wireshark_command().unwrap(),
         "wireshark -k -i lo0 -f \"tcp port 8080\" -Y \"tcp.port == 8080 && http\" -d tcp.port==8080,http"
     );
-    assert!(plan.tshark_command().unwrap().starts_with("tshark -l -i lo0 "));
+    assert!(plan
+        .tshark_command()
+        .unwrap()
+        .starts_with("tshark -l -i lo0 "));
 }
 
 #[test]
@@ -155,7 +158,10 @@ fn client_targets_split_the_remote_address_and_filter_on_the_remote_port() {
         Platform::MacOs,
     );
     assert_eq!(remote.capture_filter, "tcp port 1883 and host 10.1.2.3");
-    assert!(remote.notes.iter().any(|n| n.contains("route -n get 10.1.2.3")));
+    assert!(remote
+        .notes
+        .iter()
+        .any(|n| n.contains("route -n get 10.1.2.3")));
 }
 
 #[test]
@@ -216,10 +222,10 @@ fn the_row_is_a_wireshark_action_on_servers_and_clients() {
         intercepts: Vec::new(),
     };
     let rows = tree::server_rows(&server, &TreeState::default());
-    assert!(rows.iter().any(|r| matches!(
-        r.node,
-        NodeId::Action(_, RowAction::Wireshark)
-    ) && r.label.contains("wireshark")));
+    assert!(rows.iter().any(
+        |r| matches!(r.node, NodeId::Action(_, RowAction::Wireshark))
+            && r.label.contains("wireshark")
+    ));
 
     let client = ClientRow {
         id: ClientId::new(1),

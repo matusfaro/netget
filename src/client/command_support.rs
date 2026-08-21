@@ -179,7 +179,9 @@ where
             ClientActionResult::Custom { name, .. } => {
                 // The generic arm cannot run protocol-specific machinery;
                 // protocols with Custom vocabularies need a bespoke arm body.
-                details.push(format!("custom result '{name}' not executed by generic arm"));
+                details.push(format!(
+                    "custom result '{name}' not executed by generic arm"
+                ));
             }
             ClientActionResult::Multiple(_) => {
                 details.push("nested multiple ignored".to_string());

@@ -353,7 +353,7 @@ impl Socks5Client {
                     }
                 }
             }
-        
+
             // The loop owns the only receiver; dropping the registered handle
             // makes later send_to_client calls fail fast instead of timing out.
             app_state.remove_client_handle(client_id).await;

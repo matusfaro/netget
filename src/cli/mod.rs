@@ -346,8 +346,16 @@ pub async fn run() -> Result<()> {
             .await
         } else {
             debug!("Entering dashboard TUI...");
-            crate::tui::run_dashboard(state, app, event_handler, llm, settings, &args, color_palette)
-                .await
+            crate::tui::run_dashboard(
+                state,
+                app,
+                event_handler,
+                llm,
+                settings,
+                &args,
+                color_palette,
+            )
+            .await
         }
     } else {
         // No prompt and no terminal available

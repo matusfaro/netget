@@ -148,11 +148,11 @@ pub fn wire_for(protocol: &str) -> Wire {
         "tls" | "dot" | "tor_relay" => tcp("tls"),
         "quic" => udp("quic"),
         // ---- web ---------------------------------------------------------
-        "http" | "websocket" | "proxy" | "webdav" | "jsonrpc" | "xmlrpc" | "openapi"
-        | "openai" | "ollama" | "mcp" | "oauth2" | "openid" | "saml_idp" | "saml_sp" | "s3"
-        | "sqs" | "dynamo" | "elasticsearch" | "couchdb" | "kubernetes" | "oci_registry"
-        | "npm" | "pypi" | "maven" | "rss" | "hls" | "yarn" | "spark" | "snowflake"
-        | "mercurial" | "webrtc_signaling" | "torrent_tracker" => tcp("http"),
+        "http" | "websocket" | "proxy" | "webdav" | "jsonrpc" | "xmlrpc" | "openapi" | "openai"
+        | "ollama" | "mcp" | "oauth2" | "openid" | "saml_idp" | "saml_sp" | "s3" | "sqs"
+        | "dynamo" | "elasticsearch" | "couchdb" | "kubernetes" | "oci_registry" | "npm"
+        | "pypi" | "maven" | "rss" | "hls" | "yarn" | "spark" | "snowflake" | "mercurial"
+        | "webrtc_signaling" | "torrent_tracker" => tcp("http"),
         "doh" => tcp("tls"),
         "http2" => tcp("http2"),
         "grpc" | "etcd" => with_display(tcp("http2"), "grpc || http2"),
@@ -473,8 +473,7 @@ impl CapturePlan {
         if let Some(note) = wire.note {
             notes.push(note.to_string());
         }
-        if !matches!(wire.transport, Transport::NotNetwork | Transport::Raw(_)) && port.is_none()
-        {
+        if !matches!(wire.transport, Transport::NotNetwork | Transport::Raw(_)) && port.is_none() {
             notes.push(match target.role {
                 Role::Server => "No fixed port yet (0 lets the OS pick one at start). The filter \
                                  matches all traffic on the transport; re-open this from the \
@@ -514,8 +513,9 @@ impl CapturePlan {
                 Platform::Windows => "Live capture needs Npcap with the loopback adapter enabled \
                                       (the Wireshark installer offers it)."
                     .to_string(),
-                Platform::Other => "Live capture needs raw-socket privilege on this platform."
-                    .to_string(),
+                Platform::Other => {
+                    "Live capture needs raw-socket privilege on this platform.".to_string()
+                }
             });
         }
 
@@ -583,7 +583,9 @@ impl CapturePlan {
         lines.push(PlanLine::Blank);
 
         if let Some(cmd) = self.wireshark_command() {
-            lines.push(PlanLine::Heading("Wireshark (GUI) — paste in a terminal".into()));
+            lines.push(PlanLine::Heading(
+                "Wireshark (GUI) — paste in a terminal".into(),
+            ));
             lines.push(PlanLine::Value(cmd));
             lines.push(PlanLine::Blank);
         }
@@ -593,8 +595,13 @@ impl CapturePlan {
             lines.push(PlanLine::Blank);
         }
         if self.wire.transport != Transport::NotNetwork {
-            lines.push(PlanLine::Heading("Pieces, for an already-open Wireshark".into()));
-            lines.push(PlanLine::Note(format!("interface:       {}", self.interface)));
+            lines.push(PlanLine::Heading(
+                "Pieces, for an already-open Wireshark".into(),
+            ));
+            lines.push(PlanLine::Note(format!(
+                "interface:       {}",
+                self.interface
+            )));
             lines.push(PlanLine::Note(format!(
                 "capture filter:  {}",
                 if self.capture_filter.is_empty() {

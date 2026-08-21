@@ -95,9 +95,14 @@ pub fn alias_table_problems() -> Vec<String> {
     let mut problems = Vec::new();
     for (server, client) in SERVER_TO_CLIENT_ALIASES {
         if !ALL_KNOWN_PROTOCOLS.iter().any(|(name, _)| name == server) {
-            problems.push(format!("alias server side {server:?} is not in ALL_KNOWN_PROTOCOLS"));
+            problems.push(format!(
+                "alias server side {server:?} is not in ALL_KNOWN_PROTOCOLS"
+            ));
         }
-        if !ALL_KNOWN_CLIENT_PROTOCOLS.iter().any(|(name, _)| name == client) {
+        if !ALL_KNOWN_CLIENT_PROTOCOLS
+            .iter()
+            .any(|(name, _)| name == client)
+        {
             problems.push(format!(
                 "alias client side {client:?} is not in ALL_KNOWN_CLIENT_PROTOCOLS"
             ));

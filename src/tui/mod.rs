@@ -82,13 +82,7 @@ pub async fn run_dashboard(
     state.set_web_approval_channel(web_approval_tx).await;
 
     let styles = Styles::from_palette(&palette);
-    let mut app = DashboardApp::new(
-        core,
-        styles,
-        status_tx.clone(),
-        ui_tx,
-        llm_client.clone(),
-    );
+    let mut app = DashboardApp::new(core, styles, status_tx.clone(), ui_tx, llm_client.clone());
 
     app.push_system(format!(
         "NetGet dashboard — Tab moves between chat and the instance rail, F1 for keys{}",
@@ -108,8 +102,8 @@ pub async fn run_dashboard(
         let model = resolved.model.clone();
         let tx = status_tx.clone();
         tokio::spawn(async move {
-            let _ = crate::cli::banner::generate_and_stream_ascii_banner(&base_url, &model, tx)
-                .await;
+            let _ =
+                crate::cli::banner::generate_and_stream_ascii_banner(&base_url, &model, tx).await;
         });
     }
 

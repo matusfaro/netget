@@ -160,7 +160,10 @@ async fn client_resident_script_keeps_state_across_events() {
         })]),
         ..Default::default()
     };
-    let server_id = server_form.create(&state, tx.clone()).await.expect("create tcp server");
+    let server_id = server_form
+        .create(&state, tx.clone())
+        .await
+        .expect("create tcp server");
     let port = wait_for_port(&state, server_id).await;
 
     let script = r#"

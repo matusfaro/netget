@@ -251,6 +251,10 @@ impl Server for ReverseShellProtocol {
                 Ok(ActionResult::Output(prompt.as_bytes().to_vec()))
             }
             "end_shell_session" => Ok(ActionResult::CloseConnection),
+            // Injected by the dashboard's [ disconnect this peer ] row (not an LLM verb).
+            // Without this arm the generic peer task would answer "Unknown action" instead of
+            // half-closing the connection. Same effect as end_shell_session: FIN, then teardown.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             "no_shell_output" => Ok(ActionResult::WaitForMore),
             other => Err(anyhow::anyhow!("Unknown reverse-shell action: {other}")),
         }

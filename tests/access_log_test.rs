@@ -85,16 +85,44 @@ async fn server_and_client_entries_coexist_and_filter() {
     let state = AppState::new();
 
     state
-        .record_access_log(AccessLogOwner::Server(1), "tcp", Some(3), "tcp_data_received", json!({"a": 1}), vec![])
+        .record_access_log(
+            AccessLogOwner::Server(1),
+            "tcp",
+            Some(3),
+            "tcp_data_received",
+            json!({"a": 1}),
+            vec![],
+        )
         .await;
     state
-        .record_access_log(AccessLogOwner::Client(2), "tcp", None, "tcp_data_received", json!({"b": 2}), vec![])
+        .record_access_log(
+            AccessLogOwner::Client(2),
+            "tcp",
+            None,
+            "tcp_data_received",
+            json!({"b": 2}),
+            vec![],
+        )
         .await;
     state
-        .record_access_log(AccessLogOwner::Server(1), "tcp", Some(3), "tcp_data_received", json!({"c": 3}), vec![])
+        .record_access_log(
+            AccessLogOwner::Server(1),
+            "tcp",
+            Some(3),
+            "tcp_data_received",
+            json!({"c": 3}),
+            vec![],
+        )
         .await;
     state
-        .record_access_log(AccessLogOwner::Server(9), "http", None, "http_request", json!({"d": 4}), vec![])
+        .record_access_log(
+            AccessLogOwner::Server(9),
+            "http",
+            None,
+            "http_request",
+            json!({"d": 4}),
+            vec![],
+        )
         .await;
 
     let all = state.list_access_logs(None).await;
@@ -104,7 +132,9 @@ async fn server_and_client_entries_coexist_and_filter() {
         .list_access_logs_for(Some(AccessLogOwner::Server(1)), None)
         .await;
     assert_eq!(server1.len(), 2);
-    assert!(server1.iter().all(|e| e.server_id == Some(1) && e.client_id.is_none()));
+    assert!(server1
+        .iter()
+        .all(|e| e.server_id == Some(1) && e.client_id.is_none()));
 
     let client2 = state
         .list_access_logs_for(Some(AccessLogOwner::Client(2)), None)
@@ -125,19 +155,39 @@ async fn server_and_client_entries_coexist_and_filter() {
 async fn server_entry_json_shape_is_backward_compatible() {
     let state = AppState::new();
     state
-        .record_access_log(AccessLogOwner::Server(5), "http", Some(1), "http_request", json!({}), vec![])
+        .record_access_log(
+            AccessLogOwner::Server(5),
+            "http",
+            Some(1),
+            "http_request",
+            json!({}),
+            vec![],
+        )
         .await;
     state
-        .record_access_log(AccessLogOwner::Client(6), "tcp", None, "tcp_data_received", json!({}), vec![])
+        .record_access_log(
+            AccessLogOwner::Client(6),
+            "tcp",
+            None,
+            "tcp_data_received",
+            json!({}),
+            vec![],
+        )
         .await;
 
     let server_entry = state.get_access_log(1).await.unwrap();
     let json = serde_json::to_value(&server_entry).unwrap();
     assert_eq!(json["server_id"], 5);
-    assert!(json.get("client_id").is_none(), "client_id key must be absent on server entries");
+    assert!(
+        json.get("client_id").is_none(),
+        "client_id key must be absent on server entries"
+    );
 
     let client_entry = state.get_access_log(2).await.unwrap();
     let json = serde_json::to_value(&client_entry).unwrap();
     assert_eq!(json["client_id"], 6);
-    assert!(json.get("server_id").is_none(), "server_id key must be absent on client entries");
+    assert!(
+        json.get("server_id").is_none(),
+        "server_id key must be absent on client entries"
+    );
 }

@@ -9,9 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{
-    DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyEventKind,
-};
+use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -205,8 +203,7 @@ pub async fn run(mut app: DashboardApp, mut ctx: LoopContext) -> Result<()> {
 async fn refresh_status(app: &mut DashboardApp, state: &AppState) {
     app.status.model = state.get_ollama_model().await.unwrap_or_default();
     app.status.web_search = format!("{:?}", state.get_web_search_mode().await).to_uppercase();
-    app.status.handler_mode =
-        format!("{:?}", state.get_event_handler_mode().await).to_uppercase();
+    app.status.handler_mode = format!("{:?}", state.get_event_handler_mode().await).to_uppercase();
     app.status.scripting = state
         .get_selected_scripting_mode()
         .await

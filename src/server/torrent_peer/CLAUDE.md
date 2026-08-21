@@ -327,6 +327,21 @@ You are a BitTorrent leecher. You have no pieces initially. Respond to handshake
 3. LLM analyzes: Peer has pieces [0-7], missing [8+]
 4. LLM returns: `{type: "send_interested"}` (if peer has pieces we need)
 
+## Dashboard injection (peer handle + counters)
+
+Every connection registers a peer handle (`peer_support::register_peer_channel` +
+`spawn_peer_command_task`) right after `handle_connection` starts, so the dashboard's
+`[ message this peer ]` / `[ disconnect this peer ]` rows work; the handle is removed on
+every exit path through the single cleanup at the end of `handle_connection`. Every wire
+verb returns `ActionResult::Output`, so the generic peer command task encodes an injected
+`send_unchoke` / `send_piece` with exactly the code the LLM path uses — no Custom-result
+gap. `execute_action` gains a `close_connection => ActionResult::CloseConnection` arm (not
+offered to the model) so `[ disconnect this peer ]` half-closes the write side; the reader's
+`read() == 0` path then runs teardown.
+
+Read and write both call `update_connection_stats`, so the rail's `↓ ↑` counters move.
+Note that injected sends go through the generic peer task, which does not touch the counters.
+
 ## Connection State Tracking
 
 `protocol_info` is `ProtocolConnectionInfo::empty()`. `ProtocolConnectionInfo` is a generic
