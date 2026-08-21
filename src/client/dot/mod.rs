@@ -53,6 +53,7 @@ impl DotClient {
         app_state: Arc<AppState>,
         status_tx: mpsc::UnboundedSender<String>,
         client_id: ClientId,
+        startup_params: Option<crate::protocol::StartupParams>,
     ) -> Result<SocketAddr> {
         info!("DoT client {} connecting to {}", client_id, remote_addr);
         let _ = status_tx.send(format!(
@@ -60,13 +61,30 @@ impl DotClient {
             client_id, remote_addr
         ));
 
+        // Both parameters are declared in `get_startup_parameters()`; until this pass neither
+        // was read, so `verify_tls: false` silently still verified against the Mozilla roots
+        // and a NetGet DoT server (self-signed) could never be reached.
+        let verify_tls = startup_params
+            .as_ref()
+            .map(|p| p.get_optional_bool("verify_tls"))
+            .transpose()?
+            .flatten()
+            .unwrap_or(true);
+        let server_name_override = startup_params
+            .as_ref()
+            .map(|p| p.get_optional_string("server_name"))
+            .transpose()?
+            .flatten();
+
         // Parse remote address
         let remote_socket_addr: SocketAddr = remote_addr
             .parse()
             .context("Invalid remote address format")?;
 
         // Extract hostname for SNI (or use IP as fallback)
-        let server_name = remote_addr.split(':').next().unwrap_or("dns.server");
+        let server_name = server_name_override
+            .as_deref()
+            .unwrap_or_else(|| remote_addr.split(':').next().unwrap_or("dns.server"));
 
         // Install a rustls CryptoProvider before building the config. Without one,
         // `ClientConfig::builder()` panics rather than returning an error whenever the
@@ -79,9 +97,17 @@ impl DotClient {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
 
-        let config = ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
+        let config = if verify_tls {
+            ClientConfig::builder()
+                .with_root_certificates(root_store)
+                .with_no_client_auth()
+        } else {
+            debug!("DoT client {} accepting invalid certificates", client_id);
+            ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoVerification))
+                .with_no_client_auth()
+        };
 
         let connector = TlsConnector::from(Arc::new(config));
 
@@ -127,6 +153,23 @@ impl DotClient {
             memory: String::new(),
         }));
 
+        // Command channel for injected actions (the dashboard's [ send_dns_query ]).
+        // Registered BEFORE the connected-event LLM call, which a manual `*` rule can park
+        // for minutes - the operator must be able to reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // The read loop does framed `read_exact` reads, which are not cancellation-safe, so
+        // commands are drained by their own task rather than a `select!` arm. Both tasks
+        // share the write half.
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_write = write_half_arc.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(command_rx, cmd_write, client_id, cmd_state, cmd_tx).await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Spawn read loop for handling responses
         let write_for_read = write_half_arc.clone();
         let client_data_for_read = client_data.clone();
@@ -142,7 +185,7 @@ impl DotClient {
                 read_half,
                 write_for_read,
                 client_id,
-                read_app_state,
+                read_app_state.clone(),
                 read_llm_client,
                 read_status_tx,
                 client_data_for_read,
@@ -151,6 +194,10 @@ impl DotClient {
             {
                 error!("DoT client {} read loop error: {}", client_id, e);
             }
+            // Every exit of the read loop (EOF, read error, LLM or injected disconnect) ends
+            // here: drop the command handle so the rail stops offering [ send ] on a dead
+            // client.
+            read_app_state.remove_client_handle(client_id).await;
         });
         task_registrar
             .register_client_task(client_id, task_handle)
@@ -436,7 +483,79 @@ impl DotClient {
         Ok(())
     }
 
-    /// Execute a client action
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot run this client's
+    /// vocabulary because `send_dns_query` yields `ClientActionResult::Custom`, so the action
+    /// goes through [`Self::apply_action`] - the same function the LLM path uses, so the DNS
+    /// encoding exists exactly once - and the outcome is recorded and replied the way the
+    /// generic arm does it.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        write_half: Arc<Mutex<WriteHalf<TlsStream<TcpStream>>>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = DotClientProtocol::new();
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(result, &write_half, client_id, &status_tx)
+                    .await
+                    .map(|applied| match applied {
+                        Applied::Disconnect => ClientSendOutcome::Disconnected,
+                        Applied::Sent(0) => ClientSendOutcome::Executed {
+                            detail: "executed (nothing to write)".to_string(),
+                        },
+                        Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                    }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("DoT client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // Half-close: the server reads EOF and closes; the read loop then sees
+                // UnexpectedEof and runs its normal disconnect path.
+                let _ = write_half.lock().await.shutdown().await;
+                break;
+            }
+        }
+    }
+
+    /// Execute a client action produced by the LLM
     async fn execute_client_action(
         client_id: ClientId,
         action_json: serde_json::Value,
@@ -447,10 +566,29 @@ impl DotClient {
         let protocol = DotClientProtocol::new();
         let action_result = protocol.execute_action(action_json)?;
 
+        if let Applied::Disconnect =
+            Self::apply_action(action_result, write_half, client_id, status_tx).await?
+        {
+            info!("DoT client {} disconnecting", client_id);
+            // Remove client from app state, which will cause the read loop to exit
+            app_state.remove_client(client_id).await;
+            let _ = status_tx.send(format!("[CLIENT] DoT client {} disconnected", client_id));
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Put one executed action on the wire. Shared by the LLM path and injected commands.
+    async fn apply_action(
+        action_result: ClientActionResult,
+        write_half: &Arc<Mutex<WriteHalf<TlsStream<TcpStream>>>>,
+        client_id: ClientId,
+        status_tx: &mpsc::UnboundedSender<String>,
+    ) -> Result<Applied> {
         match action_result {
             ClientActionResult::Custom { name, data } if name == "dns_query" => {
-                // Send DNS query
-                Self::send_dns_query(
+                let bytes_sent = Self::send_dns_query(
                     client_id,
                     data.get("domain")
                         .and_then(|v| v.as_str())
@@ -467,21 +605,16 @@ impl DotClient {
                     status_tx,
                 )
                 .await?;
+                Ok(Applied::Sent(bytes_sent))
             }
-            ClientActionResult::Disconnect => {
-                info!("DoT client {} disconnecting", client_id);
-                // Remove client from app state, which will cause the read loop to exit
-                app_state.remove_client(client_id).await;
-                let _ = status_tx.send(format!("[CLIENT] DoT client {} disconnected", client_id));
-                let _ = status_tx.send("__UPDATE_UI__".to_string());
-            }
+            ClientActionResult::Disconnect => Ok(Applied::Disconnect),
             ClientActionResult::WaitForMore => {
                 debug!("DoT client {} waiting for more data", client_id);
+                Ok(Applied::Sent(0))
             }
-            _ => {}
+            // NoAction, SendData (unused by this vocabulary), other Custom, Multiple.
+            _ => Ok(Applied::Sent(0)),
         }
-
-        Ok(())
     }
 
     /// Send a DNS query over TLS
@@ -492,7 +625,7 @@ impl DotClient {
         recursive: bool,
         write_half: &Arc<Mutex<WriteHalf<TlsStream<TcpStream>>>>,
         status_tx: &mpsc::UnboundedSender<String>,
-    ) -> Result<()> {
+    ) -> Result<usize> {
         info!(
             "DoT client {} querying {} {}",
             client_id, domain, query_type
@@ -527,12 +660,17 @@ impl DotClient {
         prefixed_message.extend_from_slice(&dns_bytes);
 
         // Send via TLS stream
-        write_half
-            .lock()
-            .await
-            .write_all(&prefixed_message)
-            .await
-            .context("Failed to send DNS query over TLS")?;
+        {
+            let mut writer = write_half.lock().await;
+            writer
+                .write_all(&prefixed_message)
+                .await
+                .context("Failed to send DNS query over TLS")?;
+            writer
+                .flush()
+                .await
+                .context("Failed to flush DNS query over TLS")?;
+        }
 
         debug!(
             "DoT client {} sent DNS query ({} bytes)",
@@ -540,6 +678,63 @@ impl DotClient {
             prefixed_message.len()
         );
 
-        Ok(())
+        Ok(prefixed_message.len())
+    }
+}
+
+/// What [`DotClient::apply_action`] did with one action.
+enum Applied {
+    /// Bytes written (0 when the action produced no wire output).
+    Sent(usize),
+    /// The action asked to end the session.
+    Disconnect,
+}
+
+/// Certificate verifier that accepts any certificate. Used only when the declared
+/// `verify_tls` startup parameter is `false` (self-signed NetGet DoT servers, tests).
+#[derive(Debug)]
+struct NoVerification;
+
+impl tokio_rustls::rustls::client::danger::ServerCertVerifier for NoVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[tokio_rustls::rustls::pki_types::CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: tokio_rustls::rustls::pki_types::UnixTime,
+    ) -> Result<tokio_rustls::rustls::client::danger::ServerCertVerified, tokio_rustls::rustls::Error>
+    {
+        Ok(tokio_rustls::rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &tokio_rustls::rustls::pki_types::CertificateDer<'_>,
+        _dss: &tokio_rustls::rustls::DigitallySignedStruct,
+    ) -> Result<
+        tokio_rustls::rustls::client::danger::HandshakeSignatureValid,
+        tokio_rustls::rustls::Error,
+    > {
+        Ok(tokio_rustls::rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<tokio_rustls::rustls::SignatureScheme> {
+        tokio_rustls::rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
 }

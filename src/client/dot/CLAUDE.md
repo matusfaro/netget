@@ -64,6 +64,22 @@ Uses `tokio::io::split()` pattern:
 - **Write half**: Wrapped in `Arc<Mutex<>>` for sending queries from LLM actions
 - **State machine**: Prevents concurrent LLM calls (Idle → Processing → Accumulating)
 
+### Dashboard command channel (injected actions)
+
+The client registers a command channel (`command_support::register_command_channel`) right after
+the TLS handshake and **before** the `dot_connected` LLM call, so `[ send_dns_query ]` /
+`[ disconnect ]` on the dashboard work even while a manual rule parks that call. Because the read
+loop does framed `read_exact` reads (not cancellation-safe), commands are drained by a separate
+`command_loop` task registered with `register_client_task`. `send_dns_query` returns
+`ClientActionResult::Custom`, so that task maps it through `apply_action` — the same function the
+LLM path uses — and records an `injected_action` access-log entry; an injected `disconnect`
+half-closes the TLS write side and the read loop's EOF path marks the client Disconnected.
+`remove_client_handle` runs on every read-loop exit. No Custom-result gap remains.
+
+`verify_tls` and `server_name` are now actually read (they were declared and ignored before):
+`verify_tls: false` accepts any certificate, which is how a client reaches a NetGet DoT server's
+self-signed cert. See `tests/client/dot/command_channel_test.rs`.
+
 ## LLM Integration
 
 ### Events
