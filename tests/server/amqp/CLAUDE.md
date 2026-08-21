@@ -21,6 +21,12 @@ exists. It is exactly the right library here.
 | `test_amqp_connection_refused_by_handler` | the handler's own reply code or text not reaching the client | 2 |
 | `test_amqp_unimplemented_method_closes_the_channel` | an unimplemented method being ignored instead of answered (the client would hang) | 2 |
 
+`peer_inject_test.rs` (zero LLM calls, in-process `AppState`) covers the dashboard's
+injection path: a raw socket sends the protocol header, `send_to_peer` injects
+`amqp_connection_close` (asserted frame-by-frame on the socket; reported `Executed`
+because AMQP actions are `Custom`), counters move in both directions, `close_connection`
+yields EOF, and the peer handle is released when the connection ends.
+
 Eleven calls across four `netget` processes; each test runs its own broker because the
 mock rules differ per broker instruction.
 

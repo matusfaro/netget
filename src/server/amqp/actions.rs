@@ -920,6 +920,10 @@ impl Server for AmqpProtocol {
             "amqp_deliver_to_consumer" => self.execute_deliver(action, "amqp_deliver_to_consumer"),
             "amqp_basic_return" => self.execute_return(action),
             "list_amqp_consumers" => self.execute_list_consumers(action),
+            // Not offered to the model (a broker that wants to hang up sends
+            // amqp_connection_close), but the dashboard's "disconnect this peer" injects it
+            // through the peer command task, which half-closes the socket on this result.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             other => Err(anyhow::anyhow!(
                 "Unknown AMQP action: {}. Valid actions: amqp_connection_open_ok, \
                  amqp_connection_close, amqp_channel_close, amqp_queue_declare_ok, \

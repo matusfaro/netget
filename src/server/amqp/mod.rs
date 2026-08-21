@@ -198,21 +198,42 @@ async fn handle_connection(
     offered_heartbeat: u16,
 ) -> Result<()> {
     let connection_id = ConnectionId::new(app_state.get_next_unified_id().await);
-    let (mut read_half, mut write_half) = tokio::io::split(socket);
+    let (mut read_half, write_half) = tokio::io::split(socket);
+    // Shared with the dashboard's peer command task: every AMQP action writes its frames
+    // through `out_tx` (below), so the only thing the peer task ever does to the write half
+    // directly is `shutdown()` it for `close_connection`.
+    let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
 
     // Every write for this connection funnels through one channel, so a frame produced by
     // the read loop can never interleave with one produced by an action running for a
-    // different connection (a cross-connection Basic.Deliver, for instance).
+    // different connection (a cross-connection Basic.Deliver, for instance). The writer
+    // task is also the one place every outbound byte passes, so it owns the sent counters.
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
     let writer_status_tx = status_tx.clone();
+    let writer_write_half = write_half.clone();
+    let writer_state = app_state.clone();
     let writer_handle = tokio::spawn(async move {
         while let Some(bytes) = out_rx.recv().await {
-            if let Err(e) = write_half.write_all(&bytes).await {
+            let written = {
+                let mut w = writer_write_half.lock().await;
+                w.write_all(&bytes).await
+            };
+            if let Err(e) = written {
                 Log::new(Some(&writer_status_tx)).debug(format!("AMQP write failed: {}", e));
                 break;
             }
+            writer_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    None,
+                    Some(bytes.len() as u64),
+                    None,
+                    Some(1),
+                )
+                .await;
         }
-        let _ = write_half.flush().await;
+        let _ = writer_write_half.lock().await.flush().await;
     });
 
     let now = std::time::Instant::now();
@@ -268,6 +289,26 @@ async fn handle_connection(
         virtual_host: String::new(),
     };
 
+    // Peer messaging: the dashboard's "message this peer" / "disconnect this peer" inject
+    // actions into THIS connection through the same executor the handler chain uses.
+    // Registered before the first read, so the operator can reach the connection even
+    // while a manual rule parks its connection.open.
+    let peer_rx = crate::server::peer_support::register_peer_channel(
+        &app_state,
+        server_id,
+        connection_id.as_u32(),
+    )
+    .await;
+    crate::server::peer_support::spawn_peer_command_task(
+        peer_rx,
+        session.protocol.clone(),
+        app_state.clone(),
+        server_id,
+        connection_id.as_u32(),
+        write_half.clone(),
+        status_tx.clone(),
+    );
+
     let result = session
         .run(&mut read_half, offered_frame_max, offered_heartbeat)
         .await;
@@ -276,7 +317,14 @@ async fn handle_connection(
         Log::new(Some(&status_tx)).debug(format!("AMQP connection {} error: {}", connection_id, e));
     }
 
+    // Every exit path - EOF, heartbeat timeout, protocol error, Connection.Close either
+    // way, handler refusal - lands here. The peer handle must go before the writer is
+    // awaited: the peer task holds an `AmqpProtocol` (and with it an `out_tx` clone) and
+    // only drops it once its command channel closes.
     actions::unregister_consumers_for_connection(server_id, connection_id);
+    app_state
+        .remove_peer_handle(server_id, connection_id.as_u32())
+        .await;
     drop(out_tx);
     drop(session);
     let _ = writer_handle.await;
@@ -322,6 +370,7 @@ impl Session {
             .read_exact(&mut header)
             .await
             .map_err(|e| anyhow!("no AMQP protocol header from {}: {}", self.peer_addr, e))?;
+        self.count_received(header.len()).await;
 
         if header != PROTOCOL_HEADER_091 {
             // Section 4.2.2: answer an unsupported version with the header the broker
@@ -383,22 +432,44 @@ impl Session {
         reader: &mut R,
         max_payload: usize,
     ) -> Result<Option<Frame>> {
-        if self.heartbeat == 0 {
-            return read_frame(reader, max_payload).await;
-        }
-        // Section 4.2.7: a peer that sends nothing for two heartbeat intervals is dead.
-        let deadline = std::time::Duration::from_secs(self.heartbeat as u64 * 2);
-        match tokio::time::timeout(deadline, read_frame(reader, max_payload)).await {
-            Ok(result) => result,
-            Err(_) => {
-                Log::new(Some(&self.status_tx)).warn(format!(
-                    "AMQP client {} sent nothing for {}s (two heartbeat intervals); closing",
-                    self.peer_addr,
-                    deadline.as_secs()
-                ));
-                Ok(None)
+        let result = if self.heartbeat == 0 {
+            read_frame(reader, max_payload).await
+        } else {
+            // Section 4.2.7: a peer that sends nothing for two heartbeat intervals is dead.
+            let deadline = std::time::Duration::from_secs(self.heartbeat as u64 * 2);
+            match tokio::time::timeout(deadline, read_frame(reader, max_payload)).await {
+                Ok(result) => result,
+                Err(_) => {
+                    Log::new(Some(&self.status_tx)).warn(format!(
+                        "AMQP client {} sent nothing for {}s (two heartbeat intervals); closing",
+                        self.peer_addr,
+                        deadline.as_secs()
+                    ));
+                    Ok(None)
+                }
             }
+        };
+        if let Ok(Some(frame)) = &result {
+            // 7-byte frame header + payload + the 0xCE end marker.
+            self.count_received(FRAME_OVERHEAD + frame.payload.len())
+                .await;
         }
+        result
+    }
+
+    /// Live inbound counters for the dashboard (and `last_activity` for connection-scoped
+    /// tasks). Outbound bytes are counted by the writer task, which sees every frame.
+    async fn count_received(&self, bytes: usize) {
+        self.app_state
+            .update_connection_stats(
+                self.server_id,
+                self.connection_id,
+                Some(bytes as u64),
+                None,
+                Some(1),
+                None,
+            )
+            .await;
     }
 
     async fn dispatch(

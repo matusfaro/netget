@@ -139,6 +139,24 @@ there is no way to deliver at all without it. Entries are removed when the consu
 cancelled, when its channel closes and when its connection ends; nothing survives a
 disconnect, and no message is ever held.
 
+## Dashboard injection (peer handle + counters)
+
+Every connection registers a peer handle (`server::peer_support`) right after it is
+tracked and before the first read, so `[ message this peer ]` / `[ disconnect this peer ]`
+work even while a manual rule parks `connection.open`; the handle is removed on every exit
+of `handle_connection`. Inbound bytes/packets are counted per frame (and for the protocol
+header) in `Session::read_next_frame`; outbound ones in the writer task, which every frame
+passes through — including cross-connection deliveries and injected actions.
+
+**Custom-result note**: every AMQP wire action (`amqp_connection_close`,
+`amqp_basic_deliver`, …) writes its frames through the connection's `out_tx` itself and
+returns `ActionResult::Custom`, never `Output`. An injected action therefore *does* reach
+the socket, but `send_to_peer` reports it as `Executed { detail }` rather than
+`Sent { bytes_sent }`. Injected actions default `channel` to whatever method the handler
+chain last answered (usually 0) — pass `channel` explicitly. `close_connection` half-closes
+the shared write half and is the one thing that touches it outside the writer task.
+`tests/server/amqp/peer_inject_test.rs` covers this with zero LLM calls.
+
 ## Failure behaviour
 
 | Event | If the handler produces no usable action | Rationale |
