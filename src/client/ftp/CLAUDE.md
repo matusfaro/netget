@@ -57,6 +57,17 @@ This implementation handles FTP control channel communication:
 - `STOR <file>` - Store file
 - `QUIT` - End session
 
+## Dashboard injection (command channel)
+
+The client registers `command_support::register_command_channel` **before** the `ftp_connected`
+LLM call (a manual handler can park that call; `[ send_ftp_command ]` works throughout). Because
+the read loop uses `BufReader::read_line`, which is not cancellation-safe, the channel is drained
+by a separate task (playbook shape 2) that shares the `Arc<Mutex<WriteHalf>>`, registered with
+`register_client_task` so stop/remove aborts it. `send_ftp_command` returns `SendData`, so the
+generic `handle_stream_client_command` arm executes it; `disconnect` half-closes the write side
+and the read loop's EOF path runs. The handle is removed on every loop exit. No `Custom`-result
+gap. Proven with zero LLM calls in `tests/client/ftp/command_channel_test.rs`.
+
 ## State Machine
 
 ```

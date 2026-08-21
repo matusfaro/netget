@@ -83,6 +83,37 @@ impl FtpClient {
             memory: String::new(),
         }));
 
+        // Command channel for the dashboard's [ send_ftp_command ] / [ disconnect ] rows.
+        // Registered BEFORE the ftp_connected call: a manual handler can park that call for
+        // minutes, and an injected send must work for the whole park. The read loop below
+        // uses `read_line`, which is not cancellation-safe, so the channel is drained by its
+        // own task sharing the write half rather than by a `select!` arm.
+        let mut command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_write = write_half_arc.clone();
+        let cmd_task = tokio::spawn(async move {
+            while let Some(cmd) = command_rx.recv().await {
+                let disconnect = crate::client::command_support::handle_stream_client_command(
+                    &crate::client::ftp::actions::FtpClientProtocol,
+                    &cmd_write,
+                    cmd,
+                    client_id,
+                    &cmd_state,
+                    &cmd_tx,
+                )
+                .await;
+                if disconnect {
+                    // Half-close: the server reads EOF and closes; the read loop then sees
+                    // 0 and runs its normal disconnect path.
+                    let _ = cmd_write.lock().await.shutdown().await;
+                    break;
+                }
+            }
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Call LLM with ftp_connected event
         if let Some(instruction) = app_state.get_instruction_for_client(client_id).await {
             let event = Event::new(
@@ -134,6 +165,7 @@ impl FtpClient {
                                 crate::llm::actions::client_trait::ClientActionResult::Disconnect,
                             ) => {
                                 info!("LLM requested disconnect after connect");
+                                app_state.remove_client_handle(client_id).await;
                                 return Ok(local_addr);
                             }
                             Ok(
@@ -290,6 +322,9 @@ impl FtpClient {
                     }
                 }
             }
+            // Every exit path lands here: drop the command handle so the dashboard stops
+            // offering [ send ] on a dead connection (a late send then fails fast).
+            app_state.remove_client_handle(client_id).await;
         });
         task_registrar
             .register_client_task(client_id, task_handle)

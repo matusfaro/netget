@@ -15,6 +15,7 @@ Black-box testing using mock FTP servers to verify client connectivity and comma
 |------|-------------|-----------|------------------|
 | `test_ftp_client_connect` | Verify client can connect and receive greeting | 1 | ~2s |
 | `test_ftp_client_send_command` | Verify client can send USER command | 1 | ~3s |
+| `command_channel_test::injected_ftp_command_reaches_our_own_server` | `send_to_client` injects `send_ftp_command` into a running client against a NetGet FTP server (static handler); bad action rejected; `disconnect` drops the handle | 0 | ~4s |
 
 ## Mock Configuration
 

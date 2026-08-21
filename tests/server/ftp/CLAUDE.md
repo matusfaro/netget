@@ -15,7 +15,14 @@ Black-box testing using raw TCP connections to verify FTP protocol responses.
 |------|-------------|-----------|------------------|
 | `test_ftp_greeting` | Verify 220 greeting on connect | 1 | ~2s |
 | `test_ftp_user_pass` | Verify USER/PASS authentication flow | 1 | ~3s |
-| `test_ftp_pwd_quit` | Verify PWD and QUIT commands | 1 | ~3s |
+| `test_ftp_pwd_quit` | Verify PWD and QUIT commands, and that the connection closes after QUIT | 1 | ~3s |
+| `llm_failure_test::test_ftp_answers_421_when_greeting_llm_fails` | 421 + close when the greeting handler fails | 1 | ~2s |
+| `peer_injection_test::injected_ftp_response_reaches_raw_peer_and_close_sends_eof` | `send_to_peer` writes an injected reply to a raw socket, counters move, `close_connection` sends EOF | 0 | ~1s |
+
+`test_ftp_user_pass` and `test_ftp_pwd_quit` had no mock rules for the `ftp_command` events,
+so the server 421-closed the greeting and the tests bailed out before `verify_mocks` — they
+failed for as long as the server refused unanswered greetings. They now mock each command and
+assert the reply codes; `read_reply` panics on silence instead of printing a note.
 
 ## Mock Configuration
 

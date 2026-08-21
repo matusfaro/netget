@@ -9,6 +9,8 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::mpsc;
+#[cfg(feature = "ftp")]
+use tokio::sync::Mutex;
 
 #[cfg(feature = "ftp")]
 use crate::llm::action_helper::call_llm;
@@ -137,8 +139,14 @@ struct FtpSession;
 #[cfg(feature = "ftp")]
 impl FtpSession {
     /// Handle an FTP session
+    ///
+    /// Owns the split socket. The write half lives in an `Arc<Mutex<_>>` shared with the
+    /// peer command task, so the dashboard's "message this peer" / "disconnect this peer"
+    /// write through the same half the session does. The peer handle is registered here
+    /// (the accept loop has already added the connection) and removed on every exit —
+    /// EOF, 421, `close_connection` and errors all funnel through the single return below.
     async fn handle_session(
-        mut stream: tokio::net::TcpStream,
+        stream: tokio::net::TcpStream,
         connection_id: crate::server::connection::ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
@@ -146,34 +154,91 @@ impl FtpSession {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<FtpProtocol>,
     ) -> Result<()> {
-        // Send initial greeting
-        Self::send_greeting(
-            &mut stream,
-            connection_id,
-            server_id,
-            &llm_client,
-            &app_state,
-            &status_tx,
-            &protocol,
-        )
-        .await?;
+        let (read_half, write_half) = tokio::io::split(stream);
+        let write_half = Arc::new(Mutex::new(write_half));
 
-        // Handle session commands
-        Self::handle_session_commands(
-            stream,
-            connection_id,
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &app_state,
             server_id,
-            llm_client,
-            app_state,
-            status_tx,
-            protocol,
+            connection_id.as_u32(),
         )
-        .await
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            protocol.clone(),
+            app_state.clone(),
+            server_id,
+            connection_id.as_u32(),
+            write_half.clone(),
+            status_tx.clone(),
+        );
+
+        let result = async {
+            Self::send_greeting(
+                &write_half,
+                connection_id,
+                server_id,
+                &llm_client,
+                &app_state,
+                &status_tx,
+                &protocol,
+            )
+            .await?;
+
+            Self::handle_session_commands(
+                read_half,
+                &write_half,
+                connection_id,
+                server_id,
+                llm_client,
+                &app_state,
+                &status_tx,
+                protocol,
+            )
+            .await
+        }
+        .await;
+
+        app_state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
+        result
+    }
+
+    /// Lock the shared write half, write + flush, and account for the bytes. The guard is
+    /// dropped before returning so no `.await` on the LLM ever holds it.
+    async fn write_out<W>(
+        write_half: &Arc<Mutex<W>>,
+        data: &[u8],
+        app_state: &AppState,
+        server_id: crate::state::ServerId,
+        connection_id: crate::server::connection::ConnectionId,
+    ) -> std::io::Result<()>
+    where
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::AsyncWriteExt;
+        {
+            let mut write = write_half.lock().await;
+            write.write_all(data).await?;
+            write.flush().await?;
+        }
+        app_state
+            .update_connection_stats(
+                server_id,
+                connection_id,
+                None,
+                Some(data.len() as u64),
+                None,
+                Some(1),
+            )
+            .await;
+        Ok(())
     }
 
     /// Send FTP greeting (220 response)
-    async fn send_greeting<S>(
-        stream: &mut S,
+    async fn send_greeting<W>(
+        write_half: &Arc<Mutex<W>>,
         connection_id: crate::server::connection::ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: &OllamaClient,
@@ -182,10 +247,8 @@ impl FtpSession {
         protocol: &Arc<FtpProtocol>,
     ) -> Result<()>
     where
-        S: tokio::io::AsyncWrite + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
     {
-        use tokio::io::AsyncWriteExt;
-
         // The client will not speak until it has seen a 2xx greeting, so this event is the
         // handler's only chance to produce one. `CONNECTION_ESTABLISHED` is a sentinel, not a
         // command the client sent - see FTP_COMMAND_EVENT.
@@ -209,8 +272,8 @@ impl FtpSession {
             Ok(execution_result) => {
                 for protocol_result in execution_result.protocol_results {
                     if let ActionResult::Output(data) = protocol_result {
-                        stream.write_all(&data).await?;
-                        stream.flush().await?;
+                        Self::write_out(write_half, &data, app_state, server_id, connection_id)
+                            .await?;
                     }
                 }
             }
@@ -226,8 +289,14 @@ impl FtpSession {
                 ));
                 let reply =
                     format!("421 Service not available, closing control connection ({notice})\r\n");
-                let _ = stream.write_all(reply.as_bytes()).await;
-                let _ = stream.flush().await;
+                let _ = Self::write_out(
+                    write_half,
+                    reply.as_bytes(),
+                    app_state,
+                    server_id,
+                    connection_id,
+                )
+                .await;
                 // 421 means the control connection is closing, so the session must not
                 // continue into the command loop. The caller propagates this with `?`, which
                 // ends the connection task and drops the socket.
@@ -239,21 +308,26 @@ impl FtpSession {
     }
 
     /// Handle FTP session commands
-    async fn handle_session_commands(
-        mut stream: tokio::net::TcpStream,
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_session_commands<R, W>(
+        read_half: R,
+        write_half: &Arc<Mutex<W>>,
         connection_id: crate::server::connection::ConnectionId,
         server_id: crate::state::ServerId,
         llm_client: OllamaClient,
-        app_state: Arc<AppState>,
-        status_tx: mpsc::UnboundedSender<String>,
+        app_state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
         protocol: Arc<FtpProtocol>,
-    ) -> Result<()> {
-        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    ) -> Result<()>
+    where
+        R: tokio::io::AsyncRead + Unpin,
+        W: tokio::io::AsyncWrite + Unpin,
+    {
+        use tokio::io::{AsyncBufReadExt, BufReader};
 
-        let (read_half, mut write_half) = tokio::io::split(&mut stream);
         let mut reader = BufReader::new(read_half);
         let mut line = String::new();
-        let log = Log::new(Some(&status_tx));
+        let log = Log::new(Some(status_tx));
 
         loop {
             line.clear();
@@ -261,6 +335,16 @@ impl FtpSession {
             if n == 0 {
                 break;
             }
+            app_state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    Some(n as u64),
+                    None,
+                    Some(1),
+                    None,
+                )
+                .await;
 
             let command = line.trim();
             // FileOnly: the ftp_command event template surfaces the command on the TUI.
@@ -277,7 +361,7 @@ impl FtpSession {
             // Get handler/LLM response
             match call_llm(
                 &llm_client,
-                &app_state,
+                app_state,
                 server_id,
                 Some(connection_id),
                 &event,
@@ -289,8 +373,14 @@ impl FtpSession {
                     for protocol_result in execution_result.protocol_results {
                         match protocol_result {
                             ActionResult::Output(data) => {
-                                write_half.write_all(&data).await?;
-                                write_half.flush().await?;
+                                Self::write_out(
+                                    write_half,
+                                    &data,
+                                    app_state,
+                                    server_id,
+                                    connection_id,
+                                )
+                                .await?;
 
                                 let response = String::from_utf8_lossy(&data);
                                 log.debug(format!("FTP sent: {}", response.trim()));
@@ -306,10 +396,14 @@ impl FtpSession {
                     // Do not leave the client hanging with no diagnostic: RFC 959 421 tells it
                     // the service is unavailable and the control connection is closing.
                     log.warn(format!("FTP handler failed for command {command:?}: {e}"));
-                    let _ = write_half
-                        .write_all(b"421 Service not available, closing control connection\r\n")
-                        .await;
-                    let _ = write_half.flush().await;
+                    let _ = Self::write_out(
+                        write_half,
+                        b"421 Service not available, closing control connection\r\n",
+                        app_state,
+                        server_id,
+                        connection_id,
+                    )
+                    .await;
                     return Ok(());
                 }
             }

@@ -44,6 +44,19 @@ not at all.
    handler's output, repeat.
 5. On `close_connection`, EOF, or a write error, mark the connection closed.
 
+### Dashboard injection (peer handle + counters)
+
+`handle_session` owns `tokio::io::split(stream)`; the write half is an `Arc<Mutex<_>>` shared
+with a `peer_support::spawn_peer_command_task`, registered right after the connection is added
+and removed on every exit (EOF, both 421 paths, `close_connection`, errors) through the single
+return at the end of `handle_session`. So `[ message this peer ]` / `[ disconnect this peer ]`
+work: an injected `send_ftp_response` / `send_ftp_multiline` / `send_ftp_data` / `send_ftp_list`
+is encoded by the same `execute_action` the handlers use and written to the control connection;
+`close_connection` half-closes it. All of FTP's wire actions return `ActionResult::Output`, so
+there is no `Custom`-result gap. Every read line and every write goes through
+`update_connection_stats`, so the rail's `↓ ↑` counters and `last_activity` are live.
+Proven with zero LLM calls in `tests/server/ftp/peer_injection_test.rs`.
+
 The accept-loop `JoinHandle` is registered with `AppState::register_server_task()`, so
 `stop_server` aborts it and releases port 21. `spawn_with_llm_actions` propagates bind failure
 with `?`, so a port clash is reported as `Error` and not as a phantom `Running` server.
@@ -110,8 +123,8 @@ model supplies and nothing else.
 
 ## Testing
 
-**There is no E2E test for FTP** (`tests/server/ftp/` does not exist). This is the largest gap
-in the protocol. Until one exists, verify by hand:
+`tests/server/ftp/` has mocked E2E tests (greeting, USER/PASS, PWD/QUIT, the 421 failure path)
+and `peer_injection_test.rs` for the dashboard's per-peer injection. To verify by hand:
 
 ```
 nc localhost 2121

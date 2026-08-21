@@ -9,6 +9,24 @@ use super::super::super::helpers::{self, E2EResult};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+/// Read one reply line within 10s; a timeout, EOF or read error fails the test with the
+/// name of the step, never a "Note:" that lets a silent server pass.
+async fn read_reply<R: tokio::io::AsyncRead + Unpin>(
+    reader: &mut BufReader<R>,
+    step: &str,
+) -> String {
+    let mut line = String::new();
+    match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut line)).await {
+        Ok(Ok(n)) if n > 0 => {
+            println!("{step} reply: {}", line.trim());
+            line
+        }
+        Ok(Ok(_)) => panic!("FTP closed the connection instead of answering {step}"),
+        Ok(Err(e)) => panic!("FTP read error while waiting for {step}: {e}"),
+        Err(_) => panic!("no FTP reply to {step} within 10s"),
+    }
+}
+
 #[tokio::test]
 async fn test_ftp_greeting() -> E2EResult<()> {
     println!("\n=== E2E Test: FTP Greeting (220) ===");
@@ -120,6 +138,31 @@ async fn test_ftp_user_pass() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
+            // These three event rules used to be missing. With no rule the mock answered
+            // 500, the server refused the greeting with 421 and closed, and the test's
+            // `PASS` write hit a dead socket and bailed out before `verify_mocks` - so the
+            // test neither verified 331/230 nor reached its own assertions.
+            .on_event("ftp_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_ftp_response", "code": 220, "message": "FTP Ready" }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("ftp_command")
+            .and_event_data_contains("command", "USER anonymous")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_ftp_response", "code": 331, "message": "Password required" }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("ftp_command")
+            .and_event_data_contains("command", "PASS")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_ftp_response", "code": 230, "message": "User logged in" }
+            ]))
+            .expect_calls(1)
+            .and()
     });
 
     let server = helpers::start_netget_server(config).await?;
@@ -132,54 +175,26 @@ async fn test_ftp_user_pass() -> E2EResult<()> {
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
-    // Read greeting
-    let mut line = String::new();
-    let _ = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line)).await;
-    println!("Greeting: {}", line.trim());
+    let greeting = read_reply(&mut reader, "greeting").await;
+    assert!(greeting.starts_with("220"), "expected 220, got: {greeting}");
 
-    // Send USER
     println!("Sending: USER anonymous");
     write_half.write_all(b"USER anonymous\r\n").await?;
     write_half.flush().await?;
+    let user_response = read_reply(&mut reader, "USER").await;
+    assert!(
+        user_response.starts_with("331"),
+        "expected 331 to USER, got: {user_response}"
+    );
 
-    // Read USER response
-    let mut user_response = String::new();
-    match tokio::time::timeout(
-        Duration::from_secs(10),
-        reader.read_line(&mut user_response),
-    )
-    .await
-    {
-        Ok(Ok(n)) if n > 0 => {
-            println!("USER response: {}", user_response.trim());
-            if user_response.contains("331") {
-                println!("USER response (331) verified");
-            }
-        }
-        _ => println!("Note: No USER response received"),
-    }
-
-    // Send PASS
     println!("Sending: PASS guest@example.com");
     write_half.write_all(b"PASS guest@example.com\r\n").await?;
     write_half.flush().await?;
-
-    // Read PASS response
-    let mut pass_response = String::new();
-    match tokio::time::timeout(
-        Duration::from_secs(10),
-        reader.read_line(&mut pass_response),
-    )
-    .await
-    {
-        Ok(Ok(n)) if n > 0 => {
-            println!("PASS response: {}", pass_response.trim());
-            if pass_response.contains("230") {
-                println!("PASS response (230) verified");
-            }
-        }
-        _ => println!("Note: No PASS response received"),
-    }
+    let pass_response = read_reply(&mut reader, "PASS").await;
+    assert!(
+        pass_response.starts_with("230"),
+        "expected 230 to PASS, got: {pass_response}"
+    );
 
     server.verify_mocks().await?;
     server.stop().await?;
@@ -211,6 +226,29 @@ async fn test_ftp_pwd_quit() -> E2EResult<()> {
             ]))
             .expect_calls(1)
             .and()
+            // Same repair as test_ftp_user_pass: the event rules were missing entirely.
+            .on_event("ftp_command")
+            .and_event_data_contains("command", "CONNECTION_ESTABLISHED")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_ftp_response", "code": 220, "message": "FTP Ready" }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("ftp_command")
+            .and_event_data_contains("command", "PWD")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_ftp_response", "code": 257, "message": "\"/\" is current directory" }
+            ]))
+            .expect_calls(1)
+            .and()
+            .on_event("ftp_command")
+            .and_event_data_contains("command", "QUIT")
+            .respond_with_actions(serde_json::json!([
+                { "type": "send_ftp_response", "code": 221, "message": "Goodbye" },
+                { "type": "close_connection" }
+            ]))
+            .expect_calls(1)
+            .and()
     });
 
     let server = helpers::start_netget_server(config).await?;
@@ -223,49 +261,33 @@ async fn test_ftp_pwd_quit() -> E2EResult<()> {
     let (read_half, mut write_half) = stream.into_split();
     let mut reader = BufReader::new(read_half);
 
-    // Read greeting
-    let mut line = String::new();
-    let _ = tokio::time::timeout(Duration::from_secs(5), reader.read_line(&mut line)).await;
-    println!("Greeting: {}", line.trim());
+    let greeting = read_reply(&mut reader, "greeting").await;
+    assert!(greeting.starts_with("220"), "expected 220, got: {greeting}");
 
-    // Send PWD
     println!("Sending: PWD");
     write_half.write_all(b"PWD\r\n").await?;
     write_half.flush().await?;
+    let pwd_response = read_reply(&mut reader, "PWD").await;
+    assert!(
+        pwd_response.starts_with("257"),
+        "expected 257 to PWD, got: {pwd_response}"
+    );
 
-    // Read PWD response
-    let mut pwd_response = String::new();
-    match tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut pwd_response)).await {
-        Ok(Ok(n)) if n > 0 => {
-            println!("PWD response: {}", pwd_response.trim());
-            if pwd_response.contains("257") {
-                println!("PWD response (257) verified");
-            }
-        }
-        _ => println!("Note: No PWD response received"),
-    }
-
-    // Send QUIT
     println!("Sending: QUIT");
     write_half.write_all(b"QUIT\r\n").await?;
     write_half.flush().await?;
+    let quit_response = read_reply(&mut reader, "QUIT").await;
+    assert!(
+        quit_response.starts_with("221"),
+        "expected 221 to QUIT, got: {quit_response}"
+    );
 
-    // Read QUIT response
-    let mut quit_response = String::new();
-    match tokio::time::timeout(
-        Duration::from_secs(10),
-        reader.read_line(&mut quit_response),
-    )
-    .await
-    {
-        Ok(Ok(n)) if n > 0 => {
-            println!("QUIT response: {}", quit_response.trim());
-            if quit_response.contains("221") {
-                println!("QUIT response (221) verified");
-            }
-        }
-        _ => println!("Note: No QUIT response received"),
-    }
+    // close_connection after 221: the control connection must actually end.
+    let mut rest = String::new();
+    let n = tokio::time::timeout(Duration::from_secs(10), reader.read_line(&mut rest))
+        .await
+        .expect("server must close the control connection after QUIT")?;
+    assert_eq!(n, 0, "unexpected data after QUIT: {rest:?}");
 
     server.verify_mocks().await?;
     server.stop().await?;
