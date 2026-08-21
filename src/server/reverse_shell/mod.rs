@@ -159,28 +159,6 @@ impl ReverseShellServer {
             .await;
         let _ = status_tx.send("__UPDATE_UI__".to_string());
 
-        // Register a peer handle so the dashboard can [ message this peer ] /
-        // [ disconnect this peer ] this live connection. The command task shares the same
-        // Arc<Mutex<WriteHalf>> the reader writes through, so injected output is serialized
-        // against the model's. Every wire verb (send_shell_output/prompt, end_shell_session)
-        // returns Output/CloseConnection, so the generic peer task covers the whole vocabulary.
-        let protocol: Arc<ReverseShellProtocol> = Arc::new(ReverseShellProtocol::new());
-        let peer_rx = crate::server::peer_support::register_peer_channel(
-            &app_state,
-            server_id,
-            connection_id.as_u32(),
-        )
-        .await;
-        crate::server::peer_support::spawn_peer_command_task(
-            peer_rx,
-            protocol.clone(),
-            app_state.clone(),
-            server_id,
-            connection_id.as_u32(),
-            write_half.clone(),
-            status_tx.clone(),
-        );
-
         let mut conn = ShellConnection {
             connection_id,
             server_id,
@@ -193,12 +171,6 @@ impl ReverseShellServer {
 
         let result = conn.run(&mut read_half).await;
 
-        // Remove the peer handle on every exit path (EOF, read error, oversize line,
-        // end_shell_session, no-answer fail-closed) — this single cleanup runs after run()
-        // returns however it returned, so the rail never keeps offering a dead peer.
-        app_state
-            .remove_peer_handle(server_id, connection_id.as_u32())
-            .await;
         app_state
             .remove_connection_from_server(server_id, connection_id)
             .await;
@@ -250,21 +222,7 @@ impl ShellConnection {
                     debug!("Reverse-shell operator {} disconnected", self.connection_id);
                     break;
                 }
-                Ok(n) => {
-                    // Refresh byte/packet counters and last_activity so the rail's ↓ moves and
-                    // connection-scoped task prompts see a fresh timestamp.
-                    self.app_state
-                        .update_connection_stats(
-                            self.server_id,
-                            self.connection_id,
-                            Some(n as u64),
-                            None,
-                            Some(1),
-                            None,
-                        )
-                        .await;
-                    n
-                }
+                Ok(n) => n,
                 Err(e) => {
                     error!("Reverse-shell read error on {}: {}", self.connection_id, e);
                     break;
@@ -405,16 +363,6 @@ impl ShellConnection {
             writer.write_all(&outcome.output).await?;
             writer.flush().await?;
             drop(writer);
-            self.app_state
-                .update_connection_stats(
-                    self.server_id,
-                    self.connection_id,
-                    None,
-                    Some(outcome.output.len() as u64),
-                    None,
-                    Some(1),
-                )
-                .await;
             console_debug!(
                 self.status_tx,
                 "Reverse-shell sent {} bytes to {}",

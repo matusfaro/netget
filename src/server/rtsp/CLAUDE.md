@@ -32,6 +32,23 @@ ffprobe (`-rtsp_transport udp`) completes OPTIONS→DESCRIBE→SETUP→PLAY and 
 `Audio: pcm_mulaw, 8000 Hz, mono`. Mocked E2E asserts status lines, the DESCRIBE SDP, and that RTP
 actually arrives on the negotiated UDP port.
 
+## Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+Every accepted connection registers a peer handle (`server::peer_support`) as soon as its task
+starts, so the operator can reach it immediately. The reader and the peer-injection task share one
+`Arc<Mutex<WriteHalf>>`, and `update_connection_stats` fires on every TCP read and write (plus the
+streamed RTP is counted against the same connection), so the rail's `↓ ↑` counters and
+`last_activity` are live. The handle is removed on every exit path (EOF, read error, 1 MiB
+overflow, injected close) through the single cleanup in `handle_connection`.
+
+**The useful injection is `close_connection`** — `execute_action` has an explicit arm returning
+`ActionResult::CloseConnection`, which the generic peer task half-closes (the reader then sees
+EOF). An injected `rtsp_*_response` verb writes **nothing**: RTSP framing (CSeq, Transport,
+Session, RTP-Info) is built in `mod.rs` from the request, so `execute_action` returns `NoAction`
+for the response verbs and there is no request context to frame an unsolicited response against.
+This is not a `Custom`-result gap; it is inherent to RTSP being strictly request/response.
+Test: `tests/server/rtsp/peer_inject_test.rs` (zero LLM calls).
+
 ## Out of scope
 
 - **No TCP-interleaved transport** (RTP over the RTSP TCP channel). UDP RTP only, via

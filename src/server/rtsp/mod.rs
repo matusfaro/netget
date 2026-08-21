@@ -147,40 +147,127 @@ impl RtspServer {
         status_tx: mpsc::UnboundedSender<String>,
         protocol: Arc<RtspProtocol>,
     ) -> Result<()> {
-        let (mut read_half, mut write_half) = tokio::io::split(stream);
-        let mut buffer: Vec<u8> = Vec::new();
+        // Share the write half between the reader loop and the peer-injection task through
+        // one Arc<Mutex<_>>, so an injected write cannot interleave with a response.
+        let (read_half, write_half) = tokio::io::split(stream);
+        let write_half = Arc::new(tokio::sync::Mutex::new(write_half));
         let mut session = Session::default();
+
+        // Peer messaging: register a handle so the dashboard's "message this peer" /
+        // "disconnect this peer" can inject an action into THIS connection through the same
+        // executor the LLM path uses. RTSP's response verbs return `NoAction` (framing — CSeq,
+        // Transport, Session — is built here in mod.rs, not by the action), so an injected
+        // `rtsp_*_response` writes no bytes; the meaningful injection is `close_connection`,
+        // which the generic peer task half-closes (the reader then sees EOF below).
+        let peer_rx = crate::server::peer_support::register_peer_channel(
+            &state,
+            server_id,
+            connection_id.as_u32(),
+        )
+        .await;
+        crate::server::peer_support::spawn_peer_command_task(
+            peer_rx,
+            protocol.clone(),
+            state.clone(),
+            server_id,
+            connection_id.as_u32(),
+            write_half.clone(),
+            status_tx.clone(),
+        );
+
+        let result = Self::run_connection(
+            read_half,
+            &write_half,
+            remote_addr,
+            connection_id,
+            server_id,
+            &llm,
+            &state,
+            &status_tx,
+            &protocol,
+            &mut session,
+        )
+        .await;
+
+        // Every exit path — EOF, read error, 1 MiB overflow, injected close — lands here.
+        if let Some(task) = session.play_task.take() {
+            task.abort();
+        }
+        state
+            .remove_peer_handle(server_id, connection_id.as_u32())
+            .await;
+        state
+            .close_connection_on_server(server_id, connection_id)
+            .await;
+        let _ = status_tx.send("__UPDATE_UI__".to_string());
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_connection(
+        mut read_half: tokio::io::ReadHalf<TcpStream>,
+        write_half: &Arc<tokio::sync::Mutex<tokio::io::WriteHalf<TcpStream>>>,
+        remote_addr: SocketAddr,
+        connection_id: ConnectionId,
+        server_id: crate::state::ServerId,
+        llm: &OllamaClient,
+        state: &Arc<AppState>,
+        status_tx: &mpsc::UnboundedSender<String>,
+        protocol: &Arc<RtspProtocol>,
+        session: &mut Session,
+    ) -> Result<()> {
+        let mut buffer: Vec<u8> = Vec::new();
         let mut chunk = [0u8; 8192];
 
         loop {
             // Extract as many complete requests as the buffer holds before reading more.
             while let Some((req, consumed)) = parse_rtsp_request(&buffer) {
                 buffer.drain(..consumed);
-                Log::new(Some(&status_tx)).trace(format!("RTSP {} {}", req.method, req.uri));
+                Log::new(Some(status_tx)).trace(format!("RTSP {} {}", req.method, req.uri));
                 let response = Self::process_request(
                     &req,
                     remote_addr,
                     connection_id,
                     server_id,
-                    &llm,
-                    &state,
-                    &status_tx,
-                    &mut session,
+                    llm,
+                    state,
+                    status_tx,
+                    session,
                     protocol.as_ref(),
                 )
                 .await;
-                write_half.write_all(response.as_bytes()).await?;
-                write_half.flush().await?;
+                let bytes = response.into_bytes();
+                {
+                    let mut w = write_half.lock().await;
+                    w.write_all(&bytes).await?;
+                    w.flush().await?;
+                }
+                state
+                    .update_connection_stats(
+                        server_id,
+                        connection_id,
+                        None,
+                        Some(bytes.len() as u64),
+                        None,
+                        Some(1),
+                    )
+                    .await;
             }
 
             let n = read_half.read(&mut chunk).await?;
             if n == 0 {
-                // Peer closed. Tear down any running stream.
-                if let Some(task) = session.play_task.take() {
-                    task.abort();
-                }
                 return Ok(());
             }
+            state
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    Some(n as u64),
+                    None,
+                    Some(1),
+                    None,
+                )
+                .await;
             buffer.extend_from_slice(&chunk[..n]);
             if buffer.len() > 1_048_576 {
                 anyhow::bail!("RTSP request exceeded 1 MiB");
@@ -293,7 +380,18 @@ impl RtspServer {
                 )
             }
             "SETUP" => Self::handle_setup(req, remote_addr, &action, status_tx, session).await,
-            "PLAY" => Self::handle_play(req, &action, server_id, state, status_tx, session).await,
+            "PLAY" => {
+                Self::handle_play(
+                    req,
+                    &action,
+                    connection_id,
+                    server_id,
+                    state,
+                    status_tx,
+                    session,
+                )
+                .await
+            }
             "TEARDOWN" => {
                 if let Some(task) = session.play_task.take() {
                     task.abort();
@@ -382,9 +480,11 @@ impl RtspServer {
 
     /// PLAY: start streaming synthesized RTP to the client's RTP port. Content is decided by the
     /// model's play action (tone/dtmf/silence); framing by the shared media engine.
+    #[allow(clippy::too_many_arguments)]
     async fn handle_play(
         req: &RtspRequest,
         action: &Option<serde_json::Value>,
+        connection_id: ConnectionId,
         server_id: crate::state::ServerId,
         state: &AppState,
         status_tx: &mpsc::UnboundedSender<String>,
@@ -461,13 +561,17 @@ impl RtspServer {
                 bytes += pkt.len() as u64;
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
+            // Count the streamed RTP against THIS connection (the media leaves over a
+            // separate UDP socket, but it belongs to this RTSP session).
             state_clone
-                .with_server_mut(server_id, |s| {
-                    if let Some(c) = s.connections.values_mut().next() {
-                        c.bytes_sent += bytes;
-                        c.packets_sent += sent;
-                    }
-                })
+                .update_connection_stats(
+                    server_id,
+                    connection_id,
+                    None,
+                    Some(bytes),
+                    None,
+                    Some(sent),
+                )
                 .await;
             // FileOnly: analogous to rtp's send_rtp_audio summary, kept off the TUI to avoid
             // adding a second line alongside the PLAY response's own INFO log_template.

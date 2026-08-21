@@ -193,6 +193,9 @@ impl Server for RtspProtocol {
                 }
                 Ok(ActionResult::NoAction)
             }
+            // The dashboard's "disconnect this peer" injects this; the generic peer task
+            // half-closes the write side on CloseConnection and the reader sees EOF.
+            "close_connection" => Ok(ActionResult::CloseConnection),
             _ => Err(anyhow::anyhow!("Unknown RTSP action: {}", action_type)),
         }
     }
