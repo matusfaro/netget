@@ -1488,3 +1488,53 @@ is valuable, but a connection-task panic is the quietest possible way to be loud
 be to assert once at server startup, where the failure is visible and attributable, and leave
 the per-event path to the ERROR log plus fallback.
 
+
+### 76. Peer-handle triage for servers without `io::split` **[verified]**
+
+The peer-handle sweep (`src/server/peer_support.rs`; see `3691ffd6` pop3, `1136b036` bgp)
+adopted servers whose connection loop already owned a split write half
+(`Arc<Mutex<WriteHalf>>` — what `spawn_peer_command_task` wraps: a way to write bytes and to
+`shutdown()` from outside the loop). Everything without `tokio::io::split` in its `mod.rs` was
+skipped unexamined. Triage of those, from the code, not the CLAUDE.mds. Verdicts: **(a)** a
+per-connection owned write side exists that a `peer_support` handle could wrap cheaply;
+**(b)** feasible but needs plumbing (a channel or library handle instead of an `AsyncWrite`);
+**(c)** not feasible (library owns the socket outright, or hyper-style request/response).
+
+| Protocol | Conns tracked? | Write-side ownership | Verdict | Note |
+|---|---|---|---|---|
+| cassandra | yes | conn task owns unsplit `TcpStream`; ~12 response helpers take `&mut TcpStream` | a | mechanical `io::split` + thread `Arc<Mutex<WriteHalf>>` through helper signatures |
+| postgresql | yes | `pgwire::tokio::process_socket` consumes the socket | c | handler answers queries only; no write path or close exposed |
+| mssql | yes | conn task owns unsplit `TcpStream`; 6 helpers, exactly **one** `write_all` site | a | single write choke point makes the split refactor small |
+| mongodb | yes | conn task owns the stream; uses borrowed `stream.split()` inside `run()` | a | swap borrowed split for `tokio::io::split` + `Arc<Mutex<WriteHalf>>`; 4 write sites |
+| ssh | yes | `russh::server::run_stream` consumes the socket; its returned session handle is discarded (`Ok(_)`) | b | keep the russh handle; injected data must target a channel id, close via the handle |
+| socks5 | yes | unsplit stream through handshake, then `copy_bidirectional` (passthrough) or MITM select loop | c | write halves exist mid-tunnel but the bytes belong to the relayed protocol; MITM loop could take a select arm (b) at best |
+| tls | yes | **mislisted — `mod.rs:122` does `tokio::io::split` and already keeps `Arc<Mutex<WriteHalf<TlsStream>>>`** | a | cheapest win of all: the exact shape `spawn_peer_command_task` wants, just never adopted |
+| ldap | **no** | session struct owns unsplit `TcpStream`; one `write_all` site | a | must add `add_connection_to_server` first — currently zero connection tracking |
+| kafka | yes (+stats) | conn task owns unsplit `TcpStream`; writes funnel through one `send_response` | a | mechanically cheap; semantically only disconnect is safe — Kafka is strict correlation-id request/response, unsolicited bytes desync clients |
+| smb | yes | conn task owns unsplit `TcpStream`; exactly one `write_all` site | a | same caveat: SMB2 messages carry message ids, so injection is mainly useful for disconnect |
+| nfs | **no** | `nfsserve` owns RPC, framing and the TCP listener (`handle_forever`); connections never surface | c | nothing to attach a handle to |
+| proxy | yes | borrowed `.split()` halves shuttling client↔destination (plus `tls_mitm.rs` variant) | c | a tunnel: injected bytes corrupt the proxied stream |
+| websocket | yes | tungstenite sink owned by a dedicated writer task fed by an unbounded `WsOut` mpsc | b | cheap protocol-specific handle: translate injected actions into `WsOut` down the existing channel (`Close` included); the generic `AsyncWrite` helper cannot wrap a `Sink<Message>` |
+| git | yes | hyper `http1::serve_connection` owns the socket | c | request/response; nothing to message |
+| mercurial | yes | same hyper shape as git | c | — |
+
+Other registered servers without `io::split`, grouped (same three checks, per family):
+
+| Family | Members | Verdict | Note |
+|---|---|---|---|
+| hyper request/response | http, pypi, maven, snowflake, rss, dynamo, s3, sqs, elasticsearch, couchdb, yarn, spark, npm, oci_registry, kubernetes, ipp, webdav, openai, ollama, oauth2, jsonrpc, xmlrpc, openapi, openid, saml_idp, saml_sp, doh, grpc, etcd (+ mcp on axum, http2 driving `h2` directly) | c | the framework owns the connection; a "peer" lives only for one exchange |
+| UDP / connectionless | udp, dns, dhcp, bootp, ntp, tftp, snmp, syslog, mdns, coap, stun, turn, sip, rtp, rip, radius, igmp, torrent_dht, openvpn, ipsec | b | no per-peer socket: a peer is an address entry on one shared `UdpSocket`; needs a UDP-shaped handle (`send_to(addr)`, no close), not the `AsyncWrite` one |
+| raw / link-level | datalink, arp, icmp, isis, ospf | c | pcap/raw-socket write, no per-peer stream |
+| off-network | usb\* (6), bluetooth_ble\* (16), pty, stdio, named_pipe | c | no TCP peer to message; named_pipe's response FIFO is a single fixed writer |
+| library-owned dataplane | wireguard | c | `defguard_wireguard_rs` owns the tunnel |
+| ws-carried | webrtc, webrtc_signaling | b | futures split of a `WebSocketStream` — same `WsOut`-channel shape as websocket |
+
+Individually notable outside the named list: **quic** already keeps
+`Arc<Mutex<quinn::SendStream>>` per stream (`mod.rs:37`) and `SendStream` is `AsyncWrite` —
+verdict (a), nearly drop-in per stream. **dot** (3 write sites) and **tor_relay** (5) own
+unsplit `TlsStream`s in their session structs — (a) mechanically, but **neither calls
+`add_connection_to_server` at all**, so tracking comes first, as with ldap. **ssh_agent** was
+also effectively mislisted: `mod.rs:152` splits its `UnixStream`, so its `WriteHalf` fits the
+generic helper — (a). **mysql** splits too, but hands both halves to opensrv's
+`AsyncMysqlIntermediary` — the library owns the write side, so (c) despite the split. And
+three already-split servers the sweep itself has not yet adopted: `socket_file`, `hls`, `nfc`.
