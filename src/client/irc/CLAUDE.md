@@ -103,6 +103,21 @@ if line.starts_with("PING ") {
 
 This ensures the connection stays alive without requiring LLM responses.
 
+### Dashboard injection (`[ send_privmsg ]`, `[ send_notice ]`, `[ send_raw ]`, `[ disconnect ]`)
+
+`connect_with_llm_actions` registers a command channel
+(`client::command_support::register_command_channel`) *before* the read-loop task and therefore
+before the `irc_connected` LLM call, which a manual rule can park. Because `read_line` is not
+cancellation-safe, commands are drained by a separate `command_loop` task (registered with
+`register_client_task`) that shares the write half, not by a `select!` arm. Every IRC verb
+yields `ClientActionResult::Custom`, which the generic `handle_stream_client_command` cannot
+write, so `command_loop` routes the result through `apply_action` - the one function the LLM
+path also uses, so each verb's encoding exists exactly once - then records an `injected_action`
+access-log entry and replies with `ClientSendOutcome` (`Sent{bytes}`, `Rejected` on a missing
+parameter, `Disconnected`). An injected `disconnect` writes `QUIT`, half-closes, and the read
+loop sees EOF; every read-loop exit calls `remove_client_handle` so the rail stops offering
+`[ send ]` on a dead client. Test: `tests/client/irc/command_channel_test.rs` (zero LLM calls).
+
 ### Message Parsing
 
 The `parse_irc_message` function extracts:

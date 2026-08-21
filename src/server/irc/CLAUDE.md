@@ -250,6 +250,19 @@ See `actions.rs` for complete action list including `send_irc_part`, `send_irc_n
 5. **Read Loop**: Continuous line reading until disconnect
 6. **Close**: Connection removed when client closes or LLM sends `close_connection`
 
+### Dashboard injection (`[ message this peer ]` / `[ disconnect this peer ]`)
+
+Every connection registers a peer handle (`server::peer_support`) right after it is tracked
+and *before* the first read - IRC does not speak first, so a manual `*` rule parking the
+registration exchange still leaves the operator able to reach the connection.
+`AppState::send_to_peer` runs the action through the same executor as the LLM path; every wire
+verb here returns `ActionResult::Output` and `close_connection` half-closes, so there is no
+`Custom` gap. `update_connection_stats` is called on every read line and every write (model
+output and the numeric-400 failure reply alike), so the rail's `↓ ↑` counters and
+`last_activity` are live. The handle is removed on every exit path (EOF, read error,
+`close_connection`, backend-unavailable `ERROR`) through the single cleanup after the read
+loop. Test: `tests/server/irc/peer_inject_test.rs` (zero LLM calls).
+
 ### State Management
 
 - **No per-connection state machine.** Unlike TCP, IRC does not implement

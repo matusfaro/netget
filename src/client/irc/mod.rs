@@ -118,6 +118,27 @@ impl IrcClient {
             nickname: nickname.clone(),
         }));
 
+        // Command channel for injected actions (the dashboard's [ send_privmsg ] /
+        // [ send_notice ] / [ send_raw ] rows). Registered BEFORE the read loop and therefore
+        // before the connected-event LLM call, which a manual `*` rule can park for minutes -
+        // the operator must be able to reach the client while it waits.
+        let command_rx =
+            crate::client::command_support::register_command_channel(&app_state, client_id).await;
+
+        // `read_line` is not cancellation-safe, so commands are drained by their own task
+        // rather than a `select!` arm in the read loop. Both tasks share the write half.
+        let cmd_state = app_state.clone();
+        let cmd_tx = status_tx.clone();
+        let cmd_write = write_half_arc.clone();
+        let cmd_data = client_data.clone();
+        let cmd_task = tokio::spawn(async move {
+            Self::command_loop(
+                command_rx, cmd_write, cmd_data, client_id, cmd_state, cmd_tx,
+            )
+            .await;
+        });
+        app_state.register_client_task(client_id, cmd_task).await;
+
         // Clone for spawned task
         let write_half_clone = write_half_arc.clone();
         let client_data_clone = client_data.clone();
@@ -278,12 +299,92 @@ impl IrcClient {
                     }
                 }
             }
+
+            // Every exit path (EOF - including the one an injected or LLM QUIT provokes - and
+            // read error) lands here: drop the command handle so the dashboard stops offering
+            // [ send ] on a dead connection (a late send then fails fast).
+            app_state.remove_client_handle(client_id).await;
         });
         task_registrar
             .register_client_task(client_id, task_handle)
             .await;
 
         Ok(local_addr)
+    }
+
+    /// Drain injected commands until the channel closes (client removed) or an injected
+    /// `disconnect` ends the session.
+    ///
+    /// The generic `command_support::handle_stream_client_command` cannot run this client's
+    /// vocabulary because every wire verb (`send_privmsg`, `send_notice`, `send_raw`,
+    /// `join_channel`, ...) yields `ClientActionResult::Custom`, so the result goes through
+    /// [`Self::apply_action`] - the same function the LLM path uses - and the outcome is
+    /// recorded and replied exactly the way the generic arm does it.
+    async fn command_loop(
+        mut command_rx: mpsc::Receiver<crate::state::client_handles::ClientCommand>,
+        write_half: Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+        client_data: Arc<Mutex<ClientData>>,
+        client_id: ClientId,
+        app_state: Arc<AppState>,
+        status_tx: mpsc::UnboundedSender<String>,
+    ) {
+        use crate::llm::actions::client_trait::Client;
+        use crate::llm::actions::protocol_trait::Protocol;
+        use crate::state::client_handles::ClientSendOutcome;
+        use crate::state::AccessLogOwner;
+
+        let protocol = IrcClientProtocol::new();
+
+        while let Some(command) = command_rx.recv().await {
+            let action = command.action.clone();
+            let outcome = match protocol.execute_action(action.clone()) {
+                Err(e) => Ok(ClientSendOutcome::Rejected {
+                    error: e.to_string(),
+                }),
+                Ok(result) => Self::apply_action(result, &write_half, &client_data)
+                    .await
+                    .map(|applied| match applied {
+                        Applied::Disconnect => ClientSendOutcome::Disconnected,
+                        Applied::Sent(0) => ClientSendOutcome::Executed {
+                            detail: "executed (nothing to write)".to_string(),
+                        },
+                        Applied::Sent(bytes_sent) => ClientSendOutcome::Sent { bytes_sent },
+                    }),
+            };
+
+            let outcome_json = match &outcome {
+                Ok(outcome) => serde_json::to_value(outcome).unwrap_or(serde_json::Value::Null),
+                Err(e) => serde_json::json!({"error": e.to_string()}),
+            };
+            app_state
+                .record_access_log(
+                    AccessLogOwner::Client(client_id.as_u32()),
+                    protocol.protocol_name(),
+                    None,
+                    "injected_action",
+                    action,
+                    vec![outcome_json],
+                )
+                .await;
+
+            let disconnect = matches!(outcome, Ok(ClientSendOutcome::Disconnected));
+            if let Err(e) = &outcome {
+                error!("IRC client {} injected action failed: {}", client_id, e);
+                let _ = status_tx.send(format!(
+                    "[WARN] Client {} injected action failed: {}",
+                    client_id, e
+                ));
+            }
+            let _ = status_tx.send("__UPDATE_UI__".to_string());
+            crate::client::command_support::reply(command, outcome);
+
+            if disconnect {
+                // QUIT is already on the wire; half-close so the server reads EOF and the
+                // read loop runs its normal disconnect path.
+                let _ = write_half.lock().await.shutdown().await;
+                break;
+            }
+        }
     }
 
     /// Parse an IRC message into components
@@ -359,23 +460,17 @@ impl IrcClient {
                 for action in actions {
                     use crate::llm::actions::client_trait::Client;
                     match protocol.as_ref().execute_action(action) {
-                        Ok(crate::llm::actions::client_trait::ClientActionResult::Custom {
-                            name,
-                            data,
-                        }) => {
-                            Self::execute_irc_action(&name, data, write_half, client_data).await?;
-                        }
-                        Ok(crate::llm::actions::client_trait::ClientActionResult::WaitForMore) => {
-                            // Do nothing, just wait
-                        }
-                        Ok(crate::llm::actions::client_trait::ClientActionResult::Disconnect) => {
-                            info!("IRC client {} disconnecting", client_id);
-                            return Err(anyhow::anyhow!("Disconnect requested"));
+                        Ok(result) => {
+                            if let Applied::Disconnect =
+                                Self::apply_action(result, write_half, client_data).await?
+                            {
+                                info!("IRC client {} disconnecting", client_id);
+                                return Err(anyhow::anyhow!("Disconnect requested"));
+                            }
                         }
                         Err(e) => {
                             warn!("IRC client {} action execution error: {}", client_id, e);
                         }
-                        _ => {}
                     }
                 }
             }
@@ -387,82 +482,107 @@ impl IrcClient {
         Ok(())
     }
 
+    /// Put one executed action on the wire. Shared by the LLM path and injected commands so
+    /// the encoding of every IRC verb exists exactly once.
+    async fn apply_action(
+        result: crate::llm::actions::client_trait::ClientActionResult,
+        write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
+        client_data: &Arc<Mutex<ClientData>>,
+    ) -> Result<Applied> {
+        use crate::llm::actions::client_trait::ClientActionResult;
+
+        match result {
+            ClientActionResult::Custom { name, data } => {
+                Self::execute_irc_action(&name, data, write_half, client_data).await
+            }
+            ClientActionResult::Disconnect => {
+                Self::execute_irc_action(
+                    "disconnect",
+                    serde_json::Value::Null,
+                    write_half,
+                    client_data,
+                )
+                .await
+            }
+            // WaitForMore, NoAction, SendData (unused by this vocabulary), nested Multiple.
+            _ => Ok(Applied::Sent(0)),
+        }
+    }
+
     /// Execute IRC-specific actions
     async fn execute_irc_action(
         name: &str,
         data: serde_json::Value,
         write_half: &Arc<Mutex<tokio::io::WriteHalf<TcpStream>>>,
         client_data: &Arc<Mutex<ClientData>>,
-    ) -> Result<()> {
+    ) -> Result<Applied> {
         let mut writer = write_half.lock().await;
 
-        match name {
+        let (wire, disconnect) = match name {
             "join_channel" => {
                 let channel = data["channel"].as_str().context("Missing channel")?;
-                writer
-                    .write_all(format!("JOIN {}\r\n", channel).as_bytes())
-                    .await?;
                 debug!("IRC: JOIN {}", channel);
+                (format!("JOIN {}\r\n", channel), false)
             }
             "part_channel" => {
                 let channel = data["channel"].as_str().context("Missing channel")?;
-                let message = data["message"].as_str();
-                if let Some(msg) = message {
-                    writer
-                        .write_all(format!("PART {} :{}\r\n", channel, msg).as_bytes())
-                        .await?;
-                } else {
-                    writer
-                        .write_all(format!("PART {}\r\n", channel).as_bytes())
-                        .await?;
-                }
                 debug!("IRC: PART {}", channel);
+                match data["message"].as_str() {
+                    Some(msg) => (format!("PART {} :{}\r\n", channel, msg), false),
+                    None => (format!("PART {}\r\n", channel), false),
+                }
             }
             "change_nick" => {
                 let new_nick = data["new_nick"].as_str().context("Missing new_nick")?;
-                writer
-                    .write_all(format!("NICK {}\r\n", new_nick).as_bytes())
-                    .await?;
                 client_data.lock().await.nickname = new_nick.to_string();
                 debug!("IRC: NICK {}", new_nick);
+                (format!("NICK {}\r\n", new_nick), false)
             }
             "send_privmsg" => {
                 let target = data["target"].as_str().context("Missing target")?;
                 let message = data["message"].as_str().context("Missing message")?;
-                writer
-                    .write_all(format!("PRIVMSG {} :{}\r\n", target, message).as_bytes())
-                    .await?;
                 debug!("IRC: PRIVMSG {} :{}", target, message);
+                (format!("PRIVMSG {} :{}\r\n", target, message), false)
             }
             "send_notice" => {
                 let target = data["target"].as_str().context("Missing target")?;
                 let message = data["message"].as_str().context("Missing message")?;
-                writer
-                    .write_all(format!("NOTICE {} :{}\r\n", target, message).as_bytes())
-                    .await?;
                 debug!("IRC: NOTICE {} :{}", target, message);
+                (format!("NOTICE {} :{}\r\n", target, message), false)
             }
             "send_raw" => {
                 let command = data["command"].as_str().context("Missing command")?;
-                writer
-                    .write_all(format!("{}\r\n", command).as_bytes())
-                    .await?;
                 debug!("IRC: RAW {}", command);
+                (format!("{}\r\n", command), false)
             }
             "disconnect" => {
                 let quit_message = data["quit_message"].as_str().unwrap_or("Leaving");
-                writer
-                    .write_all(format!("QUIT :{}\r\n", quit_message).as_bytes())
-                    .await?;
                 debug!("IRC: QUIT");
+                (format!("QUIT :{}\r\n", quit_message), true)
             }
             _ => {
                 warn!("Unknown IRC action: {}", name);
+                return Ok(Applied::Sent(0));
             }
-        }
+        };
 
-        Ok(())
+        writer.write_all(wire.as_bytes()).await?;
+        writer.flush().await?;
+
+        Ok(if disconnect {
+            Applied::Disconnect
+        } else {
+            Applied::Sent(wire.len())
+        })
     }
+}
+
+/// What [`IrcClient::apply_action`] did with one action.
+enum Applied {
+    /// Bytes written (0 when the action produced no wire output).
+    Sent(usize),
+    /// QUIT was written and the session should end.
+    Disconnect,
 }
 
 /// Parsed IRC message

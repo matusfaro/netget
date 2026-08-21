@@ -78,6 +78,28 @@ impl IrcServer {
                                 .await;
                             let _ = status_clone.send("__UPDATE_UI__".to_string());
 
+                            // Peer messaging: the dashboard's "message this peer" /
+                            // "disconnect this peer" inject actions into THIS connection
+                            // through the same executor the LLM path uses. Registered
+                            // before the first read, so a manual `*` rule parking the
+                            // registration exchange still leaves the operator able to
+                            // reach the connection.
+                            let peer_rx = crate::server::peer_support::register_peer_channel(
+                                &state_clone,
+                                server_id,
+                                connection_id.as_u32(),
+                            )
+                            .await;
+                            crate::server::peer_support::spawn_peer_command_task(
+                                peer_rx,
+                                protocol_clone.clone(),
+                                state_clone.clone(),
+                                server_id,
+                                connection_id.as_u32(),
+                                write_half_arc.clone(),
+                                status_clone.clone(),
+                            );
+
                             let mut reader = BufReader::new(read_half);
                             let mut line = String::new();
 
@@ -85,6 +107,16 @@ impl IrcServer {
                                 if n == 0 {
                                     break;
                                 }
+                                state_clone
+                                    .update_connection_stats(
+                                        server_id,
+                                        connection_id,
+                                        Some(n as u64),
+                                        None,
+                                        Some(1),
+                                        None,
+                                    )
+                                    .await;
 
                                 // DEBUG: Log summary with text preview.
                                 // `truncate_for_log` cuts on a char boundary. Slicing with
@@ -161,10 +193,23 @@ impl IrcServer {
                                                     } else {
                                                         format!("{response}\r\n")
                                                     };
-                                                    let mut write = write_half_arc.lock().await;
-                                                    let _ =
-                                                        write.write_all(formatted.as_bytes()).await;
-                                                    let _ = write.flush().await;
+                                                    {
+                                                        let mut write = write_half_arc.lock().await;
+                                                        let _ = write
+                                                            .write_all(formatted.as_bytes())
+                                                            .await;
+                                                        let _ = write.flush().await;
+                                                    }
+                                                    state_clone
+                                                        .update_connection_stats(
+                                                            server_id,
+                                                            connection_id,
+                                                            None,
+                                                            Some(formatted.len() as u64),
+                                                            None,
+                                                            Some(1),
+                                                        )
+                                                        .await;
 
                                                     // Same char-boundary hazard as the inbound
                                                     // preview above, but on model output.
@@ -221,6 +266,16 @@ impl IrcServer {
                                                 let _ = write.shutdown().await;
                                             }
                                         }
+                                        state_clone
+                                            .update_connection_stats(
+                                                server_id,
+                                                connection_id,
+                                                None,
+                                                Some(reply.len() as u64),
+                                                None,
+                                                Some(1),
+                                            )
+                                            .await;
                                         if close {
                                             break;
                                         }
@@ -229,7 +284,11 @@ impl IrcServer {
                                 line.clear();
                             }
 
-                            // Connection closed - mark as closed
+                            // Connection closed - every exit path (EOF, read error,
+                            // close_connection, backend-unavailable ERROR) lands here.
+                            state_clone
+                                .remove_peer_handle(server_id, connection_id.as_u32())
+                                .await;
                             state_clone
                                 .close_connection_on_server(server_id, connection_id)
                                 .await;
